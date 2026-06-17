@@ -42,9 +42,16 @@ the design's "keep the smart parts swappable" principle.
    auto-crop the background, downscale. Improves OCR and shrinks everything.
 2. **Read** text with Tesseract.js (open-source, runs on-device, `$0`).
 3. **Extract** fields with rules: amount/date/vendor/tax/currency via regex +
-   heuristics, a curated **vendor → category** lookup, **amount reconciliation**
+   heuristics, a curated **known-vendor database** that names the *brand* (not the
+   store address) and classifies it in one pass, **amount reconciliation**
    against the printed total, **confidence scoring**, **duplicate detection** by
    image hash. Re-uploads are free (results cached by hash).
+
+   The vendor DB and its **word-boundary matcher** (a numeric guard so a price
+   ending in `.76` or a store `#76` can't read as a fuel brand, and so `inn`/`ink`
+   can't fire inside `dinner`/`drink`) are adapted from the original local app's
+   hard-won `vendor_db.py` — the lesson being that the naive "first text line"
+   heuristic kept grabbing the address instead of the merchant name.
 
 A paid model is **not required** — it's a future accuracy dial behind the same
 `OcrEngine` seam, for low-confidence receipts only.
