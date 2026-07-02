@@ -1,5 +1,6 @@
 import { IMAGE_PREP } from "../config/constants.ts";
 import { isPdf } from "../util/files.ts";
+import { correctPerspective, perspectiveEnabled } from "./perspective.ts";
 
 // Image pre-pass (§5 step 1, §14). Runs entirely client-side on a <canvas>:
 //   decode → auto-rotate (EXIF) → grayscale → auto-crop background → downscale.
@@ -95,7 +96,19 @@ function detectContentBox(
 }
 
 export async function cleanImage(file: File | Blob): Promise<CleanedImage> {
-  const bmp = await decode(file);
+  let bmp = await decode(file);
+
+  // Optional document straightening (angled phone photos). Best-effort and
+  // opt-in (VITE_PERSPECTIVE=1 + a vendored OpenCV.js) — null keeps the
+  // original decode.
+  if (perspectiveEnabled()) {
+    const warped = await correctPerspective(bmp).catch(() => null);
+    if (warped) {
+      bmp.close();
+      bmp = warped;
+    }
+  }
+
   const srcW = bmp.width;
   const srcH = bmp.height;
 

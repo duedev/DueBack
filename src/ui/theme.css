@@ -1,0 +1,437 @@
+/* ============================================================================
+   Reimbursements F5 — design system.
+   One token set drives the landing page, the app surface, the charts and the
+   exported workbook accents, in light and dark. Warm "paper & ink" neutrals
+   (this is a receipts app) with a confident green primary. All text/background
+   pairs meet WCAG AA in both themes.
+   ========================================================================== */
+
+:root {
+  /* -- type ---------------------------------------------------------------- */
+  --font-display: "Fraunces Variable", Georgia, "Times New Roman", serif;
+  --font-ui:
+    "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+
+  /* -- shape / elevation ----------------------------------------------------- */
+  --radius-s: 8px;
+  --radius-m: 12px;
+  --radius-l: 20px;
+  --radius-pill: 999px;
+  --shadow-1: 0 1px 2px rgb(28 25 23 / 0.06), 0 1px 6px rgb(28 25 23 / 0.05);
+  --shadow-2: 0 2px 6px rgb(28 25 23 / 0.07), 0 10px 28px rgb(28 25 23 / 0.09);
+  --shadow-3: 0 6px 16px rgb(28 25 23 / 0.1), 0 24px 60px rgb(28 25 23 / 0.16);
+
+  /* -- light palette (default) ---------------------------------------------- */
+  --bg: #f7f5f1;
+  --bg-raised: #fffefb;
+  --bg-sunken: #efebe4;
+  --ink: #1c1917;
+  --ink-soft: #55524d;
+  --ink-faint: #7d7871;
+  --line: #e4dfd6;
+  --line-strong: #cfc8bc;
+
+  --accent: #147246; /* primary actions — 5.3:1 on --bg */
+  --accent-strong: #0c5433;
+  --accent-ink: #ffffff; /* text on accent */
+  --accent-soft: rgb(20 114 70 / 0.1);
+  --accent-line: rgb(20 114 70 / 0.35);
+
+  --gold: #a35c0a; /* highlights, "review" accents — 4.9:1 on --bg */
+  --gold-soft: rgb(163 92 10 / 0.12);
+  --ok: #147246;
+  --warn: #a35c0a;
+  --err: #b42323;
+  --err-soft: rgb(180 35 35 / 0.1);
+
+  /* charts + category chips (AA against both bg tones for fills w/ ink text) */
+  --cat-1: #147246;
+  --cat-2: #a35c0a;
+  --cat-3: #1d4ed8;
+  --cat-4: #7c3aed;
+  --cat-5: #0e7490;
+  --cat-6: #be185d;
+
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #14110e;
+  --bg-raised: #1e1a15;
+  --bg-sunken: #0d0b09;
+  --ink: #f1ece2;
+  --ink-soft: #b9b1a4;
+  --ink-faint: #8a8377;
+  --line: #2f2922;
+  --line-strong: #453d33;
+
+  --accent: #3ecf82; /* 8.6:1 on --bg */
+  --accent-strong: #7fe6ab;
+  --accent-ink: #0b2717;
+  --accent-soft: rgb(62 207 130 / 0.13);
+  --accent-line: rgb(62 207 130 / 0.4);
+
+  --gold: #e0a34e;
+  --gold-soft: rgb(224 163 78 / 0.14);
+  --ok: #3ecf82;
+  --warn: #e0a34e;
+  --err: #f37272;
+  --err-soft: rgb(243 114 114 / 0.12);
+
+  --cat-1: #3ecf82;
+  --cat-2: #e0a34e;
+  --cat-3: #7aa5ff;
+  --cat-4: #c39bff;
+  --cat-5: #5fd0e8;
+  --cat-6: #ff8fb8;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 6px rgb(0 0 0 / 0.35);
+  --shadow-2: 0 2px 6px rgb(0 0 0 / 0.45), 0 10px 28px rgb(0 0 0 / 0.5);
+  --shadow-3: 0 6px 16px rgb(0 0 0 / 0.5), 0 24px 60px rgb(0 0 0 / 0.6);
+
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  color-scheme: dark;
+}
+
+/* System preference when the user hasn't chosen explicitly. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    --bg: #14110e;
+    --bg-raised: #1e1a15;
+    --bg-sunken: #0d0b09;
+    --ink: #f1ece2;
+    --ink-soft: #b9b1a4;
+    --ink-faint: #8a8377;
+    --line: #2f2922;
+    --line-strong: #453d33;
+
+    --accent: #3ecf82;
+    --accent-strong: #7fe6ab;
+    --accent-ink: #0b2717;
+    --accent-soft: rgb(62 207 130 / 0.13);
+    --accent-line: rgb(62 207 130 / 0.4);
+
+    --gold: #e0a34e;
+    --gold-soft: rgb(224 163 78 / 0.14);
+    --ok: #3ecf82;
+    --warn: #e0a34e;
+    --err: #f37272;
+    --err-soft: rgb(243 114 114 / 0.12);
+
+    --cat-1: #3ecf82;
+    --cat-2: #e0a34e;
+    --cat-3: #7aa5ff;
+    --cat-4: #c39bff;
+    --cat-5: #5fd0e8;
+    --cat-6: #ff8fb8;
+
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 6px rgb(0 0 0 / 0.35);
+    --shadow-2: 0 2px 6px rgb(0 0 0 / 0.45), 0 10px 28px rgb(0 0 0 / 0.5);
+    --shadow-3: 0 6px 16px rgb(0 0 0 / 0.5), 0 24px 60px rgb(0 0 0 / 0.6);
+    color-scheme: dark;
+  }
+}
+
+/* ============================================================================
+   Base
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 560;
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.5em;
+  text-wrap: balance;
+}
+
+h4,
+h5 {
+  font-family: var(--font-ui);
+  font-weight: 650;
+  margin: 0 0 0.4em;
+}
+
+p {
+  margin: 0 0 1em;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-color: var(--accent-line);
+  text-underline-offset: 3px;
+}
+a:hover {
+  color: var(--accent-strong);
+}
+
+small,
+.muted {
+  color: var(--ink-soft);
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-s);
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+/* ============================================================================
+   Controls
+   ========================================================================== */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font: 600 0.95rem/1 var(--font-ui);
+  padding: 0.72rem 1.15rem;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-raised);
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.btn:hover {
+  border-color: var(--ink-faint);
+  box-shadow: var(--shadow-1);
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-ink);
+  box-shadow: var(--shadow-1);
+}
+.btn-primary:hover {
+  background: var(--accent-strong);
+  border-color: transparent;
+  box-shadow: var(--shadow-2);
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-soft);
+}
+.btn-ghost:hover {
+  background: var(--accent-soft);
+  color: var(--ink);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.btn-danger {
+  color: var(--err);
+}
+.btn-danger:hover {
+  border-color: var(--err);
+}
+
+.btn-lg {
+  font-size: 1.05rem;
+  padding: 0.95rem 1.6rem;
+  border-radius: var(--radius-l);
+}
+.btn-sm {
+  font-size: 0.85rem;
+  padding: 0.45rem 0.8rem;
+  border-radius: var(--radius-s);
+}
+
+input[type="text"],
+input[type="date"],
+input[type="number"],
+input[type="password"],
+input[type="email"],
+select,
+textarea {
+  font: 400 0.95rem/1.4 var(--font-ui);
+  color: var(--ink);
+  background: var(--bg-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s);
+  padding: 0.55rem 0.7rem;
+  width: 100%;
+  transition: border-color 120ms ease;
+}
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--ink-faint);
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+label {
+  display: block;
+  font: 600 0.8rem/1.2 var(--font-ui);
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.35rem;
+}
+
+/* ============================================================================
+   Surfaces
+   ========================================================================== */
+
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-1);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font: 600 0.75rem/1 var(--font-ui);
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--radius-pill);
+  background: var(--bg-sunken);
+  color: var(--ink-soft);
+  border: 1px solid transparent;
+}
+.chip-ok {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.chip-warn {
+  background: var(--gold-soft);
+  color: var(--gold);
+}
+.chip-err {
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+.kbd {
+  font: 600 0.72rem/1 var(--font-mono);
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  color: var(--ink-soft);
+}
+
+/* Skeleton shimmer while models warm up / images decode. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-sunken);
+  border-radius: var(--radius-s);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(255 255 255 / 0.09),
+    transparent
+  );
+  animation: shimmer 1.4s infinite;
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Page rhythm helpers used by the landing + workspace. */
+.wrap {
+  width: min(1120px, calc(100% - 2.5rem));
+  margin-inline: auto;
+}
+
+.section-label {
+  font: 700 0.78rem/1 var(--font-ui);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 0.9rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

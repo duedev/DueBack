@@ -1,0 +1,2449 @@
+[
+  {
+    "name": "7-Eleven",
+    "category": "Fuel",
+    "aliases": [
+      "7 eleven",
+      "7-eleven",
+      "7eleven",
+      "seven eleven"
+    ]
+  },
+  {
+    "name": "76",
+    "category": "Fuel",
+    "aliases": [
+      "76",
+      "76 gas",
+      "phillips 76",
+      "union 76"
+    ]
+  },
+  {
+    "name": "84 Lumber",
+    "category": "Office Supplies",
+    "aliases": [
+      "84 lumber"
+    ]
+  },
+  {
+    "name": "ABC Supply",
+    "category": "Office Supplies",
+    "aliases": [
+      "abc supply"
+    ]
+  },
+  {
+    "name": "AMC Theatres",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "amc theatre",
+      "amc theatres"
+    ]
+  },
+  {
+    "name": "AMPM",
+    "category": "Fuel",
+    "aliases": [
+      "am/pm",
+      "ampm"
+    ]
+  },
+  {
+    "name": "ARCO",
+    "category": "Fuel",
+    "aliases": [
+      "arco"
+    ]
+  },
+  {
+    "name": "AT&T",
+    "category": "Other",
+    "aliases": [
+      "at and t",
+      "at&t"
+    ]
+  },
+  {
+    "name": "Academy Sports",
+    "category": "Other",
+    "aliases": [
+      "academy sports"
+    ]
+  },
+  {
+    "name": "Ace Hardware",
+    "category": "Office Supplies",
+    "aliases": [
+      "ace hardware"
+    ]
+  },
+  {
+    "name": "Acme Markets",
+    "category": "Other",
+    "aliases": [
+      "acme markets"
+    ]
+  },
+  {
+    "name": "Advance Auto Parts",
+    "category": "Other",
+    "aliases": [
+      "advance auto parts"
+    ]
+  },
+  {
+    "name": "Airbnb",
+    "category": "Other",
+    "aliases": [
+      "airbnb"
+    ]
+  },
+  {
+    "name": "Alamo Rent a Car",
+    "category": "Ground Transportation",
+    "aliases": [
+      "alamo rent a car"
+    ]
+  },
+  {
+    "name": "Alaska Airlines",
+    "category": "Travel",
+    "aliases": [
+      "alaska airlines"
+    ]
+  },
+  {
+    "name": "Albertsons",
+    "category": "Other",
+    "aliases": [
+      "albertsons"
+    ]
+  },
+  {
+    "name": "Aldi",
+    "category": "Other",
+    "aliases": [
+      "aldi"
+    ]
+  },
+  {
+    "name": "Allsup's",
+    "category": "Fuel",
+    "aliases": [
+      "allsup's",
+      "allsups"
+    ]
+  },
+  {
+    "name": "AlphaGraphics",
+    "category": "Office Supplies",
+    "aliases": [
+      "alphagraphics"
+    ]
+  },
+  {
+    "name": "Amazon",
+    "category": "Other",
+    "aliases": [
+      "amazon",
+      "amazon.com",
+      "amzn"
+    ]
+  },
+  {
+    "name": "American Airlines",
+    "category": "Travel",
+    "aliases": [
+      "american airlines"
+    ]
+  },
+  {
+    "name": "Amtrak",
+    "category": "Other",
+    "aliases": [
+      "amtrak"
+    ]
+  },
+  {
+    "name": "Apple Store",
+    "category": "Other",
+    "aliases": [
+      "apple store"
+    ]
+  },
+  {
+    "name": "Applebee's",
+    "category": "Other",
+    "aliases": [
+      "applebee's",
+      "applebees"
+    ]
+  },
+  {
+    "name": "Arby's",
+    "category": "Other",
+    "aliases": [
+      "arby's",
+      "arbys"
+    ]
+  },
+  {
+    "name": "At Home",
+    "category": "Other",
+    "aliases": [
+      "at home store"
+    ]
+  },
+  {
+    "name": "AutoZone",
+    "category": "Other",
+    "aliases": [
+      "autozone"
+    ]
+  },
+  {
+    "name": "Avis",
+    "category": "Other",
+    "aliases": [
+      "avis"
+    ]
+  },
+  {
+    "name": "BJ's Wholesale",
+    "category": "Other",
+    "aliases": [
+      "bj's wholesale",
+      "bjs wholesale"
+    ]
+  },
+  {
+    "name": "BP",
+    "category": "Fuel",
+    "aliases": [
+      "bp"
+    ]
+  },
+  {
+    "name": "Bass Pro Shops",
+    "category": "Other",
+    "aliases": [
+      "bass pro"
+    ]
+  },
+  {
+    "name": "Bath & Body Works",
+    "category": "Other",
+    "aliases": [
+      "bath & body works",
+      "bath and body works"
+    ]
+  },
+  {
+    "name": "Beacon Building Products",
+    "category": "Office Supplies",
+    "aliases": [
+      "beacon building",
+      "beacon roofing"
+    ]
+  },
+  {
+    "name": "Bed Bath & Beyond",
+    "category": "Other",
+    "aliases": [
+      "bed bath & beyond",
+      "bed bath and beyond"
+    ]
+  },
+  {
+    "name": "Behr",
+    "category": "Office Supplies",
+    "aliases": [
+      "behr"
+    ]
+  },
+  {
+    "name": "Benjamin Moore",
+    "category": "Office Supplies",
+    "aliases": [
+      "benjamin moore"
+    ]
+  },
+  {
+    "name": "Best Buy",
+    "category": "Other",
+    "aliases": [
+      "best buy"
+    ],
+    "slogans": [
+      "expert service unbeatable price"
+    ]
+  },
+  {
+    "name": "Best Western",
+    "category": "Other",
+    "aliases": [
+      "best western"
+    ]
+  },
+  {
+    "name": "Big Lots",
+    "category": "Other",
+    "aliases": [
+      "big lots"
+    ]
+  },
+  {
+    "name": "Bojangles",
+    "category": "Other",
+    "aliases": [
+      "bojangles"
+    ]
+  },
+  {
+    "name": "Boost Mobile",
+    "category": "Other",
+    "aliases": [
+      "boost mobile"
+    ]
+  },
+  {
+    "name": "Buc-ee's",
+    "category": "Fuel",
+    "aliases": [
+      "buc-ee",
+      "buc-ee's",
+      "bucees"
+    ]
+  },
+  {
+    "name": "Budget Rent a Car",
+    "category": "Ground Transportation",
+    "aliases": [
+      "budget rent a car"
+    ]
+  },
+  {
+    "name": "Buffalo Wild Wings",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "buffalo wild wings"
+    ]
+  },
+  {
+    "name": "Builders FirstSource",
+    "category": "Office Supplies",
+    "aliases": [
+      "builders firstsource"
+    ]
+  },
+  {
+    "name": "Burger King",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "burger king"
+    ]
+  },
+  {
+    "name": "Burlington",
+    "category": "Other",
+    "aliases": [
+      "burlington coat",
+      "burlington stores"
+    ]
+  },
+  {
+    "name": "CVS",
+    "category": "Other",
+    "aliases": [
+      "cvs",
+      "cvs pharmacy"
+    ]
+  },
+  {
+    "name": "Cabela's",
+    "category": "Other",
+    "aliases": [
+      "cabela's",
+      "cabelas"
+    ]
+  },
+  {
+    "name": "Carl's Jr.",
+    "category": "Other",
+    "aliases": [
+      "carl's jr",
+      "carls jr"
+    ]
+  },
+  {
+    "name": "Carquest",
+    "category": "Other",
+    "aliases": [
+      "carquest"
+    ]
+  },
+  {
+    "name": "Carter Lumber",
+    "category": "Office Supplies",
+    "aliases": [
+      "carter lumber"
+    ]
+  },
+  {
+    "name": "Casey's",
+    "category": "Fuel",
+    "aliases": [
+      "casey",
+      "casey's",
+      "caseys"
+    ]
+  },
+  {
+    "name": "Cefco",
+    "category": "Fuel",
+    "aliases": [
+      "cefco"
+    ]
+  },
+  {
+    "name": "Cenex",
+    "category": "Fuel",
+    "aliases": [
+      "cenex"
+    ]
+  },
+  {
+    "name": "CenturyLink",
+    "category": "Other",
+    "aliases": [
+      "centurylink"
+    ]
+  },
+  {
+    "name": "Cheesecake Factory",
+    "category": "Other",
+    "aliases": [
+      "cheesecake factory"
+    ]
+  },
+  {
+    "name": "Chevron",
+    "category": "Fuel",
+    "aliases": [
+      "chevron"
+    ]
+  },
+  {
+    "name": "Chick-fil-A",
+    "category": "Other",
+    "aliases": [
+      "chick fil a",
+      "chick-fil-a"
+    ]
+  },
+  {
+    "name": "Chili's",
+    "category": "Other",
+    "aliases": [
+      "chili's",
+      "chilis"
+    ]
+  },
+  {
+    "name": "Chipotle",
+    "category": "Other",
+    "aliases": [
+      "chipotle"
+    ]
+  },
+  {
+    "name": "Cinemark",
+    "category": "Other",
+    "aliases": [
+      "cinemark"
+    ]
+  },
+  {
+    "name": "Circle K",
+    "category": "Fuel",
+    "aliases": [
+      "circle k"
+    ]
+  },
+  {
+    "name": "Citgo",
+    "category": "Fuel",
+    "aliases": [
+      "citgo"
+    ]
+  },
+  {
+    "name": "City Electric Supply",
+    "category": "Office Supplies",
+    "aliases": [
+      "city electric supply"
+    ]
+  },
+  {
+    "name": "Clark",
+    "category": "Fuel",
+    "aliases": [
+      "clark gas",
+      "clark oil"
+    ]
+  },
+  {
+    "name": "Comfort Inn",
+    "category": "Lodging",
+    "aliases": [
+      "comfort inn"
+    ]
+  },
+  {
+    "name": "Conoco",
+    "category": "Fuel",
+    "aliases": [
+      "conoco"
+    ]
+  },
+  {
+    "name": "Costco",
+    "category": "Other",
+    "aliases": [
+      "costco",
+      "costco wholesale"
+    ]
+  },
+  {
+    "name": "Costco Gas",
+    "category": "Fuel",
+    "aliases": [
+      "costco fuel",
+      "costco gas",
+      "costco gasoline"
+    ]
+  },
+  {
+    "name": "Courtyard by Marriott",
+    "category": "Other",
+    "aliases": [
+      "courtyard by marriott",
+      "courtyard marriott"
+    ]
+  },
+  {
+    "name": "Cox Communications",
+    "category": "Other",
+    "aliases": [
+      "cox communications"
+    ]
+  },
+  {
+    "name": "Cracker Barrel",
+    "category": "Other",
+    "aliases": [
+      "cracker barrel"
+    ]
+  },
+  {
+    "name": "Crate & Barrel",
+    "category": "Other",
+    "aliases": [
+      "crate & barrel",
+      "crate and barrel"
+    ]
+  },
+  {
+    "name": "Cricket Wireless",
+    "category": "Other",
+    "aliases": [
+      "cricket wireless"
+    ]
+  },
+  {
+    "name": "Culver's",
+    "category": "Other",
+    "aliases": [
+      "culver's",
+      "culvers"
+    ]
+  },
+  {
+    "name": "Cumberland Farms",
+    "category": "Fuel",
+    "aliases": [
+      "cumberland farm",
+      "cumberland farms"
+    ]
+  },
+  {
+    "name": "DHL",
+    "category": "Other",
+    "aliases": [
+      "dhl express"
+    ]
+  },
+  {
+    "name": "Days Inn",
+    "category": "Lodging",
+    "aliases": [
+      "days inn"
+    ]
+  },
+  {
+    "name": "Del Taco",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "del taco"
+    ]
+  },
+  {
+    "name": "Delta Air Lines",
+    "category": "Travel",
+    "aliases": [
+      "delta air lines",
+      "delta airlines"
+    ]
+  },
+  {
+    "name": "Denny's",
+    "category": "Other",
+    "aliases": [
+      "denny's",
+      "dennys"
+    ]
+  },
+  {
+    "name": "Diamond Shamrock",
+    "category": "Fuel",
+    "aliases": [
+      "diamond shamrock"
+    ]
+  },
+  {
+    "name": "Dick's Sporting Goods",
+    "category": "Other",
+    "aliases": [
+      "dick's sporting",
+      "dicks sporting goods"
+    ]
+  },
+  {
+    "name": "Dillard's",
+    "category": "Other",
+    "aliases": [
+      "dillard's",
+      "dillards"
+    ]
+  },
+  {
+    "name": "Discount Tire",
+    "category": "Other",
+    "aliases": [
+      "discount tire"
+    ]
+  },
+  {
+    "name": "Do it Best",
+    "category": "Office Supplies",
+    "aliases": [
+      "do it best"
+    ]
+  },
+  {
+    "name": "Dollar General",
+    "category": "Other",
+    "aliases": [
+      "dollar general"
+    ]
+  },
+  {
+    "name": "Dollar Tree",
+    "category": "Other",
+    "aliases": [
+      "dollar tree"
+    ]
+  },
+  {
+    "name": "Domino's",
+    "category": "Other",
+    "aliases": [
+      "domino's",
+      "dominos"
+    ]
+  },
+  {
+    "name": "DoubleTree",
+    "category": "Other",
+    "aliases": [
+      "doubletree"
+    ]
+  },
+  {
+    "name": "Duane Reade",
+    "category": "Other",
+    "aliases": [
+      "duane reade"
+    ]
+  },
+  {
+    "name": "Dunkin'",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "dunkin",
+      "dunkin donuts",
+      "dunkin'"
+    ]
+  },
+  {
+    "name": "Dunn-Edwards",
+    "category": "Office Supplies",
+    "aliases": [
+      "dunn edwards",
+      "dunn-edwards"
+    ]
+  },
+  {
+    "name": "Dutch Bros",
+    "category": "Other",
+    "aliases": [
+      "dutch bros"
+    ]
+  },
+  {
+    "name": "E-Z Mart",
+    "category": "Fuel",
+    "aliases": [
+      "e-z mart",
+      "ez mart"
+    ]
+  },
+  {
+    "name": "Embassy Suites",
+    "category": "Lodging",
+    "aliases": [
+      "embassy suites"
+    ]
+  },
+  {
+    "name": "Enterprise Rent-A-Car",
+    "category": "Ground Transportation",
+    "aliases": [
+      "enterprise rent a car",
+      "enterprise rent-a-car"
+    ]
+  },
+  {
+    "name": "Esso",
+    "category": "Fuel",
+    "aliases": [
+      "esso"
+    ]
+  },
+  {
+    "name": "Extended Stay America",
+    "category": "Other",
+    "aliases": [
+      "extended stay america"
+    ]
+  },
+  {
+    "name": "Exxon",
+    "category": "Fuel",
+    "aliases": [
+      "exxon",
+      "exxonmobil"
+    ]
+  },
+  {
+    "name": "Fairfield Inn",
+    "category": "Lodging",
+    "aliases": [
+      "fairfield inn"
+    ]
+  },
+  {
+    "name": "Family Dollar",
+    "category": "Other",
+    "aliases": [
+      "family dollar"
+    ]
+  },
+  {
+    "name": "Fastenal",
+    "category": "Office Supplies",
+    "aliases": [
+      "fastenal"
+    ]
+  },
+  {
+    "name": "FedEx",
+    "category": "Other",
+    "aliases": [
+      "fedex"
+    ]
+  },
+  {
+    "name": "FedEx Office",
+    "category": "Office Supplies",
+    "aliases": [
+      "fedex office",
+      "kinko's",
+      "kinkos"
+    ]
+  },
+  {
+    "name": "Ferguson",
+    "category": "Office Supplies",
+    "aliases": [
+      "ferguson"
+    ]
+  },
+  {
+    "name": "Fina",
+    "category": "Fuel",
+    "aliases": [
+      "fina gas"
+    ]
+  },
+  {
+    "name": "Firehouse Subs",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "firehouse subs"
+    ]
+  },
+  {
+    "name": "Firestone",
+    "category": "Other",
+    "aliases": [
+      "firestone"
+    ]
+  },
+  {
+    "name": "Five Below",
+    "category": "Other",
+    "aliases": [
+      "five below"
+    ]
+  },
+  {
+    "name": "Five Guys",
+    "category": "Other",
+    "aliases": [
+      "five guys"
+    ]
+  },
+  {
+    "name": "Flash Foods",
+    "category": "Fuel",
+    "aliases": [
+      "flash foods"
+    ]
+  },
+  {
+    "name": "Floor & Decor",
+    "category": "Office Supplies",
+    "aliases": [
+      "floor & decor",
+      "floor and decor",
+      "floor decor"
+    ]
+  },
+  {
+    "name": "Flying J",
+    "category": "Fuel",
+    "aliases": [
+      "flying j"
+    ]
+  },
+  {
+    "name": "Food Lion",
+    "category": "Other",
+    "aliases": [
+      "food lion"
+    ]
+  },
+  {
+    "name": "Frontier Airlines",
+    "category": "Travel",
+    "aliases": [
+      "frontier airlines"
+    ]
+  },
+  {
+    "name": "Fry's Food",
+    "category": "Other",
+    "aliases": [
+      "fry's food",
+      "frys food"
+    ]
+  },
+  {
+    "name": "GameStop",
+    "category": "Other",
+    "aliases": [
+      "gamestop"
+    ]
+  },
+  {
+    "name": "GetGo",
+    "category": "Fuel",
+    "aliases": [
+      "getgo"
+    ]
+  },
+  {
+    "name": "Giant Eagle",
+    "category": "Other",
+    "aliases": [
+      "giant eagle"
+    ]
+  },
+  {
+    "name": "Giant Food",
+    "category": "Other",
+    "aliases": [
+      "giant food"
+    ]
+  },
+  {
+    "name": "Git-N-Go",
+    "category": "Fuel",
+    "aliases": [
+      "git n go",
+      "git-n-go"
+    ]
+  },
+  {
+    "name": "Goodyear",
+    "category": "Other",
+    "aliases": [
+      "goodyear"
+    ]
+  },
+  {
+    "name": "Grainger",
+    "category": "Office Supplies",
+    "aliases": [
+      "grainger",
+      "w.w. grainger"
+    ]
+  },
+  {
+    "name": "Graybar",
+    "category": "Office Supplies",
+    "aliases": [
+      "graybar"
+    ]
+  },
+  {
+    "name": "Gulf",
+    "category": "Fuel",
+    "aliases": [
+      "gulf"
+    ]
+  },
+  {
+    "name": "H-E-B",
+    "category": "Other",
+    "aliases": [
+      "h-e-b",
+      "heb grocery"
+    ]
+  },
+  {
+    "name": "HD Supply",
+    "category": "Office Supplies",
+    "aliases": [
+      "hd supply"
+    ]
+  },
+  {
+    "name": "Hampton Inn",
+    "category": "Lodging",
+    "aliases": [
+      "hampton inn"
+    ]
+  },
+  {
+    "name": "Harbor Freight",
+    "category": "Office Supplies",
+    "aliases": [
+      "harbor freight"
+    ]
+  },
+  {
+    "name": "Hardee's",
+    "category": "Other",
+    "aliases": [
+      "hardee's",
+      "hardees"
+    ]
+  },
+  {
+    "name": "Harris Teeter",
+    "category": "Other",
+    "aliases": [
+      "harris teeter"
+    ]
+  },
+  {
+    "name": "Hertz",
+    "category": "Other",
+    "aliases": [
+      "hertz"
+    ]
+  },
+  {
+    "name": "Hess",
+    "category": "Fuel",
+    "aliases": [
+      "hess"
+    ]
+  },
+  {
+    "name": "Hilton",
+    "category": "Other",
+    "aliases": [
+      "hilton"
+    ]
+  },
+  {
+    "name": "Hobby Lobby",
+    "category": "Other",
+    "aliases": [
+      "hobby lobby"
+    ]
+  },
+  {
+    "name": "Holiday Inn",
+    "category": "Lodging",
+    "aliases": [
+      "holiday inn"
+    ]
+  },
+  {
+    "name": "Holiday Inn Express",
+    "category": "Lodging",
+    "aliases": [
+      "holiday inn express"
+    ]
+  },
+  {
+    "name": "Holiday Stationstores",
+    "category": "Fuel",
+    "aliases": [
+      "holiday station",
+      "holiday stationstores"
+    ]
+  },
+  {
+    "name": "Hy-Vee",
+    "category": "Other",
+    "aliases": [
+      "hy-vee",
+      "hyvee"
+    ]
+  },
+  {
+    "name": "Hyatt",
+    "category": "Other",
+    "aliases": [
+      "hyatt"
+    ]
+  },
+  {
+    "name": "IHOP",
+    "category": "Other",
+    "aliases": [
+      "ihop"
+    ]
+  },
+  {
+    "name": "IKEA",
+    "category": "Other",
+    "aliases": [
+      "ikea"
+    ]
+  },
+  {
+    "name": "In-N-Out Burger",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "in n out",
+      "in-n-out"
+    ]
+  },
+  {
+    "name": "Irving",
+    "category": "Fuel",
+    "aliases": [
+      "irving gas",
+      "irving oil"
+    ]
+  },
+  {
+    "name": "JCPenney",
+    "category": "Other",
+    "aliases": [
+      "jc penney",
+      "jcpenney"
+    ]
+  },
+  {
+    "name": "JOANN",
+    "category": "Other",
+    "aliases": [
+      "jo-ann",
+      "joann fabrics"
+    ]
+  },
+  {
+    "name": "Jack in the Box",
+    "category": "Other",
+    "aliases": [
+      "jack in the box"
+    ]
+  },
+  {
+    "name": "Jersey Mike's",
+    "category": "Other",
+    "aliases": [
+      "jersey mike's",
+      "jersey mikes"
+    ]
+  },
+  {
+    "name": "JetBlue",
+    "category": "Other",
+    "aliases": [
+      "jetblue"
+    ]
+  },
+  {
+    "name": "Jewel-Osco",
+    "category": "Other",
+    "aliases": [
+      "jewel osco",
+      "jewel-osco"
+    ]
+  },
+  {
+    "name": "Jiffy Lube",
+    "category": "Other",
+    "aliases": [
+      "jiffy lube"
+    ]
+  },
+  {
+    "name": "Jimmy John's",
+    "category": "Other",
+    "aliases": [
+      "jimmy john's",
+      "jimmy johns"
+    ]
+  },
+  {
+    "name": "Johnstone Supply",
+    "category": "Office Supplies",
+    "aliases": [
+      "johnstone supply"
+    ]
+  },
+  {
+    "name": "KFC",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "kentucky fried chicken",
+      "kfc"
+    ]
+  },
+  {
+    "name": "Kelly-Moore",
+    "category": "Office Supplies",
+    "aliases": [
+      "kelly moore paints",
+      "kelly-moore"
+    ]
+  },
+  {
+    "name": "Kohl's",
+    "category": "Other",
+    "aliases": [
+      "kohl's",
+      "kohls"
+    ]
+  },
+  {
+    "name": "Kroger",
+    "category": "Other",
+    "aliases": [
+      "kroger"
+    ]
+  },
+  {
+    "name": "Kum & Go",
+    "category": "Fuel",
+    "aliases": [
+      "kum & go",
+      "kum and go"
+    ]
+  },
+  {
+    "name": "Kwik Fill",
+    "category": "Fuel",
+    "aliases": [
+      "kwik fill"
+    ]
+  },
+  {
+    "name": "Kwik Shop",
+    "category": "Fuel",
+    "aliases": [
+      "kwik shop"
+    ]
+  },
+  {
+    "name": "Kwik Star",
+    "category": "Fuel",
+    "aliases": [
+      "kwik star"
+    ]
+  },
+  {
+    "name": "Kwik Trip",
+    "category": "Fuel",
+    "aliases": [
+      "kwik trip"
+    ]
+  },
+  {
+    "name": "LL Flooring",
+    "category": "Office Supplies",
+    "aliases": [
+      "ll flooring",
+      "lumber liquidators"
+    ]
+  },
+  {
+    "name": "La Quinta",
+    "category": "Other",
+    "aliases": [
+      "la quinta"
+    ]
+  },
+  {
+    "name": "Les Schwab",
+    "category": "Other",
+    "aliases": [
+      "les schwab"
+    ]
+  },
+  {
+    "name": "Little Caesars",
+    "category": "Other",
+    "aliases": [
+      "little caesars"
+    ]
+  },
+  {
+    "name": "Loaf 'N Jug",
+    "category": "Fuel",
+    "aliases": [
+      "loaf 'n jug",
+      "loaf n jug"
+    ]
+  },
+  {
+    "name": "Love's",
+    "category": "Fuel",
+    "aliases": [
+      "love's",
+      "love's travel",
+      "loves"
+    ]
+  },
+  {
+    "name": "Lowe's",
+    "category": "Office Supplies",
+    "aliases": [
+      "lowe's",
+      "lowes"
+    ],
+    "slogans": [
+      "do it right for less",
+      "never stop improving"
+    ]
+  },
+  {
+    "name": "Lyft",
+    "category": "Other",
+    "aliases": [
+      "lyft"
+    ]
+  },
+  {
+    "name": "MAPCO",
+    "category": "Fuel",
+    "aliases": [
+      "mapco"
+    ]
+  },
+  {
+    "name": "MSC Industrial",
+    "category": "Office Supplies",
+    "aliases": [
+      "msc industrial"
+    ]
+  },
+  {
+    "name": "Macy's",
+    "category": "Other",
+    "aliases": [
+      "macy's",
+      "macys"
+    ]
+  },
+  {
+    "name": "Marathon",
+    "category": "Fuel",
+    "aliases": [
+      "marathon"
+    ]
+  },
+  {
+    "name": "Marriott",
+    "category": "Other",
+    "aliases": [
+      "marriott"
+    ]
+  },
+  {
+    "name": "Marshalls",
+    "category": "Other",
+    "aliases": [
+      "marshalls"
+    ]
+  },
+  {
+    "name": "Maverik",
+    "category": "Fuel",
+    "aliases": [
+      "maverik"
+    ]
+  },
+  {
+    "name": "McCoy's Building Supply",
+    "category": "Office Supplies",
+    "aliases": [
+      "mccoy's building",
+      "mccoys building supply"
+    ]
+  },
+  {
+    "name": "McDonald's",
+    "category": "Other",
+    "aliases": [
+      "mcdonald's",
+      "mcdonalds"
+    ]
+  },
+  {
+    "name": "Meijer",
+    "category": "Other",
+    "aliases": [
+      "meijer"
+    ]
+  },
+  {
+    "name": "Meineke",
+    "category": "Other",
+    "aliases": [
+      "meineke"
+    ]
+  },
+  {
+    "name": "Menards",
+    "category": "Office Supplies",
+    "aliases": [
+      "menards"
+    ]
+  },
+  {
+    "name": "MetroPCS",
+    "category": "Other",
+    "aliases": [
+      "metro by t-mobile",
+      "metropcs"
+    ]
+  },
+  {
+    "name": "Michaels",
+    "category": "Other",
+    "aliases": [
+      "michaels"
+    ]
+  },
+  {
+    "name": "Microsoft Store",
+    "category": "Other",
+    "aliases": [
+      "microsoft store"
+    ]
+  },
+  {
+    "name": "Midas",
+    "category": "Other",
+    "aliases": [
+      "midas"
+    ]
+  },
+  {
+    "name": "Minuteman Press",
+    "category": "Office Supplies",
+    "aliases": [
+      "minuteman press"
+    ]
+  },
+  {
+    "name": "Mobil",
+    "category": "Fuel",
+    "aliases": [
+      "mobil"
+    ]
+  },
+  {
+    "name": "Moe's Southwest",
+    "category": "Other",
+    "aliases": [
+      "moe's southwest",
+      "moes southwest"
+    ]
+  },
+  {
+    "name": "Motel 6",
+    "category": "Lodging",
+    "aliases": [
+      "motel 6"
+    ]
+  },
+  {
+    "name": "Moto Mart",
+    "category": "Fuel",
+    "aliases": [
+      "moto mart",
+      "motomart"
+    ]
+  },
+  {
+    "name": "Mountain Express",
+    "category": "Fuel",
+    "aliases": [
+      "mountain express"
+    ]
+  },
+  {
+    "name": "Murphy Express",
+    "category": "Fuel",
+    "aliases": [
+      "murphy express"
+    ]
+  },
+  {
+    "name": "Murphy USA",
+    "category": "Fuel",
+    "aliases": [
+      "murphy",
+      "murphy usa"
+    ]
+  },
+  {
+    "name": "Mystik",
+    "category": "Fuel",
+    "aliases": [
+      "mystik"
+    ]
+  },
+  {
+    "name": "NAPA Auto Parts",
+    "category": "Other",
+    "aliases": [
+      "napa",
+      "napa auto"
+    ]
+  },
+  {
+    "name": "National Car Rental",
+    "category": "Ground Transportation",
+    "aliases": [
+      "national car rental"
+    ]
+  },
+  {
+    "name": "Netflix",
+    "category": "Other",
+    "aliases": [
+      "netflix"
+    ]
+  },
+  {
+    "name": "Nordstrom",
+    "category": "Other",
+    "aliases": [
+      "nordstrom"
+    ]
+  },
+  {
+    "name": "Northern Tool",
+    "category": "Office Supplies",
+    "aliases": [
+      "northern tool"
+    ]
+  },
+  {
+    "name": "O'Reilly Auto Parts",
+    "category": "Other",
+    "aliases": [
+      "o reilly auto",
+      "o'reilly",
+      "oreilly"
+    ]
+  },
+  {
+    "name": "Office Depot",
+    "category": "Office Supplies",
+    "aliases": [
+      "office depot",
+      "office max",
+      "officemax"
+    ]
+  },
+  {
+    "name": "Olive Garden",
+    "category": "Other",
+    "aliases": [
+      "olive garden"
+    ]
+  },
+  {
+    "name": "Outback Steakhouse",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "outback steakhouse"
+    ]
+  },
+  {
+    "name": "PDQ",
+    "category": "Fuel",
+    "aliases": [
+      "pdq"
+    ]
+  },
+  {
+    "name": "PPG Paints",
+    "category": "Office Supplies",
+    "aliases": [
+      "ppg paint",
+      "ppg paints"
+    ]
+  },
+  {
+    "name": "Pacific Pride",
+    "category": "Fuel",
+    "aliases": [
+      "pacific pride"
+    ]
+  },
+  {
+    "name": "Panda Express",
+    "category": "Other",
+    "aliases": [
+      "panda express"
+    ]
+  },
+  {
+    "name": "Panera Bread",
+    "category": "Other",
+    "aliases": [
+      "panera"
+    ]
+  },
+  {
+    "name": "Papa John's",
+    "category": "Other",
+    "aliases": [
+      "papa john's",
+      "papa johns"
+    ]
+  },
+  {
+    "name": "Pep Boys",
+    "category": "Other",
+    "aliases": [
+      "pep boys"
+    ]
+  },
+  {
+    "name": "PetSmart",
+    "category": "Other",
+    "aliases": [
+      "petsmart"
+    ]
+  },
+  {
+    "name": "Petco",
+    "category": "Other",
+    "aliases": [
+      "petco"
+    ]
+  },
+  {
+    "name": "Petro Stopping Centers",
+    "category": "Fuel",
+    "aliases": [
+      "petro stopping"
+    ]
+  },
+  {
+    "name": "Petro-Canada",
+    "category": "Fuel",
+    "aliases": [
+      "petro canada",
+      "petro-canada"
+    ]
+  },
+  {
+    "name": "Phillips 66",
+    "category": "Fuel",
+    "aliases": [
+      "phillips 66"
+    ]
+  },
+  {
+    "name": "Pilot",
+    "category": "Fuel",
+    "aliases": [
+      "pilot",
+      "pilot flying j"
+    ]
+  },
+  {
+    "name": "Pizza Hut",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "pizza hut"
+    ]
+  },
+  {
+    "name": "Platt Electric",
+    "category": "Office Supplies",
+    "aliases": [
+      "platt electric"
+    ]
+  },
+  {
+    "name": "Popeyes",
+    "category": "Other",
+    "aliases": [
+      "popeyes"
+    ]
+  },
+  {
+    "name": "Pottery Barn",
+    "category": "Other",
+    "aliases": [
+      "pottery barn"
+    ]
+  },
+  {
+    "name": "Publix",
+    "category": "Other",
+    "aliases": [
+      "publix"
+    ]
+  },
+  {
+    "name": "Qdoba",
+    "category": "Other",
+    "aliases": [
+      "qdoba"
+    ]
+  },
+  {
+    "name": "Quality Inn",
+    "category": "Lodging",
+    "aliases": [
+      "quality inn"
+    ]
+  },
+  {
+    "name": "QuickChek",
+    "category": "Fuel",
+    "aliases": [
+      "quick chek",
+      "quickchek"
+    ]
+  },
+  {
+    "name": "QuikTrip",
+    "category": "Fuel",
+    "aliases": [
+      "quik trip",
+      "quiktrip"
+    ]
+  },
+  {
+    "name": "Quill",
+    "category": "Office Supplies",
+    "aliases": [
+      "quill.com"
+    ]
+  },
+  {
+    "name": "REI",
+    "category": "Other",
+    "aliases": [
+      "rei co-op"
+    ]
+  },
+  {
+    "name": "RaceTrac",
+    "category": "Fuel",
+    "aliases": [
+      "racetrac",
+      "racetrack"
+    ]
+  },
+  {
+    "name": "Raising Cane's",
+    "category": "Other",
+    "aliases": [
+      "raising cane's",
+      "raising canes"
+    ]
+  },
+  {
+    "name": "Ralphs",
+    "category": "Other",
+    "aliases": [
+      "ralphs"
+    ]
+  },
+  {
+    "name": "Ramada",
+    "category": "Other",
+    "aliases": [
+      "ramada"
+    ]
+  },
+  {
+    "name": "Red Lobster",
+    "category": "Other",
+    "aliases": [
+      "red lobster"
+    ]
+  },
+  {
+    "name": "Red Roof Inn",
+    "category": "Lodging",
+    "aliases": [
+      "red roof inn"
+    ]
+  },
+  {
+    "name": "Regal Cinemas",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "regal cinemas"
+    ]
+  },
+  {
+    "name": "Residence Inn",
+    "category": "Lodging",
+    "aliases": [
+      "residence inn"
+    ]
+  },
+  {
+    "name": "Rexel",
+    "category": "Office Supplies",
+    "aliases": [
+      "rexel"
+    ]
+  },
+  {
+    "name": "Rite Aid",
+    "category": "Other",
+    "aliases": [
+      "rite aid"
+    ]
+  },
+  {
+    "name": "Road Ranger",
+    "category": "Fuel",
+    "aliases": [
+      "road ranger"
+    ]
+  },
+  {
+    "name": "Ross",
+    "category": "Other",
+    "aliases": [
+      "ross dress for less",
+      "ross stores"
+    ]
+  },
+  {
+    "name": "Royal Farms",
+    "category": "Fuel",
+    "aliases": [
+      "royal farms"
+    ]
+  },
+  {
+    "name": "Rural King",
+    "category": "Office Supplies",
+    "aliases": [
+      "rural king"
+    ]
+  },
+  {
+    "name": "Rutter's",
+    "category": "Fuel",
+    "aliases": [
+      "rutter's",
+      "rutters"
+    ]
+  },
+  {
+    "name": "Safeway",
+    "category": "Other",
+    "aliases": [
+      "safeway"
+    ]
+  },
+  {
+    "name": "Sam's Club",
+    "category": "Other",
+    "aliases": [
+      "sam's club",
+      "sams club"
+    ]
+  },
+  {
+    "name": "Sam's Club Fuel",
+    "category": "Fuel",
+    "aliases": [
+      "sam's club fuel",
+      "sams club gas"
+    ]
+  },
+  {
+    "name": "Sapp Bros",
+    "category": "Fuel",
+    "aliases": [
+      "sapp bros"
+    ]
+  },
+  {
+    "name": "Save A Lot",
+    "category": "Other",
+    "aliases": [
+      "save a lot",
+      "save-a-lot"
+    ]
+  },
+  {
+    "name": "Shake Shack",
+    "category": "Other",
+    "aliases": [
+      "shake shack"
+    ]
+  },
+  {
+    "name": "Sheetz",
+    "category": "Fuel",
+    "aliases": [
+      "sheetz"
+    ]
+  },
+  {
+    "name": "Shell",
+    "category": "Fuel",
+    "aliases": [
+      "shell"
+    ]
+  },
+  {
+    "name": "Sheraton",
+    "category": "Other",
+    "aliases": [
+      "sheraton"
+    ]
+  },
+  {
+    "name": "Sherwin-Williams",
+    "category": "Office Supplies",
+    "aliases": [
+      "sherwin williams",
+      "sherwin-williams"
+    ]
+  },
+  {
+    "name": "ShopRite",
+    "category": "Other",
+    "aliases": [
+      "shoprite"
+    ]
+  },
+  {
+    "name": "Sinclair",
+    "category": "Fuel",
+    "aliases": [
+      "sinclair"
+    ]
+  },
+  {
+    "name": "Sir Speedy",
+    "category": "Office Supplies",
+    "aliases": [
+      "sir speedy"
+    ]
+  },
+  {
+    "name": "SiteOne",
+    "category": "Office Supplies",
+    "aliases": [
+      "siteone"
+    ]
+  },
+  {
+    "name": "Sonic Drive-In",
+    "category": "Other",
+    "aliases": [
+      "sonic drive in",
+      "sonic drive-in"
+    ]
+  },
+  {
+    "name": "Southwest Airlines",
+    "category": "Travel",
+    "aliases": [
+      "southwest airlines"
+    ]
+  },
+  {
+    "name": "Spectrum",
+    "category": "Other",
+    "aliases": [
+      "spectrum"
+    ]
+  },
+  {
+    "name": "Speedway",
+    "category": "Fuel",
+    "aliases": [
+      "speedway"
+    ]
+  },
+  {
+    "name": "Spinx",
+    "category": "Fuel",
+    "aliases": [
+      "spinx"
+    ]
+  },
+  {
+    "name": "Spirit Airlines",
+    "category": "Travel",
+    "aliases": [
+      "spirit airlines"
+    ]
+  },
+  {
+    "name": "Spotify",
+    "category": "Other",
+    "aliases": [
+      "spotify"
+    ]
+  },
+  {
+    "name": "Sprint",
+    "category": "Other",
+    "aliases": [
+      "sprint store"
+    ]
+  },
+  {
+    "name": "Sprouts",
+    "category": "Other",
+    "aliases": [
+      "sprouts farmers",
+      "sprouts market"
+    ]
+  },
+  {
+    "name": "Staples",
+    "category": "Office Supplies",
+    "aliases": [
+      "staples"
+    ],
+    "slogans": [
+      "that was easy"
+    ]
+  },
+  {
+    "name": "Starbucks",
+    "category": "Other",
+    "aliases": [
+      "starbucks"
+    ]
+  },
+  {
+    "name": "Stewart's Shops",
+    "category": "Fuel",
+    "aliases": [
+      "stewart's shops",
+      "stewarts shops"
+    ]
+  },
+  {
+    "name": "Stinker Stores",
+    "category": "Fuel",
+    "aliases": [
+      "stinker stores"
+    ]
+  },
+  {
+    "name": "Stop & Shop",
+    "category": "Other",
+    "aliases": [
+      "stop & shop",
+      "stop and shop"
+    ]
+  },
+  {
+    "name": "Stripes",
+    "category": "Fuel",
+    "aliases": [
+      "stripes"
+    ]
+  },
+  {
+    "name": "Subway",
+    "category": "Other",
+    "aliases": [
+      "subway"
+    ]
+  },
+  {
+    "name": "Sunoco",
+    "category": "Fuel",
+    "aliases": [
+      "sunoco"
+    ]
+  },
+  {
+    "name": "Super 8",
+    "category": "Other",
+    "aliases": [
+      "super 8"
+    ]
+  },
+  {
+    "name": "Sutherlands",
+    "category": "Office Supplies",
+    "aliases": [
+      "sutherlands"
+    ]
+  },
+  {
+    "name": "T-Mobile",
+    "category": "Other",
+    "aliases": [
+      "t mobile",
+      "t-mobile"
+    ]
+  },
+  {
+    "name": "TJ Maxx",
+    "category": "Other",
+    "aliases": [
+      "t.j. maxx",
+      "tj maxx"
+    ]
+  },
+  {
+    "name": "Taco Bell",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "taco bell"
+    ]
+  },
+  {
+    "name": "Target",
+    "category": "Other",
+    "aliases": [
+      "target"
+    ],
+    "slogans": [
+      "expect more pay less"
+    ]
+  },
+  {
+    "name": "Texaco",
+    "category": "Fuel",
+    "aliases": [
+      "texaco"
+    ]
+  },
+  {
+    "name": "Texas Roadhouse",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "texas roadhouse"
+    ]
+  },
+  {
+    "name": "The Container Store",
+    "category": "Other",
+    "aliases": [
+      "container store"
+    ]
+  },
+  {
+    "name": "The Home Depot",
+    "category": "Office Supplies",
+    "aliases": [
+      "home depot",
+      "homedepot",
+      "the home depot"
+    ],
+    "slogans": [
+      "how doers get more done",
+      "more saving more doing"
+    ]
+  },
+  {
+    "name": "The Tile Shop",
+    "category": "Office Supplies",
+    "aliases": [
+      "tile shop"
+    ]
+  },
+  {
+    "name": "The UPS Store",
+    "category": "Office Supplies",
+    "aliases": [
+      "the ups store",
+      "ups store"
+    ]
+  },
+  {
+    "name": "Thorntons",
+    "category": "Fuel",
+    "aliases": [
+      "thorntons"
+    ]
+  },
+  {
+    "name": "Tim Hortons",
+    "category": "Other",
+    "aliases": [
+      "tim hortons"
+    ]
+  },
+  {
+    "name": "Tires Plus",
+    "category": "Other",
+    "aliases": [
+      "tires plus"
+    ]
+  },
+  {
+    "name": "Tom Thumb",
+    "category": "Fuel",
+    "aliases": [
+      "tom thumb"
+    ]
+  },
+  {
+    "name": "Tractor Supply",
+    "category": "Office Supplies",
+    "aliases": [
+      "tractor supply"
+    ]
+  },
+  {
+    "name": "Trader Joe's",
+    "category": "Other",
+    "aliases": [
+      "trader joe",
+      "trader joe's"
+    ]
+  },
+  {
+    "name": "TravelCenters of America",
+    "category": "Fuel",
+    "aliases": [
+      "ta petro",
+      "travel centers of america",
+      "travelcenters"
+    ]
+  },
+  {
+    "name": "True Value",
+    "category": "Office Supplies",
+    "aliases": [
+      "true value"
+    ]
+  },
+  {
+    "name": "Turkey Hill",
+    "category": "Fuel",
+    "aliases": [
+      "turkey hill"
+    ]
+  },
+  {
+    "name": "UPS",
+    "category": "Other",
+    "aliases": [
+      "united parcel",
+      "ups ground"
+    ]
+  },
+  {
+    "name": "USPS",
+    "category": "Shipping & Postage",
+    "aliases": [
+      "post office",
+      "u.s. postal",
+      "usps"
+    ]
+  },
+  {
+    "name": "Uber",
+    "category": "Other",
+    "aliases": [
+      "uber"
+    ]
+  },
+  {
+    "name": "Ultramar",
+    "category": "Fuel",
+    "aliases": [
+      "ultramar"
+    ]
+  },
+  {
+    "name": "United Airlines",
+    "category": "Travel",
+    "aliases": [
+      "united airlines"
+    ]
+  },
+  {
+    "name": "United Dairy Farmers",
+    "category": "Fuel",
+    "aliases": [
+      "united dairy farmers"
+    ]
+  },
+  {
+    "name": "Valero",
+    "category": "Fuel",
+    "aliases": [
+      "valero"
+    ]
+  },
+  {
+    "name": "Valvoline",
+    "category": "Other",
+    "aliases": [
+      "valvoline",
+      "valvoline instant"
+    ]
+  },
+  {
+    "name": "Verizon",
+    "category": "Other",
+    "aliases": [
+      "verizon"
+    ]
+  },
+  {
+    "name": "Vons",
+    "category": "Other",
+    "aliases": [
+      "vons"
+    ]
+  },
+  {
+    "name": "Vrbo",
+    "category": "Other",
+    "aliases": [
+      "vrbo"
+    ]
+  },
+  {
+    "name": "W.B. Mason",
+    "category": "Office Supplies",
+    "aliases": [
+      "w.b. mason",
+      "wb mason"
+    ]
+  },
+  {
+    "name": "Waffle House",
+    "category": "Meals & Entertainment",
+    "aliases": [
+      "waffle house"
+    ]
+  },
+  {
+    "name": "Walgreens",
+    "category": "Other",
+    "aliases": [
+      "walgreens"
+    ]
+  },
+  {
+    "name": "Walmart",
+    "category": "Other",
+    "aliases": [
+      "wal-mart",
+      "walmart"
+    ],
+    "slogans": [
+      "save money live better"
+    ]
+  },
+  {
+    "name": "Wawa",
+    "category": "Fuel",
+    "aliases": [
+      "wawa"
+    ]
+  },
+  {
+    "name": "Wayfair",
+    "category": "Other",
+    "aliases": [
+      "wayfair"
+    ]
+  },
+  {
+    "name": "Wegmans",
+    "category": "Other",
+    "aliases": [
+      "wegmans"
+    ]
+  },
+  {
+    "name": "Wendy's",
+    "category": "Other",
+    "aliases": [
+      "wendy's",
+      "wendys"
+    ]
+  },
+  {
+    "name": "Westin",
+    "category": "Other",
+    "aliases": [
+      "westin"
+    ]
+  },
+  {
+    "name": "Whataburger",
+    "category": "Other",
+    "aliases": [
+      "whataburger"
+    ]
+  },
+  {
+    "name": "White Cap",
+    "category": "Office Supplies",
+    "aliases": [
+      "white cap"
+    ]
+  },
+  {
+    "name": "Whole Foods",
+    "category": "Other",
+    "aliases": [
+      "whole foods"
+    ]
+  },
+  {
+    "name": "Williams-Sonoma",
+    "category": "Other",
+    "aliases": [
+      "williams sonoma",
+      "williams-sonoma"
+    ]
+  },
+  {
+    "name": "WinCo Foods",
+    "category": "Other",
+    "aliases": [
+      "winco",
+      "winco foods"
+    ]
+  },
+  {
+    "name": "Wingstop",
+    "category": "Other",
+    "aliases": [
+      "wingstop"
+    ]
+  },
+  {
+    "name": "Winsupply",
+    "category": "Office Supplies",
+    "aliases": [
+      "winnelson",
+      "winsupply"
+    ]
+  },
+  {
+    "name": "World Market",
+    "category": "Other",
+    "aliases": [
+      "world market"
+    ]
+  },
+  {
+    "name": "Wyndham",
+    "category": "Other",
+    "aliases": [
+      "wyndham"
+    ]
+  },
+  {
+    "name": "Xfinity",
+    "category": "Other",
+    "aliases": [
+      "comcast",
+      "xfinity"
+    ]
+  },
+  {
+    "name": "Yesway",
+    "category": "Fuel",
+    "aliases": [
+      "yesway"
+    ]
+  },
+  {
+    "name": "Zaxby's",
+    "category": "Other",
+    "aliases": [
+      "zaxby's",
+      "zaxbys"
+    ]
+  }
+]

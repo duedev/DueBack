@@ -56,8 +56,19 @@ export async function runVisionAssist(
   ex: Extraction,
   ctx: VisionContext,
 ): Promise<VisionAssist | null> {
-  const cfg = getVisionConfig();
-  if (!visionConfigured(cfg) || !shouldAssist(ex)) return null;
+  let cfg = getVisionConfig();
+  if (!shouldAssist(ex)) return null;
+  if (cfg.enabled) {
+    // Signed-in users route through the key-holding Edge Function so no API
+    // key ever lives in the browser (their own key, if set, still wins).
+    try {
+      const { serverProxyOverride } = await import("../../supabase/aiProxy.ts");
+      cfg = (await serverProxyOverride(cfg)) ?? cfg;
+    } catch {
+      /* sync layer absent/unconfigured — keep the local config */
+    }
+  }
+  if (!visionConfigured(cfg)) return null;
   if (!withinBudget(cfg)) {
     console.warn("[vision] spend cap reached — skipping the paid fallback.");
     return null;

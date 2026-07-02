@@ -5,6 +5,11 @@ import { excelMoneyFormat, safeAmount } from "../util/money.ts";
 import { formatDate } from "../util/format.ts";
 import { computeInsights, type Insights } from "./insights.ts";
 import { thumbnail } from "./images.ts";
+import {
+  categoryChartImage,
+  dailyChartImage,
+  type ChartImage,
+} from "./charts.ts";
 
 // The output is the point (§3). A themed, multi-sheet workbook: a Summary the
 // user can submit, per-category sheets with the receipt images attached, totals
@@ -41,7 +46,7 @@ export async function buildWorkbook(
 ): Promise<ExportResult> {
   const rows = exportable(receipts);
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Reimbursements Online";
+  wb.creator = "Reimbursements F5";
   wb.created = new Date();
   wb.properties.date1904 = false;
 
@@ -70,8 +75,15 @@ export async function buildWorkbook(
   const currency = dominantCurrency(rows);
   const insights = computeInsights(rows);
 
+  // Chart images for the Insights sheet (browser only — null in Node, and the
+  // workbook builds fine without them).
+  const charts = {
+    category: await categoryChartImage(insights).catch(() => null),
+    daily: await dailyChartImage(insights).catch(() => null),
+  };
+
   buildSummarySheet(wb, batch, rows, totalCost, currency, insights);
-  buildInsightsSheet(wb, insights, currency);
+  buildInsightsSheet(wb, insights, currency, charts);
   buildReceiptsSheet(wb, "All Receipts", rows, imageByReceipt, true);
 
   for (const cat of CATEGORIES) {
@@ -241,6 +253,7 @@ function buildInsightsSheet(
   wb: ExcelJS.Workbook,
   insights: Insights,
   currency: string,
+  charts: { category: ChartImage | null; daily: ChartImage | null },
 ): void {
   const ws = wb.addWorksheet("Insights", {
     properties: { tabColor: { argb: INK } },
@@ -284,6 +297,23 @@ function buildInsightsSheet(
     cell.font = { bold: true, color: { argb: INK } };
     if (numFmt) cell.numFmt = numFmt;
     r++;
+  }
+
+  // Chart images (rendered in-browser with Chart.js; skipped headless).
+  // Placed in column G so the KPI/table column stays clean.
+  let chartRow = 3;
+  for (const img of [charts.category, charts.daily]) {
+    if (!img) continue;
+    const id = wb.addImage({ buffer: img.buffer, extension: "png" });
+    // Scale ~0.72 so both charts sit comfortably beside the tables.
+    const w = Math.round(img.width * 0.72);
+    const h = Math.round(img.height * 0.72);
+    ws.addImage(id, {
+      tl: { col: 6, row: chartRow },
+      ext: { width: w, height: h },
+      editAs: "oneCell",
+    });
+    chartRow += Math.ceil(h / 18) + 2;
   }
 
   // Top vendors + daily totals tables

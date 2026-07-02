@@ -48,7 +48,8 @@ export type FlagCode =
   | "stale_date"
   | "duplicate"
   | "uncategorized"
-  | "large_amount";
+  | "large_amount"
+  | "logo_mismatch";
 
 export interface Flag {
   code: FlagCode;
@@ -75,6 +76,26 @@ export interface Batch {
   jobNumber: string;
   createdAt: number;
   updatedAt: number;
+}
+
+/** How the vendor identity was (or wasn't) confirmed by the visual logo layer. */
+export interface LogoMatch {
+  brand: string;
+  /** Cosine similarity 0..1 against the brand-logo embedding index. */
+  score: number;
+  /** Which signal named the vendor: exact OCR text, visual logo, or AI assist. */
+  source: "ocr" | "logo" | "ai";
+}
+
+/** A brand the user taught the app by uploading a logo image (zero-shot,
+ *  no retraining) — stored locally, synced to `brand_logos` when signed in. */
+export interface StoredBrand {
+  id: string;
+  name: string;
+  category: Category;
+  /** L2-normalized image-embedding vector of the reference logo. */
+  embedding: number[];
+  createdAt: number;
 }
 
 export interface Receipt {
@@ -108,6 +129,9 @@ export interface Receipt {
 
   /** Full OCR text, kept for re-parsing and the review panel. */
   ocrText?: string;
+
+  /** Result of the visual-logo / brand-identity fusion, when it ran. */
+  logoMatch?: LogoMatch;
 
   methodUsed: ExtractionMethod;
   /** When a paid tier produced the result, which provider/model (for the

@@ -2,7 +2,7 @@
 // should never face a choice to get a result. These are the guardrails that
 // also cap cost/abuse (§11) and the levers that keep marginal cost ~ $0 (§9).
 
-export const APP_NAME = "Reimbursements Online";
+export const APP_NAME = "Reimbursements F5";
 
 /** Input hardening + per-batch volume caps (§11). Polite refusal, not an invoice. */
 export const LIMITS = {

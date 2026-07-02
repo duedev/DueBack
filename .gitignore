@@ -7,3 +7,6 @@ dev-dist/
 tmp/
 *.log
 public/vendor
+.env
+.env.*
+!.env.example

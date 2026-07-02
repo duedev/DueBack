@@ -9,7 +9,14 @@ import type {
 import { parseAmount, detectCurrency } from "../util/money.ts";
 import { monthFromName, toIso, fromIso, daysBetween } from "../util/format.ts";
 import { categorize } from "../config/categories.ts";
-import { matchVendor, wordBoundaryMatcher } from "../config/vendors.ts";
+import {
+  matchVendor,
+  wordBoundaryMatcher,
+  normalizeGlyphs,
+  fuzzyMatchVendor,
+  FUZZY_RENAME_RATIO,
+  type FuzzyVendorMatch,
+} from "../config/vendors.ts";
 import { CONFIDENCE, FLAGS, CURRENCY_DEFAULT } from "../config/constants.ts";
 
 // Extract structured fields from OCR text with rules/heuristics (§5 step 3).
@@ -322,6 +329,15 @@ function lineBBoxForAlias(lines: OcrLine[], alias: string): BBox | undefined {
   for (const line of lines) {
     if (re.test(line.text.toLowerCase())) return line.bbox;
   }
+  // Glyph fallback: the alias may only surface after OCR-confusion folding
+  // (e.g. the line reads "7-ELEUEN" but the alias is "7-eleven").
+  const normAlias = normalizeGlyphs(alias);
+  if (normAlias) {
+    const nre = wordBoundaryMatcher(normAlias);
+    for (const line of lines) {
+      if (nre.test(normalizeGlyphs(line.text))) return line.bbox;
+    }
+  }
   return undefined;
 }
 
@@ -464,15 +480,30 @@ export function parseReceipt(
   // address-skipping line heuristic when no known brand is present.
   const known = matchVendor(ocr.text);
   let vendor = findVendor(lines);
+  let fuzzy: FuzzyVendorMatch | null = null;
   if (known) {
     const field: Field<string> = { value: known.name, confidence: 0.92 };
     const bbox = lineBBoxForAlias(lines, known.alias);
     if (bbox) field.bbox = bbox;
     vendor = field;
+  } else if (vendor?.value) {
+    // Bounded fuzzy backstop: only on the short vendor-name candidate, never
+    // the whole receipt. A strong hit renames to the canonical brand; a weaker
+    // one is used below as a category hint only.
+    fuzzy = fuzzyMatchVendor(vendor.value);
+    if (fuzzy && fuzzy.ratio >= FUZZY_RENAME_RATIO) {
+      vendor = {
+        ...vendor,
+        value: fuzzy.name,
+        confidence: Math.max(vendor.confidence, 0.85),
+      };
+    }
   }
 
   const hintText = lines.slice(0, 4).map((l) => l.text).join(" ");
-  const cat = categorize(vendor?.value ?? "", hintText, known);
+  const cat = fuzzy
+    ? { category: fuzzy.category, matched: true }
+    : categorize(vendor?.value ?? "", hintText, known);
   const category: Field<Category> = {
     value: cat.category,
     confidence: cat.matched ? 0.85 : 0.4,

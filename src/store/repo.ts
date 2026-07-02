@@ -4,6 +4,7 @@ import type {
   Receipt,
   Job,
   StoredBlob,
+  StoredBrand,
   ReceiptStatus,
 } from "../types.ts";
 import { uid } from "../util/id.ts";
@@ -33,6 +34,11 @@ class Repo {
         console.error("repo listener failed", err);
       }
     }
+  }
+
+  /** Let an external bulk writer (the sync engine) announce a change once. */
+  externalChange(): void {
+    this.notify();
   }
 
   // ---- Blobs (file store) ----------------------------------------------
@@ -178,6 +184,34 @@ class Repo {
 
   async pendingJobCount(): Promise<number> {
     return (await db()).count("jobs");
+  }
+
+  // ---- User-taught logo brands ------------------------------------------
+
+  async putBrand(brand: StoredBrand): Promise<void> {
+    await (await db()).put("brands", brand);
+    this.notify();
+  }
+
+  async listBrands(): Promise<StoredBrand[]> {
+    const all = await (await db()).getAll("brands");
+    return all.sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  async deleteBrand(id: string): Promise<void> {
+    await (await db()).delete("brands", id);
+    this.notify();
+  }
+
+  // ---- Settings (small key/value) ---------------------------------------
+
+  async getSetting<T>(key: string): Promise<T | undefined> {
+    const rec = await (await db()).get("kv", key);
+    return rec?.value as T | undefined;
+  }
+
+  async setSetting(key: string, value: unknown): Promise<void> {
+    await (await db()).put("kv", { key, value });
   }
 }
 

@@ -1,14 +1,11 @@
-import "./ui/styles.css";
-import { registerSW } from "virtual:pwa-register";
-import { App } from "./ui/app.ts";
+import "@fontsource-variable/inter";
+import "@fontsource-variable/fraunces";
+import "./ui/theme.css";
+import { mount } from "svelte";
+import App from "./ui/App.svelte";
 
-// Bootstrap. The whole app is static files; this is the only entry point.
+const target = document.getElementById("app");
+if (!target) throw new Error("#app root element missing");
+target.removeAttribute("aria-busy");
 
-// Keep the offline cache fresh in the background; no prompts, strong defaults.
-registerSW({ immediate: true });
-
-const root = document.getElementById("app");
-if (root) {
-  const app = new App(root);
-  void app.init();
-}
+mount(App, { target });

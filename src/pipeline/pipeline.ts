@@ -5,13 +5,16 @@ import { parseReceipt, type Extraction } from "./extract.ts";
 import { findSemanticDuplicate, type DupRecord } from "./dedup.ts";
 import { getOcrEngine, type OcrEngine } from "./ocr.ts";
 import { runVisionAssist } from "./vision/index.ts";
+import { matchVendor } from "../config/vendors.ts";
+import { logoIndexAvailable, cropHeaderBand, searchLogo, type LogoHit } from "./logo/index.ts";
+import { fuseVendorIdentity } from "./logo/fuse.ts";
 import { CONFIDENCE } from "../config/constants.ts";
-import type { Receipt, Flag, OcrResult, ExtractionMethod } from "../types.ts";
+import type { Receipt, Flag, OcrResult, ExtractionMethod, LogoMatch } from "../types.ts";
 
 // The worker's job, end to end (§8 "Process"): clean → hash (cache/dedup) →
-// OCR (skipped on a cache hit) → rules → dedup → decide status. Free path first,
-// everything deterministic. Each receipt records method_used + cost so the
-// "this cost you $0.00" line is honest.
+// OCR (skipped on a cache hit) → rules → visual logo identity → dedup → decide
+// status. Free path first, everything deterministic. Each receipt records
+// method_used + cost so the "this cost you $0.00" line is honest.
 
 export async function processReceipt(
   receiptId: string,
@@ -62,7 +65,38 @@ export async function processReceipt(
     let cost = 0;
     let ocrTextOut = ocr.text;
 
-    // 4b. Optional paid accuracy dial (§5/§9): for a low-confidence receipt, and
+    // 4b. Visual logo identity. A confident OCR-text brand match is recorded as
+    //     provenance; otherwise, when there is a logo index to match against and
+    //     the vendor is blank/shaky, the header band is embedded and compared
+    //     against the brand index. Best-effort — any failure keeps the rules
+    //     result untouched. Skipped entirely (no model download) while the
+    //     index is empty.
+    let logoMatch: LogoMatch | undefined;
+    try {
+      const textMatch = matchVendor(ocr.text);
+      let logoHit: LogoHit | null = null;
+      if (
+        !textMatch &&
+        (!ex.vendor.value || ex.vendor.confidence < 0.9) &&
+        (await logoIndexAvailable())
+      ) {
+        const region = await cropHeaderBand(cleaned.blob);
+        logoHit = await searchLogo(region);
+      }
+      const fusion = fuseVendorIdentity(ex, textMatch, logoHit);
+      if (fusion.vendor) {
+        ex.vendor = { ...ex.vendor, ...fusion.vendor, edited: false };
+      }
+      if (fusion.category) {
+        ex.category = { value: fusion.category.value, confidence: fusion.category.confidence };
+      }
+      if (fusion.flags.length) ex.flags.push(...fusion.flags);
+      logoMatch = fusion.logoMatch;
+    } catch {
+      /* logo layer is pure upside — never fail the receipt over it */
+    }
+
+    // 4c. Optional paid accuracy dial (§5/§9): for a low-confidence receipt, and
     //     only when the user has opted in + supplied a key, get a vision-model
     //     second opinion. It returns the same Extraction shape, so everything
     //     below is identical. Any failure silently keeps the free result.
@@ -142,6 +176,7 @@ export async function processReceipt(
       confidence: ex.confidence,
       flags,
       ocrText: ocrTextOut,
+      logoMatch,
       methodUsed,
       methodDetail,
       cost,

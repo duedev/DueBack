@@ -3,6 +3,10 @@ name: Deploy to GitHub Pages
 # Builds the static site (Vite) and publishes dist/ to GitHub Pages.
 # The build's prebuild step vendors the Tesseract OCR core + language data into
 # dist/, so the deployed app runs fully offline at $0 with no third-party CDN.
+#
+# Optional build-time secrets:
+#   OPENROUTER_API_KEY      — bakes in the free vision-assist key (never in source)
+#   VITE_SUPABASE_URL/KEY   — enables the optional cloud-sync layer
 
 on:
   push:
@@ -23,8 +27,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # The deploy doesn't need Playwright's browsers (used only for local e2e).
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -1,12 +1,12 @@
 // End-to-end smoke test against the real production build, driven through a
 // headless Chromium. Proves the browser-only paths the unit tests can't:
-// IndexedDB storage, canvas image-prep, on-device Tesseract OCR, the board/
-// review UI, and xlsx export. Run with: node tests/e2e.mjs
+// the landing hero, IndexedDB storage, canvas image-prep, on-device Tesseract
+// OCR, the board/review UI, and xlsx export. Run with: node tests/e2e.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import sharp from "sharp";
 import ExcelJS from "exceljs";
@@ -14,9 +14,6 @@ import ExcelJS from "exceljs";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 5179;
 const BASE = `http://localhost:${PORT}/`;
-const CHROME =
-  process.env.CHROME_PATH ||
-  "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 
 const log = (...a) => console.log("•", ...a);
 let failures = 0;
@@ -26,6 +23,23 @@ function check(cond, msg) {
     failures++;
     console.error("FAIL:", msg);
   }
+}
+
+async function launchBrowser() {
+  const candidates = [
+    process.env.CHROME_PATH,
+    "/opt/pw-browsers/chromium",
+    "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try {
+      await access(p);
+      return chromium.launch({ executablePath: p, args: ["--no-sandbox"] });
+    } catch {
+      /* try next */
+    }
+  }
+  return chromium.launch({ args: ["--no-sandbox"] });
 }
 
 async function waitForServer(url, ms = 20000) {
@@ -72,10 +86,7 @@ async function main() {
     await waitForServer(BASE);
     log("server up");
 
-    browser = await chromium.launch({
-      executablePath: CHROME,
-      args: ["--no-sandbox"],
-    });
+    browser = await launchBrowser();
     const ctx = await browser.newContext({ acceptDownloads: true });
     const page = await ctx.newPage();
     page.on("console", (m) => {
@@ -85,44 +96,42 @@ async function main() {
 
     await page.goto(BASE, { waitUntil: "load" });
 
-    // 1. Setup screen → create a batch.
-    await page.getByText("Receipts → a polished report").waitFor({ timeout: 15000 });
-    check(true, "setup screen rendered");
-    await page.locator("input[autocomplete=name]").fill("Ada Lovelace");
-    await page.locator(".field-row input").first().fill("Q1 Coffee Run");
-    await page.getByRole("button", { name: /Start a new report/ }).click();
+    // 1. Landing hero renders.
+    await page.getByRole("heading", { name: /Receipts in/ }).waitFor({ timeout: 15000 });
+    check(true, "landing hero rendered");
 
-    // 2. Board appears.
+    // 2. Add a synthetic receipt straight from the hero CTA's file input.
+    log("uploading synthetic receipt, running on-device OCR…");
+    await page
+      .locator('input[type=file][multiple]')
+      .first()
+      .setInputFiles({
+        name: "receipt.png",
+        mimeType: "image/png",
+        buffer: await makeReceiptPng(),
+      });
+
+    // 3. Workspace board appears with the processing card.
     await page.getByText("Drop receipts here").waitFor({ timeout: 10000 });
-    check(true, "board rendered after creating batch");
-
-    // 3. Upload a synthetic receipt and let on-device OCR run.
-    log("uploading synthetic receipt, running OCR (first run downloads nothing — all local)…");
-    await page.locator("input[type=file][multiple]").setInputFiles({
-      name: "receipt.png",
-      mimeType: "image/png",
-      buffer: await makeReceiptPng(),
-    });
+    check(true, "workspace rendered after adding a file");
 
     // 4. Wait for the card to show a parsed amount.
-    const amount = page.locator(".rcard .amount").first();
-    await amount.waitFor({ timeout: 120000 });
     await page.waitForFunction(
       () => {
-        const e = document.querySelector(".rcard .amount");
+        const e = document.querySelector(".rc .amount");
         return e && /\d/.test(e.textContent || "");
       },
       { timeout: 120000 },
     );
-    const amountText = (await amount.textContent())?.trim();
-    const vendorText = (await page.locator(".rcard .vendor").first().textContent())?.trim();
+    const amountText = (await page.locator(".rc .amount").first().textContent())?.trim();
+    const vendorText = (await page.locator(".rc .vendor").first().textContent())?.trim();
     log(`extracted → vendor="${vendorText}" amount="${amountText}"`);
     check(/8\.99/.test(amountText || ""), `OCR+rules read the total (got ${amountText})`);
     check(/BLUE|BOTTLE|COFFEE/i.test(vendorText || ""), `OCR+rules read the vendor (got ${vendorText})`);
 
     // 5. Verify the receipt persisted in IndexedDB with category + cost.
     const dbInfo = await page.evaluate(async () => {
-      const open = indexedDB.open("reimbursements-online");
+      const open = indexedDB.open("reimbursements-f5");
       const db = await new Promise((res, rej) => {
         open.onsuccess = () => res(open.result);
         open.onerror = () => rej(open.error);
@@ -138,11 +147,22 @@ async function main() {
     check(dbInfo[0]?.cost === 0 && dbInfo[0]?.method === "rules", "recorded as free (rules, $0)");
     check(dbInfo[0]?.cat === "Meals & Entertainment", `categorized (got ${dbInfo[0]?.cat})`);
 
-    // 6. Generate the spreadsheet and validate the downloaded workbook.
+    // 6. Review modal: open the card, check markers/fields, approve.
+    await page.locator(".rc").first().click();
+    await page.getByRole("dialog", { name: /Review receipt/ }).waitFor({ timeout: 10000 });
+    check(true, "review modal opened");
+    const approve = page.getByRole("button", { name: /Approve/ });
+    await approve.click();
+    await page.getByRole("dialog", { name: /Review receipt/ }).waitFor({ state: "hidden", timeout: 10000 });
+    check(true, "approve & next sweep closes when done");
+
+    // 7. Generate the spreadsheet and validate the downloaded workbook.
+    await page.locator("#xb-emp").fill("Ada Lovelace");
+    await page.locator("#xb-job").fill("Q1 Coffee Run");
     const dlDir = await mkdtemp(join(tmpdir(), "reimb-"));
     const [download] = await Promise.all([
-      page.waitForEvent("download", { timeout: 30000 }),
-      page.getByRole("button", { name: /Generate/ }).click(),
+      page.waitForEvent("download", { timeout: 60000 }),
+      page.getByRole("button", { name: /Generate workbook/ }).click(),
     ]);
     const xlsxPath = join(dlDir, download.suggestedFilename());
     await download.saveAs(xlsxPath);
@@ -152,6 +172,7 @@ async function main() {
     await wb.xlsx.readFile(xlsxPath);
     const names = wb.worksheets.map((w) => w.name);
     check(names.includes("Summary"), "workbook has Summary sheet");
+    check(names.includes("Insights"), "workbook has Insights sheet");
     check(names.includes("All Receipts"), "workbook has All Receipts sheet");
     check(
       names.includes("Meals & Entertainment"),

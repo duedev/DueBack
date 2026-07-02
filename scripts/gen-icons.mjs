@@ -10,7 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const iconsDir = join(here, "..", "public", "icons");
 const svg = await readFile(join(iconsDir, "favicon.svg"));
 
-const bg = "#0b1120";
+const bg = "#12100e";
 
 const targets = [
   { name: "icon-192.png", size: 192, pad: 0 },
