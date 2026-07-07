@@ -11,8 +11,12 @@
 
   function onPicked(e: Event): void {
     const input = e.currentTarget as HTMLInputElement;
-    if (input.files?.length) void app.addFiles(input.files);
+    // Copy the live FileList before clearing the input — resetting `value`
+    // empties it while the async addFiles loop is still reading, silently
+    // dropping every file after the first on a multi-select.
+    const files = input.files ? Array.from(input.files) : [];
     input.value = "";
+    if (files.length) void app.addFiles(files);
   }
 
   const accept = LIMITS.acceptedExtensions.join(",");
