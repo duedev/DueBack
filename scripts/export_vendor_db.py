@@ -27,7 +27,7 @@ OUT = HERE.parent / "src" / "data" / "vendorDb.extra.json"
 # fuel/mats/misc → app taxonomy. "misc" brands are refined by name/alias
 # keywords below; anything unrecognized stays "Other" (naming the brand is
 # already the win — category can be corrected in review).
-CATEGORY_BASE = {"fuel": "Fuel", "mats": "Office Supplies", "misc": "Other"}
+CATEGORY_BASE = {"fuel": "Fuel", "mats": "Materials", "misc": "Other"}
 
 MISC_REFINE: list[tuple[str, re.Pattern[str]]] = [
     ("Lodging", re.compile(r"\b(hotel|hotels|inn|suites|resort|lodge|motel)\b", re.I)),

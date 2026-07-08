@@ -101,25 +101,25 @@ export const KNOWN_VENDORS: KnownVendor[] = [
     slogans: ["oh thank heaven for 7-eleven", "oh thank heaven"],
   },
 
-  // ── Office / hardware / general retail → Office Supplies ──────────────────
+  // ── Building materials / hardware → Materials ─────────────────────────────
   // The Home Depot's name is a logo; the only machine-readable brand text is
   // usually the slogan — and OCR often eats its first words ("A get more
   // done."), so distinctive fragments are aliases too.
   {
     name: "The Home Depot",
-    category: "Office Supplies",
+    category: "Materials",
     aliases: ["the home depot", "home depot", "homedepot"],
     slogans: ["how doers get more done", "doers get more done", "get more done"],
   },
-  { name: "Lowe's", category: "Office Supplies", aliases: ["lowe's", "lowes"] },
-  { name: "Menards", category: "Office Supplies", aliases: ["menards"] },
-  { name: "Ace Hardware", category: "Office Supplies", aliases: ["ace hardware"] },
-  { name: "True Value", category: "Office Supplies", aliases: ["true value"] },
-  { name: "Harbor Freight", category: "Office Supplies", aliases: ["harbor freight"] },
-  { name: "Fastenal", category: "Office Supplies", aliases: ["fastenal"] },
-  { name: "Grainger", category: "Office Supplies", aliases: ["w.w. grainger", "grainger"] },
-  { name: "Northern Tool", category: "Office Supplies", aliases: ["northern tool"] },
-  { name: "Sherwin-Williams", category: "Office Supplies", aliases: ["sherwin-williams", "sherwin williams"] },
+  { name: "Lowe's", category: "Materials", aliases: ["lowe's", "lowes"] },
+  { name: "Menards", category: "Materials", aliases: ["menards"] },
+  { name: "Ace Hardware", category: "Materials", aliases: ["ace hardware"] },
+  { name: "True Value", category: "Materials", aliases: ["true value"] },
+  { name: "Harbor Freight", category: "Materials", aliases: ["harbor freight"] },
+  { name: "Fastenal", category: "Materials", aliases: ["fastenal"] },
+  { name: "Grainger", category: "Materials", aliases: ["w.w. grainger", "grainger"] },
+  { name: "Northern Tool", category: "Materials", aliases: ["northern tool"] },
+  { name: "Sherwin-Williams", category: "Materials", aliases: ["sherwin-williams", "sherwin williams"] },
   { name: "Staples", category: "Office Supplies", aliases: ["staples"] },
   { name: "Office Depot", category: "Office Supplies", aliases: ["office depot", "officemax", "office max"] },
   { name: "Best Buy", category: "Office Supplies", aliases: ["best buy"] },
@@ -249,7 +249,7 @@ export const KNOWN_VENDORS: KnownVendor[] = [
 
 const APP_CATEGORIES = new Set<string>([
   "Meals & Entertainment", "Travel", "Lodging", "Ground Transportation",
-  "Fuel", "Office Supplies", "Software & Subscriptions", "Utilities & Phone",
+  "Fuel", "Materials", "Office Supplies", "Software & Subscriptions", "Utilities & Phone",
   "Shipping & Postage", "Professional Services", "Other",
 ]);
 

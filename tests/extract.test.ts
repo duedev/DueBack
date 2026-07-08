@@ -243,3 +243,74 @@ test("real Mobil pump receipt: FUEL SALE is the total, $4.599/G never is", () =>
   assert.equal(r.category.value, "Fuel");
   assert.equal(r.date.value, "2022-12-27");
 });
+
+// ── Pump-math reconciliation + vendor-line rejects (second test-set round) ──
+
+test("pump math verifies a correct fuel total (real 7-Eleven pump block)", () => {
+  const r = parseReceipt(
+    ocr([
+      "OH THANK HEAVEN",
+      "FOR 7-ELEVEN",
+      "09/17/2024 11:12:23",
+      "PUMP 2",
+      "GRADE RUL",
+      "GALLONS 15.582",
+      "PRICE/GAL $ 4.699",
+      "TOTAL FUEL $ 73.22",
+      "AMERICAN EXPRESS",
+    ]),
+  );
+  assert.equal(r.amount.value, 73.22);
+  assert.ok(r.amount.confidence >= 0.95, "pump math boosts confidence");
+  assert.ok(!r.flags.some((f) => f.code === "total_mismatch"), JSON.stringify(r.flags));
+});
+
+test("pump math corrects a garbled fuel total ($3,188.00 class)", () => {
+  const r = parseReceipt(
+    ocr([
+      "WELCOME TO",
+      "MOBIL",
+      "DATE 12/27/22 6:38",
+      "GALLONS: 6.927",
+      "PRICE/G: $4.599",
+      "FUEL SALE $3188.00", // OCR mangled 31.86
+      "CREDIT $3188.00",
+    ]),
+  );
+  assert.equal(r.amount.value, 31.86, `amount ${r.amount.value}`);
+  assert.ok(r.flags.some((f) => /gallons × price/.test(f.message)), JSON.stringify(r.flags));
+});
+
+test("greeting lines never become the vendor (real Mobil Mart header)", () => {
+  const r = parseReceipt(
+    ocr([
+      "WELCOME TO",
+      "M0BIL MART", // brand line mangled past the glyph folds
+      "1200 N St College",
+      "Anaheim CA",
+      "DATE 9/23/24 9:18",
+      "GALLONS: 17.153",
+      "PRICE/G: $4.699",
+      "FUEL SALE $80.60",
+      "CREDIT $80.60",
+    ]),
+  );
+  assert.notEqual(r.vendor.value, "WELCOME TO");
+  assert.equal(r.amount.value, 80.6);
+  assert.equal(r.date.value, "2024-09-23");
+});
+
+test("an OCR-misspelled address suffix (Blvg) never becomes the vendor", () => {
+  const r = parseReceipt(
+    ocr([
+      "", // unreadable logo
+      "1131 N. State College Blvg",
+      "Anaheim CA 92806",
+      "Item 22.00",
+      "TOTAL 24.05",
+      "12/02/2022",
+    ]),
+  );
+  assert.notEqual(r.vendor.value, "1131 N. State College Blvg");
+  assert.equal(r.amount.value, 24.05);
+});

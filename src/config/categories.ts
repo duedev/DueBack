@@ -11,12 +11,15 @@ import { matchVendor, wordBoundaryMatcher, type VendorMatch } from "./vendors.ts
 //      `_kw_pattern`) so short tokens like "inn" or "ink" can't fire inside
 //      "dinner"/"drink", which the previous padded-substring approach risked.
 
+// Report order: Fuel and Materials lead (the original app's taxonomy the
+// user's office expects), Other ("Miscellaneous" in the workbook) closes.
 export const CATEGORIES: Category[] = [
+  "Fuel",
+  "Materials",
   "Meals & Entertainment",
   "Travel",
   "Lodging",
   "Ground Transportation",
-  "Fuel",
   "Office Supplies",
   "Software & Subscriptions",
   "Utilities & Phone",
@@ -33,6 +36,7 @@ export const CATEGORY_META: Record<Category, { color: string; emoji: string }> =
     Lodging: { color: "FF8B5CF6", emoji: "🏨" },
     "Ground Transportation": { color: "FF06B6D4", emoji: "🚕" },
     Fuel: { color: "FFEF4444", emoji: "⛽" },
+    Materials: { color: "FFD97706", emoji: "🧱" },
     "Office Supplies": { color: "FF10B981", emoji: "📎" },
     "Software & Subscriptions": { color: "FF6366F1", emoji: "💻" },
     "Utilities & Phone": { color: "FF14B8A6", emoji: "📶" },
@@ -89,8 +93,15 @@ const RULES: Rule[] = [
     keywords: ["postage", "shipping", "courier", "post office", "freight", "parcel"],
   },
   {
+    category: "Materials",
+    keywords: [
+      "hardware", "lumber", "building supply", "building materials", "paint",
+      "drywall", "concrete", "plumbing supply", "electrical supply", "tool rental",
+    ],
+  },
+  {
     category: "Office Supplies",
-    keywords: ["stationery", "printer", "ink", "toner", "supplies", "hardware", "lumber", "building supply"],
+    keywords: ["stationery", "printer", "ink", "toner", "supplies"],
   },
   {
     category: "Professional Services",

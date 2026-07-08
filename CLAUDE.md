@@ -26,19 +26,19 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + Fraunces).
 | Path | What lives here |
 |---|---|
 | `src/types.ts` | Domain model: Receipt/Batch/Job/Field/Flag/LogoMatch/StoredBrand |
-| `src/pipeline/pipeline.ts` | Per-receipt flow: clean → hash/cache → OCR → rules → **logo fusion** → vision assist → dedup → status |
+| `src/pipeline/pipeline.ts` | Per-receipt flow: clean → hash/cache → OCR (+binarized weak-read rescue) → rules → **logo fusion** → vision assist → highlighter bake (`annotate.ts` → `annotatedKey`) → Python-convention rename (`util/rename.ts`) → dedup → status |
 | `src/pipeline/imagePrep.ts` | canvas prep: EXIF rotate → (opt) perspective → projection-profile deskew → grayscale → edge-energy autocrop → two renders (transient hi-res `ocrBlob` for OCR + stored 1600px blob); `binarizeBlob` for the weak-read rescue |
 | `src/pipeline/binarize.ts` | pure image math (no DOM, Node-tested): luminance, Bradley adaptive threshold, projection-profile skew estimation |
 | `src/pipeline/perspective.ts` | opt-in OpenCV.js quad detect + warp (`VITE_PERSPECTIVE=1`, vendored lib) |
 | `src/pipeline/ocr.ts` | `OcrEngine` seam; Tesseract default; `VITE_OCR_ENGINE=paddle` → `engines/paddle/*` (ONNX det+rec+CTC) |
 | `src/config/vendors.ts` | Brand matcher: curated table + `src/data/vendorDb.extra.json` (generated, 329 brands); passes: exact → glyph-normalized (`normalizeGlyphs`) → bounded fuzzy (`fuzzyMatchVendor`); slogans as long aliases |
-| `src/pipeline/extract.ts` | Rules: grand-total tiers + reconcile, US-first dates, tax, vendor line heuristic + fuzzy hook, confidence, flags; per-field `bbox` powers review markers/callouts |
+| `src/pipeline/extract.ts` | Rules: grand-total tiers + reconcile, **pump-math reconcile** (gallons × price/gal corrects garbled fuel totals), US-first dates, tax, vendor line heuristic (greeting/address rejects) + fuzzy hook, confidence, flags; per-field `bbox` powers review markers/callouts |
 | `src/pipeline/logo/` | Visual logo layer: `embedder.ts` (CLIP seam, lazy, test-fakeable), `index.ts` (bundled `logoIndex.json` + user brands, cosine NN, header-band crop, `addBrandFromImage`), `fuse.ts` (Layer-3 fusion; `LOGO_ACCEPT`) — inert (no model download) while the index is empty |
 | `src/pipeline/vision/` | Opt-in AI assist (OpenRouter/Gemini/Anthropic), spend cap, build-time free key; signed-in users route via `supabase/aiProxy.ts` → `ai-extract` Edge Function |
 | `src/store/` | `db.ts` (IndexedDB v1: batches/receipts/jobs/blobs/brands/kv), `repo.ts` (the one read/write + notify seam), `sync.ts` (Supabase mirror: LWW on `updatedAt`, storage blobs, realtime) |
 | `src/supabase/` | `client.ts` (null unless `VITE_SUPABASE_URL/ANON_KEY`), `auth.ts`, `aiProxy.ts` |
 | `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark), `state.svelte.ts` (the one reactive bridge), `App/Landing(hero+marketing)/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle` |
-| `src/export/` | `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells hyperlink to per-receipt anchors on the category image sheets; anchors precomputed via `blockRows` — keep in sync with the image-block layout), `charts.ts` (Chart.js→PNG for Insights), `insights.ts`, `csv.ts`, `images.ts` |
+| `src/export/` | `zip.ts` (dependency-free ZIP for the images download), `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells hyperlink to per-receipt anchors on the category image sheets; anchors precomputed via `blockRows` — keep in sync with the image-block layout), `charts.ts` (Chart.js→PNG for Insights), `insights.ts`, `csv.ts`, `images.ts` |
 | `supabase/` | `migrations/0001_core.sql` (tables+RLS+storage+realtime), `0002_pgvector.sql` (optional), `functions/ai-extract` (key-holding chat-completions proxy), `functions/logo-search` |
 | `scripts/` | `vendor-tesseract.mjs` (prebuild), `vendor-paddle.mjs` (opt-in), `export_vendor_db.py` (regenerates vendorDb.extra.json from `../Reimbursements/vendor_db.py`), `gen-icons.mjs` |
 | `tests/` | node:test via tsx; `testkit/` = the fixed 9-challenge accuracy gate (+ logo case); `e2e.mjs` + `screenshots.mjs` (Playwright vs `vite preview`) |
@@ -85,5 +85,11 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   returns null without a DOM and the workbook builds without images.
 - Curated `KNOWN_VENDORS` beats the generated JSON on name conflicts; regenerate
   the JSON with `python3 scripts/export_vendor_db.py` (commit the result).
+- **Taxonomy: Fuel and Materials lead `CATEGORIES`, Other closes** — and the
+  workbook renders Other as "Miscellaneous" (`displayCategory`). Hardware/
+  building brands map to Materials (the original's `mats`).
+- **Receipts are renamed post-extraction** to `{cat}_{MM-DD-YY}_{vendor}.ext`
+  (`util/rename.ts`, the original app's convention); the upload's name survives
+  in `originalFileName` — the e2e keys receipts by it, not `fileName`.
 - `.env.example` lists every knob; all optional. Deploy secrets/vars are wired
   in `.github/workflows/deploy.yml`.

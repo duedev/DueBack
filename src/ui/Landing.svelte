@@ -36,11 +36,11 @@
     },
     {
       q: "What kinds of files work?",
-      a: "JPEG, PNG, WebP, HEIC photos and PDFs. Snap receipts with your phone camera or drop in files — crumpled, faded and angled receipts are cleaned up before reading.",
+      a: "JPEG, PNG and WebP photos plus PDFs (HEIC too on Safari). Snap receipts with your phone camera or drop in files — crumpled, faded and tilted receipts are straightened and cleaned up before reading.",
     },
     {
       q: "How does logo recognition help?",
-      a: "Many receipts show the merchant only as a stylized logo the text reader can't spell. The app recognizes the logo visually, names the brand, and files it in the right category — and you can teach it new brands with a single image.",
+      a: "Many receipts show the merchant only as a stylized logo the text reader can't spell. Teach the app a brand once — one clear photo of the logo in Settings — and from then on it recognizes that logo visually, names the brand, and files it in the right category.",
     },
   ];
 </script>
@@ -80,9 +80,10 @@
     <div class="hero-copy">
       <h1>Receipts in.<br />Reimbursement report out.</h1>
       <p class="hero-sub">
-        Snap or drop a pile of receipts. They're read on your device — text
-        <em>and</em> logos — you review the flagged ones in seconds, and out
-        comes a polished Excel workbook your office will actually accept.
+        Snap or drop a pile of receipts. They're read on your device — the
+        printed text, plus any brand logos you've taught it — you review the
+        flagged ones in seconds, and out comes a polished Excel workbook your
+        office will actually accept.
       </p>
       <div class="hero-ctas">
         <button class="btn btn-primary btn-lg" onclick={pick}>
@@ -109,14 +110,14 @@
     <!-- Stylized before/after: receipt → workbook. Pure CSS, no images. -->
     <div class="hero-visual" aria-hidden="true">
       <div class="paper receipt">
-        <div class="r-vendor">MAPLE ST. HARDWARE</div>
+        <div class="r-vendor"><mark class="hl hl-vendor">MAPLE ST. HARDWARE</mark></div>
         <div class="r-line"><span>Wood screws #8</span><span>4.29</span></div>
         <div class="r-line"><span>Paint roller kit</span><span>12.99</span></div>
         <div class="r-line"><span>Drop cloth 9×12</span><span>8.49</span></div>
         <div class="r-line faint"><span>Subtotal</span><span>25.77</span></div>
         <div class="r-line faint"><span>Tax 6.5%</span><span>1.68</span></div>
-        <div class="r-total"><span>TOTAL</span><span>$27.45</span></div>
-        <div class="r-date">06/24/2026 · 14:07</div>
+        <div class="r-total"><span>TOTAL</span><mark class="hl hl-amount">$27.45</mark></div>
+        <div class="r-date"><mark class="hl hl-date">06/24/2026</mark> · 14:07</div>
         <div class="r-scan"></div>
       </div>
 
@@ -132,7 +133,7 @@
           <span>Vendor</span><span>Date</span><span>Category</span><span>Amount</span>
         </div>
         <div class="s-row">
-          <span>Maple St. Hardware</span><span>06/24</span><span><i class="dot d1"></i>Supplies</span><span>27.45</span>
+          <span><mark class="hl hl-vendor">Maple St. Hardware</mark></span><span><mark class="hl hl-date">06/24</mark></span><span><i class="dot d1"></i>Materials</span><span><mark class="hl hl-amount">27.45</mark></span>
         </div>
         <div class="s-row">
           <span>Corner Bistro</span><span>06/24</span><span><i class="dot d2"></i>Meals</span><span>18.20</span>
@@ -498,10 +499,37 @@
   .s-row,
   .s-total {
     display: grid;
-    grid-template-columns: 1.6fr 0.7fr 1.1fr 0.7fr;
+    /* minmax(0,…) lets cells shrink; nothing may bleed out of the card. */
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.7fr) minmax(0, 1.1fr) minmax(0, 0.75fr);
     gap: 0.45rem;
     padding: 0.32rem 0.45rem;
     align-items: center;
+  }
+  .s-head span,
+  .s-row span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hl {
+    background: transparent;
+    color: inherit;
+    border-radius: 3px;
+    padding: 0 0.14em;
+    box-decoration-break: clone;
+  }
+  .hl-vendor {
+    background: color-mix(in srgb, #1d4ed8 22%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #1d4ed8 45%, transparent);
+  }
+  .hl-date {
+    background: color-mix(in srgb, #147246 20%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #147246 45%, transparent);
+  }
+  .hl-amount {
+    background: color-mix(in srgb, #d9480f 20%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #d9480f 45%, transparent);
   }
   .s-head {
     background: var(--accent);

@@ -6,7 +6,6 @@
 
   let dragOver = $state(false);
   let fileInput = $state<HTMLInputElement | null>(null);
-  let cameraInput = $state<HTMLInputElement | null>(null);
 
   const accept = LIMITS.acceptedExtensions.join(",");
 
@@ -29,7 +28,6 @@
 </script>
 
 <input type="file" bind:this={fileInput} onchange={onPicked} {accept} multiple class="sr-only" aria-hidden="true" tabindex="-1" />
-<input type="file" bind:this={cameraInput} onchange={onPicked} accept="image/*" capture="environment" class="sr-only" aria-hidden="true" tabindex="-1" />
 
 <div
   class="zone card"
@@ -59,15 +57,6 @@
     <strong>Drop receipts here</strong>
     <span class="muted">or click to browse — photos, scans, PDFs</span>
   </div>
-  <button
-    class="btn btn-sm camera"
-    onclick={(e) => {
-      e.stopPropagation();
-      cameraInput?.click();
-    }}
-  >
-    📷 Camera
-  </button>
 </div>
 
 <style>
@@ -103,14 +92,5 @@
   }
   .zone-text .muted {
     font-size: 0.88rem;
-  }
-  .camera {
-    margin-left: auto;
-  }
-  @media (hover: hover) and (pointer: fine) {
-    /* Desktop: camera capture is rarely useful; keep it subtle. */
-    .camera {
-      opacity: 0.75;
-    }
   }
 </style>

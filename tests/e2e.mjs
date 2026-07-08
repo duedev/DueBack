@@ -201,7 +201,8 @@ async function main() {
         });
         db.close();
         return all.map((r) => ({
-          file: r.fileName,
+          file: r.originalFileName ?? r.fileName,
+          renamed: r.fileName,
           vendor: r.vendor.value,
           amount: r.amount.value,
           cat: r.category.value,
@@ -245,6 +246,12 @@ async function main() {
     check(skewed.amount === 61.12, `skewed: deskew recovers a 3.5° tilted receipt (got ${skewed.amount})`);
     check(/ACME|HARDWARE/i.test(skewed.vendor || ""), `skewed: vendor (got ${skewed.vendor})`);
 
+    // Files adopt the original app's {category}_{MM-DD-YY}_{vendor} convention.
+    check(
+      /^fuel_06-12-26_shell\.png$/.test(gas.renamed || ""),
+      `gas: renamed to the naming convention (got ${gas.renamed})`,
+    );
+
     // 6. Review modal: open the first card and approve through the sweep.
     await page.locator(".rc").first().click();
     await page.getByRole("dialog", { name: /Review receipt/ }).waitFor({ timeout: 10000 });
@@ -286,6 +293,19 @@ async function main() {
       if (v && typeof v === "object" && v.hyperlink) linkCount++;
     });
     check(linkCount === 4, `summary links every receipt to its image (got ${linkCount})`);
+
+    // 7b. Images (.zip) packages every receipt image.
+    const [zipDl] = await Promise.all([
+      page.waitForEvent("download", { timeout: 60000 }),
+      page.getByRole("button", { name: /Images \(\.zip\)/ }).click(),
+    ]);
+    const zipPath = join(dlDir, zipDl.suggestedFilename());
+    await zipDl.saveAs(zipPath);
+    const zipBytes = await (await import("node:fs/promises")).readFile(zipPath);
+    check(
+      zipBytes[0] === 0x50 && zipBytes[1] === 0x4b && /^Receipts_.*\.zip$/.test(zipDl.suggestedFilename()),
+      `images zip downloads (${zipDl.suggestedFilename()}, ${zipBytes.length} bytes)`,
+    );
 
     // 8. Header brand navigates home; the hero offers the way back.
     await page.locator("header.ws-head .brand").click();

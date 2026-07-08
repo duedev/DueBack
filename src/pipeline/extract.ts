@@ -329,8 +329,13 @@ function findDate(lines: OcrLine[]): Field<string> | null {
   return field;
 }
 
+// "blv\w{0,2}" instead of "blvd": OCR regularly misreads the suffix ("Blvg",
+// "Blvo") and the address line then won a vendor slot.
 const ADDRESS_RE =
-  /\b(street|st\.?|ave|avenue|road|rd\.?|blvd|suite|ste|floor|fl\.?|drive|dr\.?|lane|ln\.?|way|hwy|p\.?o\.?\s*box)\b/i;
+  /\b(street|st\.?|ave|avenue|road|rd\.?|blv\w{0,2}|boulevard|suite|ste|floor|fl\.?|drive|dr\.?|lane|ln\.?|way|hwy|p\.?o\.?\s*box)\b/i;
+// Politeness/boilerplate lines that often sit above the real merchant name.
+const GREETING_RE =
+  /^\s*(welcome(\s+to)?|thank\s*(you|s)|have\s+a\s+nice|greetings|hello)\b/i;
 const PHONE_RE = /(\+?\d[\d\s().-]{6,}\d)/;
 // "Springfield, IL 62704" — a US state abbreviation followed by a ZIP code.
 const STATE_ZIP_RE = /\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/;
@@ -352,6 +357,9 @@ function looksLikeVendorLine(line: OcrLine): boolean {
   if (STREET_NUMBER_RE.test(t) && ADDRESS_RE.test(t)) return false; // "123 Main St"
   if (ADDRESS_RE.test(t)) return false;
   if (/^(receipt|invoice|order|tel|phone|fax|www\.|http)/i.test(t)) return false;
+  // "WELCOME TO" / "THANK YOU" headers are not the merchant — the name is
+  // usually the line below.
+  if (GREETING_RE.test(t)) return false;
   // Register boilerplate ("STORE #4821", "REG 2", "TRANS 0071") is not a
   // merchant name — a numbered store/register/transaction line must not win.
   if (/^(store|reg(?:ister)?|lane|till|terminal|cashier|clerk|trans(?:action)?)\b[\s#:.]*\d/i.test(t)) {
@@ -410,6 +418,85 @@ function cleanVendorName(raw: string): string {
     .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9.&'-]+$/g, "")
     .trim()
     .slice(0, 60);
+}
+
+// ── Pump-math reconciliation ─────────────────────────────────────────────────
+// Fuel receipts print GALLONS and PRICE/GAL alongside the total, so the total
+// is *checkable*: gallons × price ≈ total (pumps round to the cent). This is a
+// deterministic ground truth OCR misreads can't fake — a garbled "$3,188.00"
+// against 6.927 gal × $4.599 is caught immediately.
+
+const FUEL_QTY_RE = /\b(?:gallons?|gal|litres?|liters?)\b/i;
+const FUEL_UNIT_RE = /(?:price\s*\/?\s*g(?:al(?:lon)?)?|per\s+gal(?:lon)?|\$\s*\/\s*g)/i;
+const PLAIN_NUM_RE = /\d+\.\d{1,3}/g;
+
+/** gallons × price/gal from the printed pump lines, or null. */
+function pumpMathTotal(lines: OcrLine[]): number | null {
+  let qty: number | null = null;
+  let unit: number | null = null;
+  for (const line of lines) {
+    const nums = (line.text.match(PLAIN_NUM_RE) ?? []).map(Number);
+    if (qty === null && FUEL_QTY_RE.test(line.text) && !FUEL_UNIT_RE.test(line.text)) {
+      const v = nums.filter((n) => n > 0 && n < 300);
+      if (v.length) qty = v[v.length - 1]!;
+    } else if (unit === null && FUEL_UNIT_RE.test(line.text)) {
+      const v = nums.filter((n) => n > 0.5 && n < 20);
+      if (v.length) unit = v[v.length - 1]!;
+    }
+  }
+  if (qty === null || unit === null) return null;
+  const product = Math.round(qty * unit * 100) / 100;
+  return product >= 1 && product <= 2000 ? product : null;
+}
+
+/** First money hit on any line matching `value` (non-payment lines first). */
+function findHitByValue(lines: OcrLine[], value: number, tol: number): MoneyHit | null {
+  let fallback: MoneyHit | null = null;
+  for (const line of lines) {
+    for (const h of moneyHitsFromLine(line)) {
+      if (Math.abs(h.value - value) > tol) continue;
+      if (!PAYMENT_RE.test(line.text)) return h;
+      fallback ??= h;
+    }
+  }
+  return fallback;
+}
+
+/** Cross-check/correct the amount with pump math. Returns flags plus whether
+ *  the amount now agrees with gallons × price (which silences the noisy
+ *  larger-amount reconcile warning — the math is stronger evidence). */
+function applyPumpMath(
+  lines: OcrLine[],
+  amount: Field<number> | null,
+): { amount: Field<number> | null; verified: boolean; flags: Flag[] } {
+  const expected = pumpMathTotal(lines);
+  if (expected === null) return { amount, verified: false, flags: [] };
+  const tol = 0.05;
+
+  if (amount && Math.abs(amount.value - expected) <= tol) {
+    // The printed total foots with the pump math — highest confidence.
+    return {
+      amount: { ...amount, confidence: Math.max(amount.confidence, 0.95) },
+      verified: true,
+      flags: [],
+    };
+  }
+
+  // The chosen amount disagrees with the pump math. Prefer a printed money
+  // value that matches it (keeps an on-image box); else adopt the computed
+  // product — the misread total is the thing we must not keep.
+  const printed = findHitByValue(lines, expected, tol);
+  const corrected: Field<number> = printed
+    ? { value: printed.value, confidence: 0.92, ...(printed.bbox ? { bbox: printed.bbox } : {}) }
+    : { value: expected, confidence: 0.85 };
+  const note = amount
+    ? `Amount corrected: ${amount.value.toFixed(2)} didn't match gallons × price/gal (≈ ${expected.toFixed(2)}).`
+    : `Amount taken from gallons × price/gal (≈ ${expected.toFixed(2)}).`;
+  return {
+    amount: corrected,
+    verified: true,
+    flags: [{ code: "total_mismatch", severity: "info", message: note }],
+  };
 }
 
 /** Reconcile the chosen amount against the printed totals (§5). */
@@ -508,7 +595,11 @@ export function parseReceipt(
           words: [],
         }));
 
-  const { amount, subtotal, allMax } = findAmount(lines);
+  const found = findAmount(lines);
+  const { subtotal, allMax } = found;
+  // Fuel receipts carry their own ground truth: gallons × price/gal.
+  const pump = applyPumpMath(lines, found.amount);
+  const amount = pump.amount;
   const tax = findTax(lines);
   const date = findDate(lines);
   const currency = detectCurrency(ocr.text, opts.currencyDefault ?? CURRENCY_DEFAULT);
@@ -559,7 +650,12 @@ export function parseReceipt(
       message: "Unusually large amount — verify.",
     });
   }
-  flags.push(...reconcile(amount, tax, subtotal, allMax));
+  // When pump math vouches for the amount, the "larger amount appears above"
+  // reconcile warning is noise (stray gallons/garbled tokens) — drop it.
+  const reconcileFlags = reconcile(amount, tax, subtotal, allMax).filter(
+    (f) => !pump.verified || f.code !== "total_mismatch",
+  );
+  flags.push(...reconcileFlags, ...pump.flags);
   flags.push(...dateFlags(date));
 
   const confidence = overallConfidence(ocr.confidence, amount, date, vendor, flags);
