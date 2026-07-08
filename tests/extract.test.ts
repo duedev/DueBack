@@ -372,3 +372,84 @@ test("dot-matrix date glyphs recover: @2/01/2823 → 2023-02-01", () => {
   );
   assert.equal(r.date.value, "2023-02-01");
 });
+
+// ── Round 3: label glyphs, subtotal window, fuzzy brands, written dates ──────
+
+test("digit-glyph labels (T0TAL/SUBT0TAL) still anchor the amount", () => {
+  const r = parseReceipt(
+    ocr([
+      "SHOP",
+      "2819.28 38.56", // glued qty@price monster
+      "SUBT0TAL 229.85",
+      "5ALES TAX 18.96",
+      "T0TAL $248.81",
+    ]),
+  );
+  assert.equal(r.amount.value, 248.81, `amount ${r.amount.value}`);
+});
+
+test("subtotal window rescues the total when the tax line is unreadable", () => {
+  const r = parseReceipt(
+    ocr([
+      "SHOP",
+      "2819.28 38.56",
+      "SUBTOTAL 229.85",
+      "XXLES XXX 1X.96", // tax line destroyed
+      "XXTAL $248.81", // label destroyed, value alive
+    ]),
+  );
+  assert.equal(r.amount.value, 248.81, `amount ${r.amount.value}`);
+  assert.ok(r.flags.some((f) => /outside subtotal/.test(f.message)), JSON.stringify(r.flags));
+});
+
+test("fuzzy header sweep: one or two letters off resolves to the brand", () => {
+  const mobtl = parseReceipt(
+    ocr(["WELC0ME TO", "MOBTL", "DATE 12/27/22 6:38", "GALLONS: 6.927", "PRICE/G: $4.599", "FUEL SALE $31.86"]),
+  );
+  assert.equal(mobtl.vendor.value, "Mobil");
+  assert.equal(mobtl.category.value, "Fuel");
+
+  const ctater = parseReceipt(
+    ocr(["CTATER ma r k et", "1131 N. State College Blvd.", "Item 22.00", "TOTAL 24.05", "12/02/2022"]),
+  );
+  assert.equal(ctater.vendor.value, "Stater Bros. Markets");
+
+  const farmer = parseReceipt(
+    ocr(["FARMER 80YS", "WED SEPTEMBER 11,2024", "CHECK #606564-1", "1 BIG CHEESE CMB $12.49", "TOTAL $67.38"]),
+  );
+  assert.equal(farmer.vendor.value, "Farmer Boys");
+  assert.equal(farmer.category.value, "Meals & Entertainment");
+});
+
+test("garbled brand line M0BIL MART resolves via digit folds", () => {
+  const r = parseReceipt(
+    ocr(["WELCOME TO", "M0BIL MART", "1200 N St College", "GALLONS: 17.153", "PRICE/G: $4.699", "FUEL SALE $80.60"]),
+  );
+  assert.equal(r.vendor.value, "Mobil");
+});
+
+test("written-out dates parse, including a comma with no space", () => {
+  const noSpace = parseReceipt(ocr(["Vendor", "WED SEPTEMBER 11,2024", "TOTAL 12.00"]));
+  assert.equal(noSpace.date.value, "2024-09-11");
+  const spaced = parseReceipt(ocr(["Vendor", "September 11, 2024", "TOTAL 12.00"]));
+  assert.equal(spaced.date.value, "2024-09-11");
+});
+
+test("dot-matrix date glyphs beyond @: l2/O2/2@23 → 2023-12-02", () => {
+  const r = parseReceipt(ocr(["Vendor", "l2/O2/2@23 04:15PM", "TOTAL 12.00"]));
+  assert.equal(r.date.value, "2023-12-02");
+});
+
+test("pump structure alone categorizes as Fuel", () => {
+  const r = parseReceipt(
+    ocr(["UNREADABLE HEADER", "GALLONS: 10.000", "PRICE/G: $5.000", "FUEL SALE $50.00"]),
+  );
+  assert.equal(r.category.value, "Fuel");
+});
+
+test("date/amount markers are sliced to the match, not full-width", () => {
+  const r = parseReceipt(
+    ocr(["JOES DINER", "1018 00061 63802 09/05/23 12:00 PM", "TOTAL 24.05"]),
+  );
+  assert.ok(r.date.bbox && r.date.bbox.w < 0.5, `date box w=${r.date.bbox?.w}`);
+});

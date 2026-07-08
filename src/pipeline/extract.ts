@@ -14,6 +14,7 @@ import {
   wordBoundaryMatcher,
   normalizeGlyphs,
   fuzzyMatchVendor,
+  fuzzyMatchVendorLines,
   FUZZY_RENAME_RATIO,
   type FuzzyVendorMatch,
 } from "../config/vendors.ts";
@@ -81,24 +82,33 @@ function moneyHitsFromLine(line: OcrLine, lenient = false): MoneyHit[] {
     }
   }
   if (hits.length === 0) {
-    // Words may be split oddly (or absent); scan the whole line text.
-    const matches = line.text.match(new RegExp(MONEY_SRC, "g")) ?? [];
-    for (const m of matches) {
-      const v = parseAmount(m);
-      if (v !== null) hits.push({ value: v, bbox: line.bbox });
+    // Words may be split oddly (or absent); scan the whole line text and
+    // slice the line box to the match so markers stay tight.
+    for (const m of line.text.matchAll(new RegExp(MONEY_SRC, "g"))) {
+      const v = parseAmount(m[0]);
+      if (v !== null) {
+        const hit: MoneyHit = { value: v };
+        const b = sliceBBox(line, m.index ?? 0, (m.index ?? 0) + m[0].length);
+        if (b) hit.bbox = b;
+        hits.push(hit);
+      }
     }
   }
   if (hits.length === 0 && lenient) {
     // Lenient pass (labeled-total lines only): a bare integer can be the value
-    // ("TOTAL 9"), but drop date/time tokens first so "05/10/2026" or "14:03"
-    // can never be read as the total.
+    // ("TOTAL 9"), but blank date/time tokens (same-length, offsets preserved)
+    // so "05/10/2026" or "14:03" can never be read as the total.
     const cleaned = line.text
-      .replace(/\b\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\b/g, " ")
-      .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, " ");
-    const matches = cleaned.match(LENIENT_MONEY_RE) ?? [];
-    for (const m of matches) {
-      const v = parseAmount(m);
-      if (v !== null) hits.push({ value: v, bbox: line.bbox });
+      .replace(/\b\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\b/g, (m) => " ".repeat(m.length))
+      .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, (m) => " ".repeat(m.length));
+    for (const m of cleaned.matchAll(LENIENT_MONEY_RE)) {
+      const v = parseAmount(m[0]);
+      if (v !== null) {
+        const hit: MoneyHit = { value: v };
+        const b = sliceBBox(line, m.index ?? 0, (m.index ?? 0) + m[0].length);
+        if (b) hit.bbox = b;
+        hits.push(hit);
+      }
     }
   }
   return hits;
@@ -132,6 +142,23 @@ const NON_GRAND_RE =
 const PAYMENT_RE =
   /\b(cash|change|tender(?:ed)?|tend|card|visa|master\s*card|mastercard|amex|american\s*express|debit|credit|approval|auth|points|rewards?)\b/i;
 const TAX_RE = /\b(sales\s*tax|tax|vat|gst|hst|tps|tvq)\b/i;
+
+/** Fold digit-glyph OCR confusions for LABEL matching only ("T0TAL" → "total",
+ *  "5UBTOTAL" → "subtotal"). Values are always parsed from the raw text. */
+function labelFold(s: string): string {
+  return s.toLowerCase().replace(/0/g, "o").replace(/1/g, "l").replace(/5/g, "s");
+}
+
+/** Proportional slice of a line's bbox for a substring match — keeps fallback
+ *  markers tight to the value instead of spanning the full line. */
+function sliceBBox(line: OcrLine, start: number, end: number): BBox | undefined {
+  const b = line.bbox;
+  if (!b || b.w <= 0) return b;
+  const len = Math.max(1, line.text.length);
+  const x = b.x + (b.w * Math.max(0, start)) / len;
+  const w = Math.min((b.w * Math.max(1, end - start)) / len, b.x + b.w - x);
+  return { x, y: b.y, w, h: b.h };
+}
 const DATE_LABEL_RE = /\b(date|invoice\s*date|order\s*date|transaction\s*date)\b/i;
 
 function findAmount(lines: OcrLine[]): {
@@ -145,7 +172,7 @@ function findAmount(lines: OcrLine[]): {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
-    const text = line.text;
+    const text = labelFold(line.text);
 
     // Track the largest money value anywhere (used for reconciliation), but
     // skip payment/tender lines whose value can exceed the actual total.
@@ -210,7 +237,8 @@ function findAmount(lines: OcrLine[]): {
 
 function findTax(lines: OcrLine[]): Field<number> | null {
   for (const line of lines) {
-    if (TAX_RE.test(line.text) && !SUBTOTAL_RE.test(line.text)) {
+    const folded = labelFold(line.text);
+    if (TAX_RE.test(folded) && !SUBTOTAL_RE.test(folded)) {
       const hit = rightmostAmount(line, true);
       if (hit && hit.value >= 0) {
         const field: Field<number> = {
@@ -232,32 +260,50 @@ interface DateHit {
   labeled: boolean;
 }
 
+/** Repair digit-glyph confusions INSIDE numeric-date-shaped tokens only
+ *  ("l2/O2/2@23" → "12/02/2023") — month names elsewhere stay untouched. */
+function fixDateGlyphs(t: string): string {
+  const digitish = "[\\dOoIlSB@]";
+  const re = new RegExp(
+    `(?<![A-Za-z\\d])${digitish}{1,4}[-/.]${digitish}{1,2}[-/.]${digitish}{2,4}(?![A-Za-z\\d])`,
+    "g",
+  );
+  return t.replace(re, (tok) =>
+    tok
+      .replace(/[Oo@]/g, "0")
+      .replace(/[Il]/g, "1")
+      .replace(/S/g, "5")
+      .replace(/B/g, "8"),
+  );
+}
+
 function parseDatesInLine(line: OcrLine, labeled: boolean): DateHit[] {
   const out: DateHit[] = [];
-  // Dot-matrix pump printers: '@' is almost always a misread '0'.
-  const t = line.text.replace(/@/g, "0");
+  const t = fixDateGlyphs(line.text);
+  const box = (m: RegExpMatchArray): BBox | undefined =>
+    sliceBBox(line, m.index ?? 0, (m.index ?? 0) + m[0].length);
 
   // ISO yyyy-mm-dd
   for (const m of t.matchAll(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/g)) {
-    pushNumeric(out, line, labeled, +m[1]!, +m[2]!, +m[3]!, "ymd");
+    pushNumeric(out, line, labeled, +m[1]!, +m[2]!, +m[3]!, "ymd", box(m));
   }
   // Numeric d/m/y or m/d/y
   for (const m of t.matchAll(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/g)) {
-    pushNumeric(out, line, labeled, +m[3]!, +m[1]!, +m[2]!, "mdy");
+    pushNumeric(out, line, labeled, +m[3]!, +m[1]!, +m[2]!, "mdy", box(m));
   }
-  // Month name DD, YYYY
+  // Month name DD, YYYY — the comma may arrive with no space ("11,2024").
   for (const m of t.matchAll(
-    /\b([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{2,4})\b/g,
+    /\b([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,\s*|\s+)(\d{2,4})\b/g,
   )) {
     const mo = monthFromName(m[1]!);
-    if (mo) addHit(out, line, labeled, +m[3]!, mo, +m[2]!, false);
+    if (mo) addHit(out, line, labeled, +m[3]!, mo, +m[2]!, false, box(m));
   }
   // DD Month YYYY
   for (const m of t.matchAll(
-    /\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?,?\s+(\d{2,4})\b/g,
+    /\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?(?:\s*,\s*|\s+)(\d{2,4})\b/g,
   )) {
     const mo = monthFromName(m[2]!);
-    if (mo) addHit(out, line, labeled, +m[3]!, mo, +m[1]!, false);
+    if (mo) addHit(out, line, labeled, +m[3]!, mo, +m[1]!, false, box(m));
   }
   return out;
 }
@@ -270,6 +316,7 @@ function pushNumeric(
   a: number,
   b: number,
   order: "ymd" | "mdy",
+  bbox?: BBox,
 ): void {
   let month: number, day: number, ambiguous = false;
   if (order === "ymd") {
@@ -289,7 +336,7 @@ function pushNumeric(
       ambiguous = a <= 12 && b <= 12 && a !== b;
     }
   }
-  addHit(out, line, labeled, year, month, day, ambiguous);
+  addHit(out, line, labeled, year, month, day, ambiguous, bbox);
 }
 
 function addHit(
@@ -300,6 +347,7 @@ function addHit(
   month: number,
   day: number,
   ambiguous: boolean,
+  bbox?: BBox,
 ): void {
   let year = yearRaw;
   if (year < 100) year += 2000;
@@ -314,7 +362,8 @@ function addHit(
   const d = new Date(year, month - 1, day);
   if (d.getMonth() !== month - 1 || d.getDate() !== day) return; // real date?
   const hit: DateHit = { iso: toIso(d), ambiguous, labeled };
-  if (line.bbox) hit.bbox = line.bbox;
+  const b = bbox ?? line.bbox;
+  if (b) hit.bbox = b;
   out.push(hit);
 }
 
@@ -386,7 +435,8 @@ function looksLikeVendorLine(line: OcrLine): boolean {
 function lineBBoxForAlias(lines: OcrLine[], alias: string): BBox | undefined {
   const re = wordBoundaryMatcher(alias);
   for (const line of lines) {
-    if (re.test(line.text.toLowerCase())) return line.bbox;
+    const m = re.exec(line.text.toLowerCase());
+    if (m) return sliceBBox(line, m.index, m.index + alias.length);
   }
   // Glyph fallback: the alias may only surface after OCR-confusion folding
   // (e.g. the line reads "7-ELEUEN" but the alias is "7-eleven").
@@ -488,9 +538,9 @@ function findHitByValue(lines: OcrLine[], value: number, tol: number): MoneyHit 
 function applyPumpMath(
   lines: OcrLine[],
   amount: Field<number> | null,
-): { amount: Field<number> | null; verified: boolean; flags: Flag[] } {
+): { amount: Field<number> | null; verified: boolean; isPump: boolean; flags: Flag[] } {
   const expected = pumpMathTotal(lines);
-  if (expected === null) return { amount, verified: false, flags: [] };
+  if (expected === null) return { amount, verified: false, isPump: false, flags: [] };
   const tol = 0.05;
 
   if (amount && Math.abs(amount.value - expected) <= tol) {
@@ -498,6 +548,7 @@ function applyPumpMath(
     return {
       amount: { ...amount, confidence: Math.max(amount.confidence, 0.95) },
       verified: true,
+      isPump: true,
       flags: [],
     };
   }
@@ -515,6 +566,7 @@ function applyPumpMath(
   return {
     amount: corrected,
     verified: true,
+    isPump: true,
     flags: [{ code: "total_mismatch", severity: "info", message: note }],
   };
 }
@@ -531,9 +583,42 @@ function applyFootingMath(
   subtotal: number | null,
   tax: Field<number> | null,
 ): { amount: Field<number> | null; flags: Flag[] } {
-  if (!amount || subtotal === null || !tax || tax.value <= 0) {
-    return { amount, flags: [] };
+  if (!amount || subtotal === null) return { amount, flags: [] };
+
+  // Without a readable tax line, fall back to a WINDOW check: the grand total
+  // sits in [subtotal, subtotal × 1.35]. An amount far outside it (the glued
+  // "2@19.28" → $2,819 class) is replaced by the largest printed money value
+  // inside the window from a non-subtotal/tax/payment line.
+  if (!tax || tax.value <= 0) {
+    const lo = subtotal - 0.01;
+    const hi = subtotal * 1.35 + 0.5;
+    if (amount.value >= lo && amount.value <= hi) return { amount, flags: [] };
+    let bestInWindow: MoneyHit | null = null;
+    for (const line of lines) {
+      const folded = labelFold(line.text);
+      if (SUBTOTAL_RE.test(folded) || TAX_RE.test(folded) || PAYMENT_RE.test(folded)) continue;
+      for (const h of moneyHitsFromLine(line)) {
+        if (h.value < lo || h.value > hi) continue;
+        if (!bestInWindow || h.value > bestInWindow.value) bestInWindow = h;
+      }
+    }
+    if (!bestInWindow) return { amount, flags: [] };
+    return {
+      amount: {
+        value: bestInWindow.value,
+        confidence: 0.9,
+        ...(bestInWindow.bbox ? { bbox: bestInWindow.bbox } : {}),
+      },
+      flags: [
+        {
+          code: "total_mismatch",
+          severity: "info",
+          message: `Amount corrected: ${amount.value.toFixed(2)} is far outside subtotal (${subtotal.toFixed(2)}) — took the printed total.`,
+        },
+      ],
+    };
   }
+
   const expected = Math.round((subtotal + tax.value) * 100) / 100;
   const tol = Math.max(0.02, expected * 0.005);
   if (Math.abs(amount.value - expected) <= tol) return { amount, flags: [] };
@@ -683,24 +768,30 @@ export function parseReceipt(
     const bbox = lineBBoxForAlias(lines, known.alias);
     if (bbox) field.bbox = bbox;
     vendor = field;
-  } else if (vendor?.value) {
-    // Bounded fuzzy backstop: only on the short vendor-name candidate, never
-    // the whole receipt. A strong hit renames to the canonical brand; a weaker
-    // one is used below as a category hint only.
-    fuzzy = fuzzyMatchVendor(vendor.value);
-    if (fuzzy && fuzzy.ratio >= FUZZY_RENAME_RATIO) {
+  } else {
+    // Fuzzy sweep over the header lines: a brand read one-or-two letters off
+    // ("MOBTL", "CTATER", "FARMER 80YS") is assumed to be the brand.
+    fuzzy = fuzzyMatchVendorLines(lines.slice(0, 6).map((l) => l.text));
+    if (!fuzzy && vendor?.value) fuzzy = fuzzyMatchVendor(vendor.value);
+    if (fuzzy && fuzzy.ratio >= 0.75) {
       vendor = {
-        ...vendor,
         value: fuzzy.name,
-        confidence: Math.max(vendor.confidence, 0.85),
+        confidence: Math.max(vendor?.confidence ?? 0, 0.85),
+        ...(vendor?.bbox ? { bbox: vendor.bbox } : {}),
       };
+    } else if (fuzzy && vendor && fuzzy.ratio >= FUZZY_RENAME_RATIO) {
+      vendor = { ...vendor, value: fuzzy.name, confidence: 0.85 };
     }
   }
 
-  const hintText = lines.slice(0, 4).map((l) => l.text).join(" ");
-  const cat = fuzzy
+  const hintText = lines.slice(0, 8).map((l) => l.text).join(" ");
+  let cat = fuzzy
     ? { category: fuzzy.category, matched: true }
     : categorize(vendor?.value ?? "", hintText, known);
+  // GALLONS + PRICE/GAL structure is definitionally a fuel receipt.
+  if (!cat.matched && pump.isPump) {
+    cat = { category: "Fuel", matched: true };
+  }
   const category: Field<Category> = {
     value: cat.category,
     confidence: cat.matched ? 0.85 : 0.4,
