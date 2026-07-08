@@ -73,7 +73,7 @@
     try {
       await addBrandFromImage(brandName.trim(), brandCategory, file);
       app.toast(
-        `Learned "${brandName.trim()}" — receipts showing this logo will now be recognized.`,
+        `Learned "${brandName.trim()}". Receipts showing this logo will now be recognized.`,
         "ok",
       );
       brandName = "";
@@ -139,7 +139,7 @@
               Sign-in (Google or email) needs a cloud workspace configured at
               build time (<code>VITE_SUPABASE_URL</code> +
               <code>VITE_SUPABASE_ANON_KEY</code>). This deployment doesn't
-              have one, so everything stays on this device — add the keys and
+              have one, so everything stays on this device. Add the keys and
               redeploy to enable accounts, settings sync and cross-device
               batches.
             </p>
@@ -157,14 +157,14 @@
               </p>
               <p class="muted small">
                 Batches, receipts and taught brands are mirrored to your own
-                private cloud workspace (row-level security — only you). The AI
+                private cloud workspace (row-level security, only you). The AI
                 assist runs through a secure server proxy, so no API key lives
                 in your browser.
               </p>
               <button class="btn btn-sm" onclick={() => void signOut()}>Sign out</button>
             {:else}
               <p class="muted small">
-                Optional — the app is fully functional without an account. Sign
+                Optional: the app is fully functional without an account. Sign
                 in to keep batches across devices and to use the AI assist
                 without handling API keys.
               </p>
@@ -185,7 +185,7 @@
                 </button>
               </div>
               {#if emailSent}
-                <p class="ok small">Check your inbox — the link signs you in here.</p>
+                <p class="ok small">Check your inbox; the link signs you in here.</p>
               {/if}
             {/if}
           {/if}
@@ -199,7 +199,7 @@
             reader isn't confident about are sent to the model below for a
             second opinion.
             {#if hasBuiltInOpenRouterKey()}
-              This build includes a free OpenRouter tier — no key needed.
+              This build includes a free OpenRouter tier, no key needed.
             {/if}
           </p>
           <label class="check">
@@ -230,7 +230,7 @@
             <p class="muted small">{PROVIDERS[provider].note}</p>
             <div class="grid2">
               <div>
-                <label for="st-key">API key {app.userEmail && provider === "openrouter" ? "(optional — server proxy is used)" : ""}</label>
+                <label for="st-key">API key {app.userEmail && provider === "openrouter" ? "(optional, server proxy is used)" : ""}</label>
                 <input
                   id="st-key"
                   type="password"
@@ -263,7 +263,7 @@
           <p class="muted small">
             When a merchant prints its name only as a logo, the text reader
             can't spell it. Upload one clear image of the logo and the app will
-            recognize it visually on future receipts — no retraining, works
+            recognize it visually on future receipts. No retraining, works
             offline after the first model download (~40&nbsp;MB, cached).
           </p>
           <div class="grid3">

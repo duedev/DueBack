@@ -1,9 +1,9 @@
-# Reimbursements F5
+# DueBack
 
-**Receipts in. Reimbursement report out.**
+**Receipts in. What you're due, back.**
 
-Snap or drop a pile of receipts. They're read **on your device** — the text
-*and* the logos — you review the flagged ones in a keyboard-driven sweep, and
+Snap or drop a pile of receipts. They're read **on your device**, the text
+*and* the logos. You review the flagged ones in a keyboard-driven sweep, and
 out comes a polished multi-sheet Excel workbook with the receipt images
 embedded and totals that foot. Free, no install, no account required.
 
@@ -11,31 +11,31 @@ Built from scratch as a browser-only successor to the original local
 [Reimbursements](https://github.com/duedev/Reimbursements) app: same
 battle-tested extraction ideas (vendor database, amount reconciliation,
 US-first dates, confidence + dedup, review UX, themed workbook), re-architected
-for the web with two new pillars — **visual logo recognition** and an
+for the web with two new pillars: **visual logo recognition** and an
 **optional Supabase sync layer**.
 
 ## How it works
 
-1. **Snap or drop** — photos, scans, or PDFs; the phone camera works directly.
+1. **Snap or drop:** photos, scans, or PDFs; the phone camera works directly.
    Each image is straightened, cleaned, and read on-device.
-2. **Review the flagged few** — most receipts file themselves; the uncertain
+2. **Review the flagged few:** most receipts file themselves; the uncertain
    ones queue for an `Approve & Next` sweep with each extracted field
    highlighted right on the image (with zoomed callouts).
-3. **Download the workbook** — a themed `.xlsx` (Summary that foots with real
-   formulas, Insights with charts, per-category sheets with images, autofilters,
-   confidence data-bars) plus a one-click CSV.
+3. **Download the workbook:** a themed `.xlsx` (Summary that foots with real
+   formulas, an Insights dashboard with charts, per-category sheets with the
+   receipt images embedded) plus a one-click CSV and an images ZIP.
 
 ## The extraction pipeline
 
 | Stage | What runs |
 |---|---|
 | Clean | EXIF auto-rotate → optional perspective straightening (OpenCV.js, lazy) → grayscale → edge-energy auto-crop → downscale |
-| Read | **Tesseract.js** on-device (default, $0, offline) — or the opt-in **PaddleOCR PP-OCRv5** tier on onnxruntime-web for tough photos |
+| Read | **Tesseract.js** on-device (default, $0, offline), or the opt-in **PaddleOCR PP-OCRv5** tier on onnxruntime-web for tough photos |
 | Name the merchant | curated **~300-brand vendor DB** with word-boundary matching, **glyph-normalized** OCR-confusion folding (`7-ELEUEN` → 7-Eleven), printed-slogan aliases ("How doers get more done." → The Home Depot), and a bounded fuzzy backstop |
-| **See the logo** | when the name is a logo the OCR can't spell: CLIP image embeddings (transformers.js, on-device) vs. a brand-logo index — **teach it any brand with one image**, no retraining |
-| Extract | grand-total selection + reconciliation against subtotal/tax, US-first dates, tax, currency, category |
-| Trust | per-field confidence + provenance boxes, flags, semantic + image-hash duplicate detection |
-| Assist (opt-in) | low-confidence receipts can get a vision-LLM second opinion — bring your own key, or sign in and use the server-keyed proxy |
+| **See the logo** | when the name is a logo the OCR can't spell: CLIP image embeddings (transformers.js, on-device) vs. a brand-logo index. **Teach it any brand with one image**, no retraining |
+| Extract | grand-total selection reconciled against the receipt's own arithmetic (subtotal + tax footing, pump math on fuel receipts), US-first dates, tax, currency, category |
+| Trust | per-field confidence + provenance boxes, flags, semantic + image-hash duplicate detection; anything the rules can't verify is queued for manual review instead of shipping wrong |
+| Assist (opt-in) | low-confidence receipts can get a vision-LLM second opinion. Bring your own key, or sign in and use the server-keyed proxy |
 
 Everything above the "Assist" row runs entirely in your browser.
 
@@ -67,11 +67,11 @@ VITE_OCR_ENGINE=paddle npm run dev
 
 ## Deploy
 
-Static output (`dist/`) — GitHub Pages workflow included
+Static output (`dist/`) with a GitHub Pages workflow included
 (`.github/workflows/deploy.yml`). Optional build-time settings:
 `OPENROUTER_API_KEY` (free zero-click AI assist), `VITE_SUPABASE_URL` +
 `VITE_SUPABASE_ANON_KEY` (sync layer). The app is embeddable in an iframe
-(e.g. a Carrd Embed block) — it's a single relative-path static bundle.
+(e.g. a Carrd Embed block); it's a single relative-path static bundle.
 
 ## Stack
 

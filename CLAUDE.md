@@ -4,7 +4,10 @@
 
 ## What this is
 
-**Reimbursements F5** — a browser-only receipt → reimbursement-report app.
+**DueBack** (repo `ReimbursementsF5`, formerly "Reimbursements F5") — a
+browser-only receipt → reimbursement-report app. `APP_NAME` in
+`src/config/constants.ts` is the single product-name source; the IndexedDB
+name stays `reimbursements-f5` so existing users keep their data.
 Receipts are read **on-device** (OCR + visual logo recognition), reviewed in a
 keyboard sweep, and exported as a themed multi-sheet Excel workbook. Local-first
 (IndexedDB); **optional** Supabase layer adds auth/sync/realtime and a

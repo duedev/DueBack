@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import type { Batch, Receipt, Category } from "../types.ts";
+import { APP_NAME } from "../config/constants.ts";
 import { CATEGORIES, CATEGORY_META } from "../config/categories.ts";
 import { safeAmount } from "../util/money.ts";
 import { computeInsights, type Insights } from "./insights.ts";
@@ -93,8 +94,6 @@ const IMG_ROW_PT = 14; // height of each image carrier row
 
 // ── Column autofit (ExcelJS has none) ────────────────────────────────────────
 
-/** Chars per wrapped line in the capped notes column, for row heights. */
-const NOTES_WRAP_CHARS = 44;
 
 /** Estimate a cell's rendered text length in default-font character units. */
 function displayLength(cell: ExcelJS.Cell): number {
@@ -155,13 +154,6 @@ function autofitColumns(
   }
 }
 
-/** Row height (pt) that fits a note wrapped in the capped notes column. */
-function noteRowHeight(note: string, base: number, small = false): number {
-  if (!note) return base;
-  const lines = Math.ceil(note.length / NOTES_WRAP_CHARS);
-  return Math.max(base, lines * (small ? 12 : 14) + 8);
-}
-
 function exportable(receipts: Receipt[]): Receipt[] {
   return receipts
     .filter((r) => r.status !== "failed" && safeAmount(r.amount.value) > 0)
@@ -175,7 +167,7 @@ export async function buildWorkbook(
 ): Promise<ExportResult> {
   const rows = exportable(receipts);
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Reimbursements F5";
+  wb.creator = APP_NAME;
   wb.created = new Date();
   wb.properties.date1904 = false;
 
@@ -278,7 +270,10 @@ function bandRow(
   ws.getRow(row).height = opts.height ?? 24;
 }
 
-const TABLE_HEADERS = ["#", "Date", "Store", "Job Name", "Job Number", "Amount", "Summary", "Notes"];
+// The Notes column is gone by request: it only ever carried app-generated
+// review chatter ("Manually reviewed", flag text) that the office doesn't
+// need on the report — review state lives in the app, not the deliverable.
+const TABLE_HEADERS = ["#", "Date", "Store", "Job Name", "Job Number", "Amount", "Summary"];
 
 function tableHeaderRow(ws: ExcelJS.Worksheet, row: number, size = 11): void {
   TABLE_HEADERS.forEach((h, i) => {
@@ -300,7 +295,7 @@ function dateValue(iso: string): Date | string {
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 }
 
-/** Write one receipt's 8-column data cells starting at `row`. */
+/** Write one receipt's 7-column data cells starting at `row`. */
 function writeReceiptCells(
   ws: ExcelJS.Worksheet,
   row: number,
@@ -345,14 +340,9 @@ function writeReceiptCells(
     alignment: { horizontal: "right", vertical: "middle" },
   });
   set(7, "", { font: { size: 10, color: { argb: TEXT_GRAY } } });
-  set(8, notesFor(rec), {
-    font: { size: 10, color: { argb: TEXT_GRAY } },
-    // Long notes wrap inside a capped-width column instead of stretching it.
-    alignment: { horizontal: "left", vertical: "middle", wrapText: true },
-  });
 
   if (opts.bg) {
-    for (let c = 1; c <= 8; c++) fill(line.getCell(c), opts.bg);
+    for (let c = 1; c <= 7; c++) fill(line.getCell(c), opts.bg);
   }
   if (opts.colorFields) {
     const paint = (
@@ -389,11 +379,11 @@ function buildSummarySheet(
       fitToHeight: 0,
     },
   });
-  [24, 18.5, 24, 24, 21.8, 16.3, 44, 36].forEach(
+  [24, 18.5, 24, 24, 21.8, 16.3, 30].forEach(
     (w, i) => (ws.getColumn(i + 1).width = w),
   );
 
-  bandRow(ws, 1, 8, "Expense Reimbursement Form", {
+  bandRow(ws, 1, 7, "Expense Reimbursement Form", {
     bg: TITLE_DARK, size: 16, height: 30, align: "center",
   });
 
@@ -416,13 +406,29 @@ function buildSummarySheet(
     ws.getRow(r).height = 18;
     r++;
   }
+
+  // Credits sit up top beside the employee info (merged cells are skipped by
+  // the autofit, so the long strings can't balloon a column).
+  ws.mergeCells(2, 5, 2, 7);
+  const gen = ws.getCell(2, 5);
+  gen.value = `Generated ${new Date().toLocaleDateString("en-US", {
+    year: "numeric", month: "long", day: "numeric",
+  })} by ${APP_NAME}`;
+  gen.font = { size: 9, color: { argb: FOOT_GRAY } };
+  gen.alignment = { horizontal: "right", vertical: "middle" };
+  ws.mergeCells(3, 5, 3, 7);
+  const src = ws.getCell(3, 5);
+  src.value = { text: "github.com/duedev/ReimbursementsF5", hyperlink: "https://github.com/duedev/ReimbursementsF5" };
+  src.font = { size: 9, color: { argb: LINK_BLUE }, underline: true };
+  src.alignment = { horizontal: "right", vertical: "middle" };
+
   r++; // breathing room before the first section
 
   const fmt = acctFormat(currency);
   const subtotalCells: string[] = [];
 
   for (const g of perCategory) {
-    bandRow(ws, r, 8, `  ${displayCategory(g.cat)}`, { bg: SECTION_BLUE });
+    bandRow(ws, r, 7, `  ${displayCategory(g.cat)}`, { bg: SECTION_BLUE });
     r++;
     tableHeaderRow(ws, r);
     ws.getRow(r).height = 32;
@@ -434,7 +440,7 @@ function buildSummarySheet(
         link: anchors.get(rec.id),
         bg: i % 2 === 1 ? ZEBRA_BLUE : WHITE,
       });
-      ws.getRow(r).height = noteRowHeight(notesFor(rec), 30);
+      ws.getRow(r).height = 30;
       r++;
     });
 
@@ -475,20 +481,9 @@ function buildSummarySheet(
   }
   totalRow.getCell(6).numFmt = fmt;
   totalRow.height = 24;
-  r += 2;
 
-  // Footer: generation note + honest cost line
-  const foot = ws.getRow(r);
-  foot.getCell(7).value = `Generated ${new Date().toLocaleDateString("en-US", {
-    year: "numeric", month: "long", day: "numeric",
-  })} by Reimbursements F5`;
-  foot.getCell(7).font = { size: 9, color: { argb: FOOT_GRAY } };
-  foot.getCell(8).value = "github.com/duedev/ReimbursementsF5";
-  foot.getCell(8).font = { size: 9, color: { argb: LINK_BLUE } };
-
-  // Fit every column to its content (the footer note spans free space and
-  // would otherwise balloon column G).
-  autofitColumns(ws, [1, 2, 3, 4, 5, 6, 7, 8], { min: 6, max: 46, skipRows: [r] });
+  // Fit every column to its content.
+  autofitColumns(ws, [1, 2, 3, 4, 5, 6, 7], { min: 6, max: 46 });
   return subtotalCells;
 }
 
@@ -513,9 +508,9 @@ function buildImageSheet(
     },
   });
   ws.getColumn(1).width = 55;
-  for (let c = 2; c <= 8; c++) ws.getColumn(c).width = 14.7;
+  for (let c = 2; c <= 7; c++) ws.getColumn(c).width = 14.7;
 
-  bandRow(ws, 1, 8, `${displayCategory(cat)} — Receipt Images`, {
+  bandRow(ws, 1, 7, `${displayCategory(cat)} — Receipt Images`, {
     bg: CATEGORY_META[cat].color, size: 14, height: 28, align: "center",
   });
   tableHeaderRow(ws, 2, 10);
@@ -526,17 +521,17 @@ function buildImageSheet(
   let r = 3;
   rows.forEach((rec, i) => {
     // Receipt header band
-    ws.mergeCells(r, 1, r, 8);
+    ws.mergeCells(r, 1, r, 7);
     const head = ws.getCell(r, 1);
     head.value = `Receipt ${i + 1}  ·  ${rec.fileName}`;
     head.font = { bold: true, size: 10, color: { argb: "FF374151" } };
     head.alignment = { horizontal: "left", vertical: "middle" };
-    for (let c = 1; c <= 8; c++) fill(ws.getCell(r, c), tint);
+    for (let c = 1; c <= 7; c++) fill(ws.getCell(r, c), tint);
     ws.getRow(r).height = 16;
     r++;
 
     // 4pt anchor row — the Summary "#" hyperlink lands here, image in view.
-    ws.mergeCells(r, 1, r, 8);
+    ws.mergeCells(r, 1, r, 7);
     ws.getRow(r).height = 4;
     r++;
 
@@ -560,7 +555,7 @@ function buildImageSheet(
 
     // Data row
     writeReceiptCells(ws, r, i + 1, rec, batch, fmt, { small: true, colorFields: true });
-    ws.getRow(r).height = noteRowHeight(notesFor(rec), 22, true);
+    ws.getRow(r).height = 22;
     r++;
 
     // Spacer
@@ -569,7 +564,7 @@ function buildImageSheet(
   });
 
   // Fit the data columns; column A stays fixed — it carries the images.
-  autofitColumns(ws, [2, 3, 4, 5, 6, 7, 8], { min: 8, max: 40 });
+  autofitColumns(ws, [2, 3, 4, 5, 6, 7], { min: 8, max: 40 });
 }
 
 // ── Insights sheet — an executive dashboard ─────────────────────────────────
@@ -756,17 +751,6 @@ function smallTable(
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-function notesFor(r: Receipt): string {
-  // "Approved" read like a workflow stamp; what the office cares about is
-  // whether a human checked the numbers.
-  if (r.flags.length === 0) {
-    return r.reviewRequired && r.approved ? "Manually reviewed" : "";
-  }
-  return r.flags
-    .filter((f) => f.code !== "low_confidence" || !r.approved)
-    .map((f) => f.message)
-    .join(" ");
-}
 
 function dominantCurrency(rows: Receipt[]): string {
   const counts = new Map<string, number>();

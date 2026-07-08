@@ -55,7 +55,7 @@
   </svg>
   <div class="zone-text">
     <strong>Drop receipts here</strong>
-    <span class="muted">or click to browse — photos, scans, PDFs</span>
+    <span class="muted">or click to browse (photos, scans, PDFs)</span>
   </div>
 </div>
 
@@ -63,6 +63,9 @@
   .zone {
     display: flex;
     align-items: center;
+    /* The zone spans the page; its invitation reads centered, not tucked left. */
+    justify-content: center;
+    text-align: center;
     gap: 1rem;
     padding: 1.5rem 1.4rem;
     border-style: dashed;

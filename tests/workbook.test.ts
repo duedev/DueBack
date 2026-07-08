@@ -161,24 +161,37 @@ test('"Other" receipts are labeled Miscellaneous in the report', async () => {
   assert.ok(!names.includes("Other"));
 });
 
-test("notes never read Approved; a reviewed receipt reads Manually reviewed", async () => {
+test("no app-generated notes reach the report; credits sit at the top", async () => {
   const reviewed = receipt({ vendor: "Shop", amount: 9.99, category: "Other", date: "2026-01-08" });
   reviewed.reviewRequired = true;
   reviewed.approved = true;
+  reviewed.flags = [
+    { code: "total_mismatch", severity: "warn", message: "needs review chatter" },
+  ];
   const result = await buildWorkbook(batch, [reviewed], async () => undefined);
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(await result.blob.arrayBuffer());
-  let sawManually = false;
   wb.eachSheet((ws) => {
     ws.eachRow((row) => {
       row.eachCell((cell) => {
         const v = String(cell.value ?? "");
         assert.notEqual(v, "Approved");
-        if (v === "Manually reviewed") sawManually = true;
+        assert.notEqual(v, "Manually reviewed");
+        assert.ok(!v.includes("needs review chatter"), `flag text leaked: ${v}`);
+        assert.notEqual(v, "Notes"); // the column itself is gone
       });
     });
   });
-  assert.ok(sawManually, "reviewed receipt is marked Manually reviewed");
+  // The generation credit + repo link moved from the footer to the header
+  // rows beside the employee info.
+  const summary = wb.getWorksheet("Summary")!;
+  const gen = String(summary.getCell(2, 5).value ?? "");
+  assert.match(gen, /^Generated .* by DueBack$/, gen);
+  const link = summary.getCell(3, 5).value as { hyperlink?: string } | null;
+  assert.ok(
+    link && typeof link === "object" && /github\.com\/duedev/.test(link.hyperlink ?? ""),
+    "repo link at the top",
+  );
 });
 
 test("Insights Total Spend foots from the Summary's subtotal formulas", async () => {
@@ -218,15 +231,4 @@ test("columns autofit to content; notes wrap in a capped column", async () => {
   // Store column grew to fit the 42-char vendor (default was 24).
   const store = summary.getColumn(3).width ?? 0;
   assert.ok(store > 30, `store col width ${store}`);
-  // Notes column stays capped and wraps instead of stretching to 120+ chars.
-  const notes = summary.getColumn(8).width ?? 0;
-  assert.ok(notes <= 46, `notes col width ${notes}`);
-  let sawWrap = false;
-  summary.eachRow((row) => {
-    const cell = row.getCell(8);
-    if (typeof cell.value === "string" && cell.value.includes("far above")) {
-      sawWrap = cell.alignment?.wrapText === true;
-    }
-  });
-  assert.ok(sawWrap, "notes cell wraps");
 });

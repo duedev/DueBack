@@ -29,8 +29,8 @@
         title="Back to the home page"
         aria-label="Back to the home page"
       >
-        <span class="brand-mark">F5</span>
-        <span class="brand-name">Reimbursements&nbsp;F5</span>
+        <span class="brand-mark">DB</span>
+        <span class="brand-name">DueBack</span>
       </button>
       {#if total > 0}
         <div class="progress" aria-label="Processing progress">
@@ -79,7 +79,7 @@
       <div class="empty">
         <h3>No receipts yet</h3>
         <p class="muted">
-          Add a few receipts above — they'll appear here as they're read, and
+          Add a few receipts above; they'll appear here as they're read, and
           anything uncertain gets flagged for a quick review.
         </p>
       </div>

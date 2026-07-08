@@ -95,7 +95,7 @@
       const batch = (await repo.getBatch(app.batch.id)) ?? app.batch;
       const result = await buildWorkbook(batch, app.receipts, (k) => repo.getBlob(k));
       download(result.blob, result.fileName);
-      app.toast(`Workbook ready — ${result.count} receipts.`, "ok");
+      app.toast(`Workbook ready: ${result.count} receipts.`, "ok");
     } catch (err) {
       app.toast(
         `Export failed: ${err instanceof Error ? err.message : String(err)}`,

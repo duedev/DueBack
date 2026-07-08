@@ -152,7 +152,7 @@
       const target = fresh[index + 1];
       if (target) app.reviewId = target.id;
     } else {
-      app.toast("All caught up — every receipt reviewed.", "ok");
+      app.toast("All caught up. Every receipt reviewed.", "ok");
       close();
     }
   }

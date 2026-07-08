@@ -24,7 +24,7 @@
   const faqs = [
     {
       q: "Is it really free?",
-      a: "Yes. Receipts are read on your device with open-source OCR — there is no per-receipt charge, no trial, no account. Optional boosters (an AI second opinion, cloud sync) are off by default.",
+      a: "Yes. Receipts are read on your device with open-source OCR, so there is no per-receipt charge, no trial, no account. Optional boosters (an AI second opinion, cloud sync) are off by default.",
     },
     {
       q: "Where do my receipts go?",
@@ -32,15 +32,15 @@
     },
     {
       q: "What do I hand to my office?",
-      a: "A polished multi-sheet Excel workbook: a summary that foots with real formulas, per-category sheets with the receipt images embedded, an insights sheet — plus a CSV if your system prefers imports.",
+      a: "A polished multi-sheet Excel workbook: a summary that foots with real formulas, per-category sheets with the receipt images embedded, an insights sheet, plus a CSV if your system prefers imports.",
     },
     {
       q: "What kinds of files work?",
-      a: "JPEG, PNG and WebP photos plus PDFs (HEIC too on Safari). Snap receipts with your phone camera or drop in files — crumpled, faded and tilted receipts are straightened and cleaned up before reading.",
+      a: "JPEG, PNG and WebP photos plus PDFs (HEIC too on Safari). Snap receipts with your phone camera or drop in files; crumpled, faded and tilted receipts are straightened and cleaned up before reading.",
     },
     {
       q: "How does logo recognition help?",
-      a: "Many receipts show the merchant only as a stylized logo the text reader can't spell. Teach the app a brand once — one clear photo of the logo in Settings — and from then on it recognizes that logo visually, names the brand, and files it in the right category.",
+      a: "Many receipts show the merchant only as a stylized logo the text reader can't spell. Teach the app a brand once with one clear photo of the logo in Settings, and from then on it recognizes that logo visually, names the brand, and files it in the right category.",
     },
   ];
 </script>
@@ -60,8 +60,8 @@
   <!-- ======================= nav ======================= -->
   <nav class="wrap nav">
     <div class="brand">
-      <span class="brand-mark">F5</span>
-      <span class="brand-name">Reimbursements&nbsp;F5</span>
+      <span class="brand-mark">DB</span>
+      <span class="brand-name">DueBack</span>
     </div>
     <div class="nav-links">
       <a href="#how">How it works</a>
@@ -80,8 +80,8 @@
     <div class="hero-copy">
       <h1>Receipts in.<br />Reimbursement report out.</h1>
       <p class="hero-sub">
-        Snap or drop a pile of receipts. They're read on your device — the
-        printed text, plus any brand logos you've taught it — you review the
+        Snap or drop a pile of receipts. They're read on your device: the
+        printed text, plus any brand logos you've taught it. You review the
         flagged ones in seconds, and out comes a polished Excel workbook your
         office will actually accept.
       </p>
@@ -158,7 +158,7 @@
         <span class="step-n">1</span>
         <h4>Snap or drop</h4>
         <p>
-          Use your phone camera or drag files in — photos, scans or PDFs. Each
+          Use your phone camera or drag files in: photos, scans or PDFs. Each
           receipt is straightened, cleaned and read on your device.
         </p>
       </li>
@@ -175,8 +175,8 @@
         <span class="step-n">3</span>
         <h4>Download the workbook</h4>
         <p>
-          One click builds a themed Excel report — summary that foots, receipts
-          embedded per category, insights — ready to hand in.
+          One click builds a themed Excel report with a summary that foots,
+          receipts embedded per category, and insights, ready to hand in.
         </p>
       </li>
     </ol>
@@ -190,7 +190,7 @@
       <div class="card feat">
         <h4>📖 On-device OCR</h4>
         <p>
-          Open-source text recognition runs in your browser — with an optional
+          Open-source text recognition runs in your browser, with an optional
           stronger on-device engine for tough photos. No servers, no upload.
         </p>
       </div>
@@ -220,14 +220,14 @@
         <h4>📊 A report worth handing in</h4>
         <p>
           Themed multi-sheet Excel with live formulas, embedded receipt images,
-          spending insights and charts — plus a one-click CSV.
+          spending insights and charts, plus a one-click CSV.
         </p>
       </div>
       <div class="card feat">
         <h4>☁️ Optional sync</h4>
         <p>
           Sign in to keep batches on your own private cloud workspace and pick
-          up on another device. Entirely optional — local-first by design.
+          up on another device. Entirely optional; local-first by design.
         </p>
       </div>
     </div>
@@ -289,7 +289,7 @@
   </section>
 
   <footer class="wrap foot">
-    <span>Reimbursements F5</span>
+    <span>DueBack</span>
     <span class="foot-sep">·</span>
     <a href="https://github.com/duedev/ReimbursementsF5" rel="noopener">GitHub</a>
     <span class="foot-sep">·</span>
@@ -455,7 +455,10 @@
     top: 0;
     height: 34%;
     background: linear-gradient(180deg, var(--accent-soft), transparent);
-    animation: scan 3.2s ease-in-out infinite;
+    /* One unhurried pass, then a long rest. The receipt highlights below key
+       off the same 8s clock so each mark appears only AFTER the scan line
+       has swept past it. */
+    animation: scan 8s ease-in-out infinite;
     pointer-events: none;
   }
   @keyframes scan {
@@ -464,15 +467,77 @@
       transform: translateY(-10%);
       opacity: 0;
     }
-    15% {
+    5% {
       opacity: 1;
     }
-    60% {
+    40% {
       transform: translateY(210%);
       opacity: 0.9;
     }
-    75% {
+    48% {
       opacity: 0;
+    }
+    99% {
+      transform: translateY(210%);
+    }
+  }
+
+  /* Receipt-side highlights: hidden until the scanner passes their line.
+     The text itself stays visible; only the highlighter tint waits. */
+  .receipt .hl {
+    position: relative;
+    background: transparent;
+    box-shadow: none;
+  }
+  .receipt .hl::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 3px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .receipt .hl-vendor::after {
+    background: color-mix(in srgb, #1d4ed8 22%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #1d4ed8 45%, transparent);
+    animation: reveal-vendor 8s ease-out infinite;
+  }
+  .receipt .hl-amount::after {
+    background: color-mix(in srgb, #147246 20%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #147246 45%, transparent);
+    animation: reveal-amount 8s ease-out infinite;
+  }
+  .receipt .hl-date::after {
+    background: color-mix(in srgb, #dc2626 18%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #dc2626 45%, transparent);
+    animation: reveal-date 8s ease-out infinite;
+  }
+  /* Reveal points trail the scan band's position at the same cycle time. */
+  @keyframes reveal-vendor {
+    0%, 8% { opacity: 0; }
+    12%, 96% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  @keyframes reveal-amount {
+    0%, 32% { opacity: 0; }
+    36%, 96% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  @keyframes reveal-date {
+    0%, 39% { opacity: 0; }
+    43%, 96% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .r-scan {
+      animation: none;
+      opacity: 0;
+    }
+    .receipt .hl-vendor::after,
+    .receipt .hl-amount::after,
+    .receipt .hl-date::after {
+      animation: none;
+      opacity: 1;
     }
   }
 
