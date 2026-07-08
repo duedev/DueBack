@@ -8,7 +8,7 @@ import { safeAmount } from "../util/money.ts";
 // Excel opens it cleanly).
 
 const HEADERS = [
-  "Category", "Date", "Vendor", "Amount", "Tax",
+  "Category", "Date", "Vendor", "Amount",
   "Currency", "Confidence", "Status", "Notes",
 ] as const;
 
@@ -44,7 +44,6 @@ export function toCsv(receipts: Receipt[]): string {
         r.date.value,
         r.vendor.value,
         safeAmount(r.amount.value).toFixed(2),
-        safeAmount(r.tax.value).toFixed(2),
         r.currency,
         Math.round(r.confidence * 100),
         statusOf(r),

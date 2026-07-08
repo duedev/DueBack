@@ -99,3 +99,7 @@ test("falls back to the business name when the vendor is unknown", () => {
   assert.match(r.vendor.value, /ACME WIDGETS/i); // address line skipped
   assert.equal(r.amount.value, 30);
 });
+
+test("Trader Joe's files under Meals (correction-log tuning, 2026-07-08)", () => {
+  assert.equal(matchVendor("TRADER JOE'S #123")?.category, "Meals");
+});

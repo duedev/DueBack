@@ -13,6 +13,7 @@
   import { signInWithGoogle, signInWithEmail, signOut } from "../supabase/auth.ts";
   import { formatMoney } from "../util/money.ts";
   import { getCorrections, clearCorrections } from "../train/corrections.ts";
+  import type { Receipt } from "../types.ts";
   import type { ProviderId } from "../pipeline/vision/types.ts";
   import type { Category, StoredBrand } from "../types.ts";
 
@@ -86,6 +87,98 @@
     await clearCorrections();
     correctionCount = 0;
     app.toast("Improvement log cleared.", "ok");
+  }
+
+  // One ZIP with everything a tuning session needs: the corrections log,
+  // every receipt's full extraction (fields, flags, OCR text + geometry),
+  // the report CSV, and both the original uploads and the highlighted
+  // copies — so failures can be reproduced from the exact inputs.
+  let bundleBusy = $state(false);
+  async function downloadTuningBundle(): Promise<void> {
+    bundleBusy = true;
+    try {
+      const { buildZip } = await import("../export/zip.ts");
+      const { toCsv } = await import("../export/csv.ts");
+      const enc = new TextEncoder();
+      const receipts = $state.snapshot(app.receipts) as Receipt[];
+      const corrections = await getCorrections();
+      const entries: { name: string; data: Uint8Array }[] = [
+        { name: "corrections.json", data: enc.encode(JSON.stringify(corrections, null, 2)) },
+        {
+          name: "extraction.json",
+          data: enc.encode(
+            JSON.stringify(
+              receipts.map((r) => ({
+                id: r.id,
+                fileName: r.fileName,
+                originalFileName: r.originalFileName,
+                status: r.status,
+                approved: r.approved,
+                reviewRequired: r.reviewRequired,
+                vendor: r.vendor,
+                date: r.date,
+                amount: r.amount,
+                tax: r.tax,
+                category: r.category,
+                currency: r.currency,
+                confidence: r.confidence,
+                flags: r.flags,
+                method: r.methodDetail ?? r.methodUsed,
+                ocrText: r.ocrText,
+                ocrLines: r.ocrLines,
+              })),
+              null,
+              2,
+            ),
+          ),
+        },
+        { name: "report.csv", data: enc.encode(toCsv(receipts)) },
+      ];
+      const used = new Set(entries.map((e) => e.name));
+      const uniq = (base: string): string => {
+        let n = base;
+        for (let i = 2; used.has(n); i++) {
+          const dot = base.lastIndexOf(".");
+          n = dot > 0 ? `${base.slice(0, dot)}_${i}${base.slice(dot)}` : `${base}_${i}`;
+        }
+        used.add(n);
+        return n;
+      };
+      for (const r of receipts) {
+        const orig = await repo.getBlob(r.fileKey);
+        if (orig) {
+          entries.push({
+            name: uniq(`images/original/${r.originalFileName ?? r.fileName}`),
+            data: new Uint8Array(await orig.arrayBuffer()),
+          });
+        }
+        const annKey = r.annotatedKey ?? r.cleanedKey;
+        const ann = annKey ? await repo.getBlob(annKey) : undefined;
+        if (ann) {
+          entries.push({
+            name: uniq(`images/annotated/${r.fileName}`),
+            data: new Uint8Array(await ann.arrayBuffer()),
+          });
+        }
+      }
+      const zip = await buildZip(entries);
+      const now = new Date();
+      const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+      const url = URL.createObjectURL(zip);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `dueback_tuning_${stamp}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      app.toast(
+        `Tuning bundle packaged: ${receipts.length} receipts, ${corrections.length} corrections.`,
+        "ok",
+      );
+    } catch (err) {
+      app.toast(err instanceof Error ? err.message : "Couldn't build the bundle.", "err");
+    } finally {
+      bundleBusy = false;
+    }
   }
 
   async function addBrand(): Promise<void> {
@@ -343,13 +436,21 @@
           </p>
           <div class="test-row">
             <span class="chip">{correctionCount} corrections</span>
+            <button class="btn btn-primary btn-sm" onclick={() => void downloadTuningBundle()} disabled={bundleBusy || app.receipts.length === 0}>
+              {bundleBusy ? "Packaging…" : "Download tuning bundle"}
+            </button>
             <button class="btn btn-sm" onclick={() => void downloadCorrections()} disabled={correctionCount === 0}>
-              Download JSON
+              Corrections JSON
             </button>
             <button class="btn btn-ghost btn-sm btn-danger" onclick={() => void resetCorrections()} disabled={correctionCount === 0}>
               Clear
             </button>
           </div>
+          <p class="muted small">
+            The bundle zips the corrections log, every receipt's extraction
+            (fields, flags, OCR text and positions), the report CSV, and the
+            original + highlighted images: one file to hand over for tuning.
+          </p>
         </section>
       </div>
     </div>

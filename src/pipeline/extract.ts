@@ -285,22 +285,37 @@ interface DateHit {
 }
 
 /** Repair digit-glyph confusions INSIDE numeric-date-shaped tokens only
- *  ("l2/O2/2@23" → "12/02/2023") — month names elsewhere stay untouched. */
+ *  ("l2/O2/2@23" → "12/02/2023") — month names elsewhere stay untouched.
+ *  B is ambiguous (a bold 8 or a broken 0: "B2/08/2023" is February); both
+ *  folds are tried and the one that yields a plausible date wins. */
 function fixDateGlyphs(t: string): string {
-  const digitish = "[\\dOoQIlL|SBGZ@©®°]";
+  const digitish = "[\\dOoQIlL|pPSBGZ@©®°]";
   const re = new RegExp(
     `(?<![A-Za-z\\d])${digitish}{1,4}[-/.]${digitish}{1,2}[-/.]${digitish}{2,4}(?![A-Za-z\\d])`,
     "g",
   );
-  return t.replace(re, (tok) =>
+  const fold = (tok: string, bAs: string): string =>
     tok
-      .replace(/[OoQ@©®°]/g, "0")
+      .replace(/[OoQpP@©®°]/g, "0")
       .replace(/[IlL|]/g, "1")
       .replace(/Z/g, "2")
       .replace(/S/g, "5")
       .replace(/G/g, "6")
-      .replace(/B/g, "8"),
-  );
+      .replace(/B/g, bAs);
+  const plausible = (tok: string): boolean => {
+    const m = /^(\d{1,4})[-/.](\d{1,2})[-/.](\d{2,4})$/.exec(tok);
+    if (!m) return false;
+    const [, a, b] = m as unknown as [string, string, string];
+    // Either y-m-d (first segment a year) or m/d/y — segments must be sane.
+    if (a.length === 4) return Number(b) >= 1 && Number(b) <= 12;
+    return Number(a) >= 1 && Number(a) <= 12 && Number(b) >= 1 && Number(b) <= 31;
+  };
+  return t.replace(re, (tok) => {
+    const as8 = fold(tok, "8");
+    if (!tok.includes("B") || plausible(as8)) return as8;
+    const as0 = fold(tok, "0");
+    return plausible(as0) ? as0 : as8;
+  });
 }
 
 function parseDatesInLine(line: OcrLine, labeled: boolean): DateHit[] {
@@ -317,16 +332,17 @@ function parseDatesInLine(line: OcrLine, labeled: boolean): DateHit[] {
   for (const m of t.matchAll(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/g)) {
     pushNumeric(out, line, labeled, +m[3]!, +m[1]!, +m[2]!, "mdy", box(m));
   }
-  // Month name DD, YYYY — the comma may arrive with no space ("11,2024").
+  // Month name DD, YYYY — the comma may arrive with no space ("11,2024") or
+  // read as a dot ("SEPTEMBER 11.2024").
   for (const m of t.matchAll(
-    /\b([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,\s*|\s+)(\d{2,4})\b/g,
+    /\b([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*[.,]\s*|\s+)(\d{2,4})\b/g,
   )) {
     const mo = monthFromName(m[1]!);
     if (mo) addHit(out, line, labeled, +m[3]!, mo, +m[2]!, false, box(m));
   }
   // DD Month YYYY
   for (const m of t.matchAll(
-    /\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?(?:\s*,\s*|\s+)(\d{2,4})\b/g,
+    /\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?(?:\s*[.,]\s*|\s+)(\d{2,4})\b/g,
   )) {
     const mo = monthFromName(m[2]!);
     if (mo) addHit(out, line, labeled, +m[3]!, mo, +m[1]!, false, box(m));
@@ -625,7 +641,17 @@ function applyPumpMath(
   amount: Field<number> | null,
 ): { amount: Field<number> | null; verified: boolean; isPump: boolean; flags: Flag[] } {
   const expected = pumpMathTotal(lines);
-  if (expected === null) return { amount, verified: false, isPump: false, flags: [] };
+  if (expected === null) {
+    // The math needs both gallons and a unit price; a per-gallon price line
+    // alone still proves fuel STRUCTURE ("GALLONS: 18153" loses its decimal
+    // to OCR, but the receipt is definitionally a pump receipt).
+    const fuelStructure = lines.some(
+      (l) =>
+        !FUEL_PROMO_RE.test(l.text) &&
+        (FUEL_UNIT_RE.test(l.text) || FUEL_RATE_RE.test(l.text)),
+    );
+    return { amount, verified: false, isPump: fuelStructure, flags: [] };
+  }
   const tol = 0.05;
 
   if (amount && Math.abs(amount.value - expected) <= tol) {
@@ -1097,25 +1123,14 @@ export function locateValue(
     return null;
   }
 
-  // date: match printed variants of the ISO value (glyph-repaired text).
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value));
-  if (!m) return null;
-  const [, y, mo, d] = m as unknown as [string, string, string, string];
-  const yy = y.slice(2);
-  const M = String(Number(mo));
-  const D = String(Number(d));
-  const variants = [
-    `${mo}/${d}/${y}`, `${M}/${D}/${y}`, `${mo}/${d}/${yy}`, `${M}/${D}/${yy}`,
-    `${mo}-${d}-${y}`, `${mo}-${d}-${yy}`, `${M}-${D}-${yy}`, `${y}-${mo}-${d}`,
-    `${mo}.${d}.${yy}`, `${mo}.${d}.${y}`,
-  ];
+  // date: any line whose parsed dates (numeric or month-name forms, with
+  // glyph repair) include the ISO value — the same machinery extraction uses.
+  const iso = String(value);
   for (const line of lines) {
-    const hay = fixDateGlyphs(line.text);
-    for (const v of variants) {
-      const idx = hay.indexOf(v);
-      if (idx < 0) continue;
-      const bbox = sliceBBox(line, idx, idx + v.length) ?? line.bbox;
-      return { bbox, lineText: line.text };
+    for (const hit of parseDatesInLine(line, DATE_LABEL_RE.test(line.text))) {
+      if (hit.iso === iso) {
+        return { bbox: hit.bbox ?? line.bbox, lineText: line.text };
+      }
     }
   }
   return null;

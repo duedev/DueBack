@@ -26,7 +26,6 @@
   let vendor = $state("");
   let date = $state("");
   let amount = $state<string | number>("");
-  let tax = $state<string | number>("");
   let currency = $state("USD");
   let category = $state<Category>("Other");
 
@@ -42,7 +41,6 @@
     vendor = r.vendor.value;
     date = r.date.value;
     amount = r.amount.value ? String(r.amount.value) : "";
-    tax = r.tax.value ? String(r.tax.value) : "";
     currency = r.currency;
     category = r.category.value;
     imgLoaded = false;
@@ -67,7 +65,6 @@
     // and this patch carries nested objects (bboxes) from the reactive record.
     const r = $state.snapshot(receipt) as Receipt;
     const amt = parseAmount(amount);
-    const tx = parseAmount(tax);
     const newVendor = vendor.trim();
     // The native date input fires a change per typed segment ("0002-09-11",
     // "0020-09-11", …) — a year outside a sane range is a partial entry,
@@ -92,7 +89,6 @@
         edited: true,
         ...(r.amount.bbox ? { bbox: r.amount.bbox } : {}),
       },
-      tax: { value: tx !== null ? safeAmount(tx) : r.tax.value, confidence: 1, edited: true },
       currency: currency.toUpperCase(),
       category: { value: category, confidence: 1, edited: true },
       // Edits change the fields the file is named after — keep it in sync
@@ -384,11 +380,6 @@
                 <canvas class="callout" use:callout={current.amount.bbox}></canvas>
               {/key}
             {/if}
-          </div>
-
-          <div class="frow">
-            <label for="rv-tax">Tax</label>
-            <input id="rv-tax" type="number" step="0.01" min="0" bind:value={tax} onchange={save} />
           </div>
 
           <div class="frow">

@@ -41,7 +41,7 @@ test("CSV has the expected header and is sorted by date", () => {
     receipt({ vendor: "Shell", amount: 45.2, category: "Fuel", date: "2026-05-01" }),
   ]);
   const rows = csv.split("\r\n");
-  assert.equal(rows[0], "Category,Date,Vendor,Amount,Tax,Currency,Confidence,Status,Notes");
+  assert.equal(rows[0], "Category,Date,Vendor,Amount,Currency,Confidence,Status,Notes");
   // Shell (05-01) sorts before Home Depot (05-02).
   assert.ok(rows[1]!.startsWith("Fuel,2026-05-01,Shell,45.20,"));
 });

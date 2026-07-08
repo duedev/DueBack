@@ -625,7 +625,7 @@ function buildInsightsSheet(
     { label: "Receipts", value: insights.count },
     { label: "Avg / Receipt", value: insights.average, money: true },
     { label: "Largest", value: insights.largest, money: true },
-    { label: "Tax", value: insights.tax, money: true },
+    { label: "Categories", value: insights.byCategory.filter((c) => c.total > 0).length },
     { label: "Flagged", value: insights.flagged, color: "FFB91C1C" },
   ];
   const TILE_BG = "FFF6F8FB";

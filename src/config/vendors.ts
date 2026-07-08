@@ -240,7 +240,8 @@ export const KNOWN_VENDORS: KnownVendor[] = [
   { name: "Kroger", category: "Other", aliases: ["kroger"] },
   { name: "Safeway", category: "Other", aliases: ["safeway"] },
   { name: "Albertsons", category: "Other", aliases: ["albertsons"] },
-  { name: "Trader Joe's", category: "Other", aliases: ["trader joe's", "trader joe"] },
+  // Correction log 2026-07-08: the user files Trader Joe's under Meals.
+  { name: "Trader Joe's", category: "Meals", aliases: ["trader joe's", "trader joe"] },
   {
     name: "Stater Bros. Markets",
     category: "Other",

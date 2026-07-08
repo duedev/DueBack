@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseReceipt } from "../src/pipeline/extract.ts";
+import { parseReceipt, locateValue } from "../src/pipeline/extract.ts";
 import type { OcrResult, OcrLine } from "../src/types.ts";
 
 // Build a synthetic OCR result from text lines (words left empty; the extractor
@@ -707,3 +707,70 @@ test("keyword-less per-gallon rate line can't flag or out-rank the total", () =>
   assert.equal(forcesManualReview(r.flags), false, JSON.stringify(r.flags));
   assert.ok(!r.flags.some((f) => f.code === "total_mismatch"), JSON.stringify(r.flags));
 });
+
+// ── Tuning round from the user's ORIGINAL photos (TestSet.zip) ───────────────
+
+test("Chevron pump-stamp dates: leading 0 read as B or p still parses", () => {
+  // IMG_2087: "B2/08/2023 28261317" — the 0 of "02" read as B.
+  const b = parseReceipt(ocr(["Chevron", "B2/08/2023 28261317", "FUEL TOTAL $ 104.23"]));
+  assert.equal(b.date.value, "2023-02-08", `B-fold got ${b.date.value}`);
+  // IMG_2085: "p2/01/2023 1 33985883" — the 0 read as a lowercase p.
+  const p = parseReceipt(ocr(["Chevron", "p2/01/2023 1 33985883", "FUEL TOTAL & 108.30"]));
+  assert.equal(p.date.value, "2023-02-01", `p-fold got ${p.date.value}`);
+  // The year-side B fold ("2B23" → 2823 → 2023 recovery) still works.
+  const y = parseReceipt(ocr(["SHOP", "12/02/2B23", "TOTAL 9.99"]));
+  assert.equal(y.date.value, "2023-12-02", `year B got ${y.date.value}`);
+});
+
+test("month-name date with the comma read as a dot parses", () => {
+  // IMG_0404: "WEL SEPTEMBER 11.2024" (printed "WED SEPTEMBER 11,2024").
+  const r = parseReceipt(
+    ocr(["FARMER BOYS", "WEL SEPTEMBER 11.2024", "SUB-TOTAL ; $61.96", "TAX : $5.42", "TOTAL $67.38"]),
+  );
+  assert.equal(r.date.value, "2024-09-11", `got ${r.date.value}`);
+});
+
+test("fuel structure without runnable pump math still categorizes as Fuel", () => {
+  // IMG_0401: "GALLONS: 18153" lost its decimal — no math, but PRICE/G
+  // proves the receipt class.
+  const r = parseReceipt(
+    ocr([
+      "WELCOME TO",
+      "nob]",
+      "DATE 9/23/24 9:18",
+      "PUMP# 03",
+      "PRODUCT: Regular",
+      "GALLONS: 18153",
+      "PRICE/G: 4.699",
+      "FUEL SALE FOR",
+      "CREDIT 80.60",
+      "UoD$80.60",
+    ]),
+  );
+  assert.equal(r.category.value, "Fuel", `got ${r.category.value}`);
+  assert.equal(r.amount.value, 80.6);
+});
+
+test("locateValue finds month-name and glyph-garbled dates via the parser", () => {
+  const fb = locateValue(
+    lines2(["FARMER BOYS", "WEL SEPTEMBER 11.2024", "TOTAL $67.38"]),
+    "date",
+    "2024-09-11",
+  );
+  assert.ok(fb && /SEPTEMBER/.test(fb.lineText), JSON.stringify(fb));
+  const ch = locateValue(
+    lines2(["Chevron", "B2/08/2023 28261317", "FUEL TOTAL $ 104.23"]),
+    "date",
+    "2023-02-08",
+  );
+  assert.ok(ch && /B2\/08/.test(ch.lineText), JSON.stringify(ch));
+});
+
+function lines2(texts: string[]): OcrLine[] {
+  return texts.map((text, i) => ({
+    text,
+    confidence: 88,
+    bbox: { x: 0, y: i / texts.length, w: 1, h: 1 / texts.length },
+    words: [],
+  }));
+}
