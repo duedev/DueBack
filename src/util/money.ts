@@ -46,7 +46,12 @@ export function parseAmount(raw: string): number | null {
     // and no second comma that would imply thousands grouping).
     decSep = /^\d+,\d{1,2}$/.test(s) ? "," : null;
   } else if (lastDot > -1) {
-    decSep = /^\d+\.\d{1,2}$/.test(s) || /\d\.\d{1,2}$/.test(s) ? "." : null;
+    // Only dots. US-first: a single dot is the decimal point no matter how
+    // many digits follow — receipts print 3-decimal unit prices and quantities
+    // ("$3.499/gal", "11.204 GAL") constantly, and reading them as thousands
+    // grouping turned gallons into $11,204. Multiple dots ("1.234.567") are
+    // EU thousands grouping.
+    decSep = s.indexOf(".") === lastDot ? "." : null;
   }
 
   let normalized: string;

@@ -39,10 +39,17 @@ export interface Extraction {
 // or thousands grouping. Bare integers are excluded so dates/phone/quantities
 // don't masquerade as amounts. The trailing lookaheads reject fragments of a
 // longer number (e.g. "14.03" inside the date "14.03.2026").
+//
+// Grouping is deliberately strict: US grouping uses commas, and dot-grouping
+// (EU) only counts WITH a comma-cents tail. A lone dot followed by 3 digits is
+// NOT money — receipts are full of 3-decimal unit prices and quantities
+// ("$3.499/gal", "11.204 GAL") that the old permissive grouped form read as
+// $3,499 / $11,204 and then promoted to the receipt total.
 const MONEY_SRC =
-  "(?:[$£€¥]\\s?)?\\d{1,3}(?:[.,]\\d{3})+(?:[.,]\\d{2})?(?!\\d)" + // grouped
-  "|(?:[$£€¥]\\s?)?\\d+[.,]\\d{2}(?![.,]?\\d)" + //                  decimal cents
-  "|[$£€¥]\\s?\\d+(?![\\d.,])"; //                                  symbol + whole
+  "(?:[$£€¥]\\s?)?\\d{1,3}(?:,\\d{3})+(?:\\.\\d{2})?(?!\\d)" + // US grouped
+  "|(?:[$£€¥]\\s?)?\\d{1,3}(?:\\.\\d{3})+,\\d{2}(?!\\d)" + //     EU grouped + cents
+  "|(?:[$£€¥]\\s?)?\\d+[.,]\\d{2}(?![.,]?\\d)" + //               decimal cents
+  "|[$£€¥]\\s?\\d+(?![\\d.,])"; //                                symbol + whole
 const MONEY_RE = new RegExp(MONEY_SRC);
 // Used only on lines we already know are labeled totals/taxes, so a whole-number
 // amount ("TOTAL 9") is still picked up without risking false positives.
@@ -78,7 +85,13 @@ function moneyHitsFromLine(line: OcrLine, lenient = false): MoneyHit[] {
     }
   }
   if (hits.length === 0 && lenient) {
-    const matches = line.text.match(LENIENT_MONEY_RE) ?? [];
+    // Lenient pass (labeled-total lines only): a bare integer can be the value
+    // ("TOTAL 9"), but drop date/time tokens first so "05/10/2026" or "14:03"
+    // can never be read as the total.
+    const cleaned = line.text
+      .replace(/\b\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\b/g, " ")
+      .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, " ");
+    const matches = cleaned.match(LENIENT_MONEY_RE) ?? [];
     for (const m of matches) {
       const v = parseAmount(m);
       if (v !== null) hits.push({ value: v, bbox: line.bbox });
@@ -146,12 +159,23 @@ function findAmount(lines: OcrLine[]): {
       // A generic "total" line that is really subtotal/tax/tender/change/savings/
       // discount/points/item-count is not the grand total — skip it.
       if (label.weight < 1 && NON_GRAND_RE.test(text)) break;
-      // Amount may be on the same line or the next (label-only line).
+      // Amount may be on the same line or the next (label-only line). The
+      // label line itself gets the lenient scan ("TOTAL 9"); the next line
+      // must look strictly like money — it is arbitrary receipt text (a date,
+      // "STORE 0442 REG 2", …) and a lenient grab there turned dates into
+      // totals.
       let hit = rightmostAmount(line, true);
-      if (!hit && lines[i + 1]) hit = rightmostAmount(lines[i + 1]!, true);
+      if (!hit && lines[i + 1]) hit = rightmostAmount(lines[i + 1]!, false);
       if (hit && hit.value > 0) {
         const conf = label.weight * (line.confidence / 100 || 0.7);
-        if (!best || label.weight > best.weight) {
+        // Within the same tier the LARGEST value wins (e.g. FUEL TOTAL vs the
+        // combined TOTAL on a fuel + car-wash receipt) — ported from the
+        // original app's extract_best_total.
+        if (
+          !best ||
+          label.weight > best.weight ||
+          (label.weight === best.weight && hit.value > best.hit.value)
+        ) {
           best = { hit, weight: label.weight, conf };
         }
       }
@@ -312,13 +336,20 @@ function looksLikeVendorLine(line: OcrLine): boolean {
   const letters = (t.match(/[A-Za-z]/g) ?? []).length;
   if (letters < 3) return false;
   if (letters / t.length < 0.4) return false; // mostly symbols/digits
-  if (MONEY_RE.test(t) && letters < 6) return false;
+  // A line carrying a money value is an item/total line, never the merchant
+  // name — taking it fabricated vendors like "Wiper blades 34.99".
+  if (MONEY_RE.test(t)) return false;
   if (DATE_LABEL_RE.test(t)) return false;
   if (PHONE_RE.test(t) && letters < 6) return false;
   if (STATE_ZIP_RE.test(t)) return false; // "..., IL 62704"
   if (STREET_NUMBER_RE.test(t) && ADDRESS_RE.test(t)) return false; // "123 Main St"
   if (ADDRESS_RE.test(t)) return false;
   if (/^(receipt|invoice|order|tel|phone|fax|www\.|http)/i.test(t)) return false;
+  // Register boilerplate ("STORE #4821", "REG 2", "TRANS 0071") is not a
+  // merchant name — a numbered store/register/transaction line must not win.
+  if (/^(store|reg(?:ister)?|lane|till|terminal|cashier|clerk|trans(?:action)?)\b[\s#:.]*\d/i.test(t)) {
+    return false;
+  }
   return true;
 }
 

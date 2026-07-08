@@ -107,3 +107,62 @@ test("typo'd month name still parses (jaunary)", () => {
   const r = parseReceipt(ocr(["Vendor", "Jaunary 5, 2026", "Total 5.00"]));
   assert.equal(r.date.value, "2026-01-05");
 });
+
+test("3-decimal quantities never become money (gas receipt)", () => {
+  const r = parseReceipt(
+    ocr([
+      "SHELL",
+      "06/12/2026 14:03",
+      "GALLONS 11.204",
+      "PRICE/GAL $3.499",
+      "TOTAL $39.20",
+      "CREDIT $39.20",
+    ]),
+  );
+  assert.equal(r.amount.value, 39.2);
+  // 11.204 / 3.499 must not register as larger amounts above the total.
+  assert.ok(!r.flags.some((f) => f.code === "total_mismatch"), JSON.stringify(r.flags));
+});
+
+test("within a tier the largest total wins (FUEL TOTAL vs combined TOTAL)", () => {
+  const r = parseReceipt(
+    ocr([
+      "CHEVRON",
+      "FUEL TOTAL 30.00",
+      "CAR WASH 9.20",
+      "TOTAL 39.20",
+      "06/01/2026",
+    ]),
+  );
+  assert.equal(r.amount.value, 39.2);
+});
+
+test("label-only TOTAL line never grabs a date or register number below it", () => {
+  const dateBelow = parseReceipt(
+    ocr(["JOES DINER", "Burger 9.50", "TOTAL", "Date: 05/10/2026"]),
+  );
+  assert.equal(dateBelow.amount.value, 9.5); // falls back, never 2026
+
+  const registerBelow = parseReceipt(
+    ocr(["QUICK MART", "Item 4.25", "TOTAL", "STORE 0442 REG 2"]),
+  );
+  assert.equal(registerBelow.amount.value, 4.25); // never 2
+});
+
+test("label-only TOTAL still picks a strict money value on the next line", () => {
+  const r = parseReceipt(ocr(["SHOP", "Item 12.00", "TOTAL", "$12.00"]));
+  assert.equal(r.amount.value, 12);
+});
+
+test("lenient whole-number total on the label line still works", () => {
+  const r = parseReceipt(ocr(["SHOP", "TOTAL 9", "05/01/2026"]));
+  assert.equal(r.amount.value, 9);
+});
+
+test("vendor is never fabricated from an item line carrying a price", () => {
+  const r = parseReceipt(
+    ocr(["", "Wiper blades 34.99", "Shop towels 6.49", "TOTAL 41.48"]),
+  );
+  assert.equal(r.vendor.value, "");
+  assert.ok(r.flags.some((f) => f.code === "no_vendor"));
+});

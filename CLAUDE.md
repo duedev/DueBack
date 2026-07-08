@@ -52,6 +52,22 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
 - **Svelte $state proxies can't enter IndexedDB** — `structuredClone` throws on
   them. Unwrap with `$state.snapshot(...)` before any `repo` write that carries
   objects from reactive state (see `ReviewModal.patchFromForm`).
+- **Money parsing is US-first and deliberately strict** (`util/money.ts` +
+  `MONEY_SRC` in `extract.ts`): a single dot with 3 decimals is a *decimal*
+  ("$3.499/gal", "11.204 GAL"), never thousands grouping — the permissive form
+  read gallons as $11,204 and promoted it to the total. Dot-grouping only
+  counts as money with a comma-cents tail. Within a total tier the **largest**
+  value wins (FUEL TOTAL vs combined TOTAL, as in the original app), and the
+  line *below* a label-only TOTAL must match strict money (a lenient grab
+  there turned "Date: 05/10/2026" into a $2,026 total).
+- **Copy a picker's FileList before clearing `input.value`**
+  (Landing/Dropzone `onPicked`) — resetting the input empties the live
+  FileList mid-await, silently dropping every file after the first.
+- **`npm run e2e` is the real-OCR accuracy gate** — three receipts (easy
+  coffee, fuel with per-gallon pricing + FUEL TOTAL, split-label TOTAL) run
+  through actual Tesseract in Chromium with per-receipt amount assertions. The
+  testkit exercises the rules on synthetic text only; regressions in the real
+  path show up here.
 - **Digit-only brand aliases ("76") are excluded from the glyph pass** — its
   punctuation stripping would turn a price ending `.76` into a brand hit; the
   exact pass (with the numeric boundary guard) is where they match.

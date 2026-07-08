@@ -44,3 +44,15 @@ test("excelMoneyFormat picks a symbol", () => {
   assert.equal(excelMoneyFormat("USD"), "$#,##0.00");
   assert.equal(excelMoneyFormat("EUR"), "€#,##0.00");
 });
+
+test("parseAmount: 3-decimal unit prices/quantities are decimals, not thousands", () => {
+  // Fuel receipts print these on every sale; reading them as grouping turned
+  // 11.204 gallons into $11,204.
+  assert.equal(parseAmount("3.499"), 3.5);
+  assert.equal(parseAmount("11.204"), 11.2);
+  assert.equal(parseAmount("0.599"), 0.6);
+  // Multiple dots stay EU thousands grouping; mixed separators unchanged.
+  assert.equal(parseAmount("1.234.567,89"), null); // > 1,000,000 guard
+  assert.equal(parseAmount("1.234,56"), 1234.56);
+  assert.equal(parseAmount("1,000"), 1000);
+});
