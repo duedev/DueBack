@@ -59,7 +59,7 @@ export const KNOWN_VENDORS: KnownVendor[] = [
   { name: "Shell", category: "Fuel", aliases: ["shell"] },
   { name: "Chevron", category: "Fuel", aliases: ["chevron"] },
   { name: "ARCO", category: "Fuel", aliases: ["arco"] },
-  { name: "Mobil", category: "Fuel", aliases: ["mobil"] },
+  { name: "Mobil", category: "Fuel", aliases: ["mobil", "mobil mart"] },
   { name: "Exxon", category: "Fuel", aliases: ["exxon", "exxonmobil"] },
   { name: "BP", category: "Fuel", aliases: ["bp"] },
   { name: "76", category: "Fuel", aliases: ["76 gas", "phillips 76", "union 76"] },
@@ -150,6 +150,12 @@ export const KNOWN_VENDORS: KnownVendor[] = [
   { name: "KFC", category: "Meals & Entertainment", aliases: ["kfc"] },
   { name: "Pizza Hut", category: "Meals & Entertainment", aliases: ["pizza hut"] },
   { name: "Domino's", category: "Meals & Entertainment", aliases: ["domino's", "dominos"] },
+  {
+    name: "Farmer Boys",
+    category: "Meals & Entertainment",
+    aliases: ["farmer boys", "farmerboys"],
+    slogans: ["breakfast, burgers & more", "breakfast burgers & more"],
+  },
 
   // ── Lodging ──────────────────────────────────────────────────────────────
   { name: "Marriott", category: "Lodging", aliases: ["marriott"] },
@@ -235,6 +241,11 @@ export const KNOWN_VENDORS: KnownVendor[] = [
   { name: "Safeway", category: "Other", aliases: ["safeway"] },
   { name: "Albertsons", category: "Other", aliases: ["albertsons"] },
   { name: "Trader Joe's", category: "Other", aliases: ["trader joe's", "trader joe"] },
+  {
+    name: "Stater Bros. Markets",
+    category: "Other",
+    aliases: ["stater bros", "stater brothers", "stater bros. markets", "stater"],
+  },
   { name: "Whole Foods", category: "Other", aliases: ["whole foods"] },
   { name: "AutoZone", category: "Other", aliases: ["autozone"] },
   { name: "O'Reilly Auto Parts", category: "Other", aliases: ["o'reilly auto", "o'reilly", "oreilly"] },
@@ -463,6 +474,33 @@ export interface FuzzyVendorMatch {
   ratio: number;
 }
 
+/** Levenshtein distance with an early-exit cap (receipt names are short). */
+export function editDistance(a: string, b: string, cap = 3): number {
+  if (Math.abs(a.length - b.length) > cap) return cap + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  let cur = new Array<number>(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    cur[0] = i;
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(
+        (prev[j] ?? 0) + 1,
+        (cur[j - 1] ?? 0) + 1,
+        (prev[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+      rowMin = Math.min(rowMin, cur[j]!);
+    }
+    if (rowMin > cap) return cap + 1;
+    [prev, cur] = [cur, prev];
+  }
+  return prev[b.length] ?? cap + 1;
+}
+
+/** Edits allowed for a brand of this length: "one or two letters off". */
+function editBudget(len: number): number {
+  return len <= 6 ? 1 : 2;
+}
+
 /**
  * Tight fuzzy match for a SHORT vendor-name candidate. Returns the best brand
  * whose similarity clears {@link FUZZY_RATIO}, or null. Callers should only
@@ -487,6 +525,41 @@ export function fuzzyMatchVendor(candidate: string): FuzzyVendorMatch | null {
       (r === best.ratio && fa.folded.length > best.len)
     ) {
       best = { name: fa.name, category: fa.category, ratio: r, len: fa.folded.length };
+    }
+  }
+  return best ? { name: best.name, category: best.category, ratio: best.ratio } : null;
+}
+
+/**
+ * Fuzzy sweep over the receipt's HEADER lines: each line (plus its first one
+ * and two words) is compared against every brand alias, accepting a match
+ * when it is within the edit budget — one letter off for short names, two for
+ * longer ("MOBTL" → Mobil, "CTATER" → Stater, "FARMER 80YS" → Farmer Boys).
+ * Digit→letter folds apply, so OCR's 0/8/1/5 confusions count as zero edits.
+ */
+export function fuzzyMatchVendorLines(lines: string[]): FuzzyVendorMatch | null {
+  const candidates = new Set<string>();
+  for (const raw of lines.slice(0, 6)) {
+    const text = raw.trim();
+    if (text.length < 4) continue;
+    candidates.add(text);
+    const words = text.split(/\s+/);
+    if (words[0] && words[0].length >= 4) candidates.add(words[0]);
+    if (words.length >= 2) candidates.add(words.slice(0, 2).join(" "));
+  }
+  let best: (FuzzyVendorMatch & { d: number; len: number }) | null = null;
+  for (const cand of candidates) {
+    const folded = foldFull(cand);
+    if (folded.length < 4) continue;
+    for (const fa of FUZZY_ALIASES) {
+      if (Math.abs(fa.folded.length - folded.length) > 2) continue;
+      const budget = editBudget(fa.folded.length);
+      const d = editDistance(folded, fa.folded, budget);
+      if (d > budget) continue;
+      const ratio = 1 - d / fa.folded.length;
+      if (!best || d < best.d || (d === best.d && fa.folded.length > best.len)) {
+        best = { name: fa.name, category: fa.category, ratio, d, len: fa.folded.length };
+      }
     }
   }
   return best ? { name: best.name, category: best.category, ratio: best.ratio } : null;

@@ -35,8 +35,8 @@ export async function annotateReceipt(
     ctx.drawImage(bmp, 0, 0);
 
     for (const m of usable) {
-      const padX = m.bbox.w * 0.08 * bmp.width + 2;
-      const padY = m.bbox.h * 0.3 * bmp.height + 2;
+      const padX = m.bbox.w * 0.03 * bmp.width + 2;
+      const padY = m.bbox.h * 0.12 * bmp.height + 2;
       const x = m.bbox.x * bmp.width - padX;
       const y = m.bbox.y * bmp.height - padY;
       const w = m.bbox.w * bmp.width + padX * 2;
