@@ -7,6 +7,7 @@
   import { receiptFileName } from "../util/rename.ts";
   import { annotateReceipt, HIGHLIGHT_COLORS } from "../pipeline/annotate.ts";
   import { buildCorrectionRecords, appendCorrections } from "../train/corrections.ts";
+  import { locateValue } from "../pipeline/extract.ts";
   import type { Receipt, BBox, Category, OcrLine, Field } from "../types.ts";
 
   // The review sweep: board → modal → keyboard Approve & Next. On-image markers
@@ -111,26 +112,36 @@
     const lines = (r.ocrLines ?? []) as OcrLine[];
     const records = buildCorrectionRecords(r, patch, lines);
 
-    // Corrected values that were found printed on the receipt get their
-    // provenance boxes moved — markers, callouts and baked highlights all
-    // follow the human's value from now on.
-    for (const rec of records) {
-      if (!rec.bbox) continue;
-      if (rec.field === "vendor" || rec.field === "date") {
-        const f = patch[rec.field] as Field<string> | undefined;
-        if (f) f.bbox = rec.bbox;
-      } else if (rec.field === "amount") {
-        const f = patch.amount as Field<number> | undefined;
-        if (f) f.bbox = rec.bbox;
+    // Re-locate ALL highlighted fields on every save — not just the ones
+    // changed in THIS patch — so a receipt corrected earlier (or before
+    // relocation existed) heals the moment it's saved or approved. A
+    // human-edited value that can't be found keeps NO box: a highlight on
+    // the old misread is worse than none.
+    let boxesMoved = false;
+    for (const kind of ["vendor", "date", "amount"] as const) {
+      const f = patch[kind] as Field<string | number> | undefined;
+      if (!f) continue;
+      const prev = r[kind].bbox;
+      if (lines.length > 0 && f.value) {
+        const hit = locateValue(lines, kind, f.value);
+        if (hit) f.bbox = hit.bbox;
+        else if (f.edited) delete f.bbox;
+      } else if (f.edited && f.value !== r[kind].value) {
+        delete f.bbox; // no OCR geometry stored — drop the stale box
+      }
+      if (JSON.stringify(f.bbox ?? null) !== JSON.stringify(prev ?? null)) {
+        boxesMoved = true;
       }
     }
 
-    // Re-bake the highlighter copy whenever a highlighted field changed;
-    // fall back to the clean image if the bake fails.
+    // Re-bake the highlighter copy whenever a highlighted field changed or
+    // its box moved; fall back to the clean image if the bake fails.
     const oldKey = r.annotatedKey;
-    const highlightedChanged = records.some(
-      (rec) => rec.field === "vendor" || rec.field === "date" || rec.field === "amount",
-    );
+    const highlightedChanged =
+      boxesMoved ||
+      records.some(
+        (rec) => rec.field === "vendor" || rec.field === "date" || rec.field === "amount",
+      );
     if (highlightedChanged) {
       let newKey: string | undefined;
       try {

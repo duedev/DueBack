@@ -6,26 +6,25 @@
   import ReviewModal from "./ReviewModal.svelte";
   import ExportBar from "./ExportBar.svelte";
   import Settings from "./Settings.svelte";
-  import type { Receipt, ReceiptStatus } from "../types.ts";
+  import type { Receipt } from "../types.ts";
 
   const total = $derived(app.receipts.length);
   const finished = $derived(app.counts.done + app.counts.needs_review + app.counts.failed);
 
   // ---- Board view + sorting -------------------------------------------------
   type BoardView = "grid" | "kanban";
-  type SortKey = "added" | "date" | "amount" | "vendor" | "category" | "status";
+  type SortKey = "added" | "date" | "amount" | "vendor" | "category";
   let view = $state<BoardView>(
-    (localStorage.getItem("board.view") as BoardView) || "grid",
+    (localStorage.getItem("board.view") as BoardView) || "kanban",
   );
+  const storedSort = localStorage.getItem("board.sort");
   let sortKey = $state<SortKey>(
-    (localStorage.getItem("board.sort") as SortKey) || "added",
+    // "status" was a sort option before the kanban lanes made it redundant.
+    storedSort && storedSort !== "status" ? (storedSort as SortKey) : "added",
   );
   $effect(() => localStorage.setItem("board.view", view));
   $effect(() => localStorage.setItem("board.sort", sortKey));
 
-  const STATUS_RANK: Record<ReceiptStatus, number> = {
-    needs_review: 0, failed: 1, processing: 2, queued: 3, done: 4,
-  };
   function compare(a: Receipt, b: Receipt): number {
     switch (sortKey) {
       case "date":
@@ -36,8 +35,6 @@
         return (a.vendor.value || "\uffff").localeCompare(b.vendor.value || "\uffff");
       case "category":
         return a.category.value.localeCompare(b.category.value);
-      case "status":
-        return STATUS_RANK[a.status] - STATUS_RANK[b.status];
       default:
         return b.createdAt - a.createdAt; // newest first
     }
@@ -131,6 +128,7 @@
         </p>
       </div>
     {:else}
+      <ExportBar />
       <div class="board-bar">
         <div class="seg" role="tablist" aria-label="Board view">
           <button class="seg-btn" class:active={view === "grid"} onclick={() => (view = "grid")}>Grid</button>
@@ -140,7 +138,6 @@
           <span class="muted small">Sort</span>
           <select bind:value={sortKey} aria-label="Sort receipts">
             <option value="added">Newest added</option>
-            <option value="status">Needs attention</option>
             <option value="date">Receipt date</option>
             <option value="amount">Amount (high first)</option>
             <option value="vendor">Vendor A–Z</option>
@@ -175,7 +172,6 @@
           {/each}
         </div>
       {/if}
-      <ExportBar />
     {/if}
   </main>
 </div>
