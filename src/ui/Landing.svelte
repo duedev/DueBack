@@ -524,12 +524,12 @@
     box-shadow: inset 0 0 0 1px color-mix(in srgb, #1d4ed8 45%, transparent);
   }
   .hl-date {
-    background: color-mix(in srgb, #147246 20%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, #147246 45%, transparent);
+    background: color-mix(in srgb, #dc2626 18%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #dc2626 45%, transparent);
   }
   .hl-amount {
-    background: color-mix(in srgb, #d9480f 20%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, #d9480f 45%, transparent);
+    background: color-mix(in srgb, #147246 20%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #147246 45%, transparent);
   }
   .s-head {
     background: var(--accent);

@@ -440,17 +440,17 @@
     background: var(--cat-3);
   }
   .m-date {
-    border-color: var(--cat-1);
+    border-color: var(--err);
   }
   .m-date span {
-    background: var(--cat-1);
-    color: var(--accent-ink);
+    background: var(--err);
   }
   .m-amount {
-    border-color: var(--cat-2);
+    border-color: var(--ok);
   }
   .m-amount span {
-    background: var(--cat-2);
+    background: var(--ok);
+    color: var(--accent-ink);
   }
 
   .m-form {
@@ -467,10 +467,10 @@
     border-left: 3px solid var(--cat-3);
   }
   .f-date input {
-    border-left: 3px solid var(--cat-1);
+    border-left: 3px solid var(--err);
   }
   .f-amount input {
-    border-left: 3px solid var(--cat-2);
+    border-left: 3px solid var(--ok);
   }
   .amount-grid {
     display: grid;

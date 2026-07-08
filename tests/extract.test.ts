@@ -314,3 +314,61 @@ test("an OCR-misspelled address suffix (Blvg) never becomes the vendor", () => {
   assert.notEqual(r.vendor.value, "1131 N. State College Blvg");
   assert.equal(r.amount.value, 24.05);
 });
+
+// ── Footing math + date glyph recovery (from the user's live-run OCR dumps) ──
+
+test("footing math corrects a glued qty@price total to the printed grand total", () => {
+  // OCR read "2@19.28" as "2919.28" (@→9) — a well-formed money token no
+  // regex can reject. SUBTOTAL + SALES TAX = 248.81 is printed; it wins.
+  const r = parseReceipt(
+    ocr([
+      "How doers get more done.",
+      "1018 00061 63802 09/05/23 12:00 PM",
+      "885911413763 DW 18GA 1\" B <A>",
+      "2919.28 38.56",
+      "SUBTOTAL 229.85",
+      "SALES TAX 18.96",
+      "TOTAL $248.81",
+    ]),
+  );
+  assert.equal(r.amount.value, 248.81, `amount ${r.amount.value}`);
+});
+
+test("footing math adopts subtotal + tax when the printed total is unreadable", () => {
+  const r = parseReceipt(
+    ocr([
+      "SHOP",
+      "2919.28 38.56",
+      "SUBTOTAL 229.85",
+      "SALES TAX 18.96",
+      "ol USD$ 248. a", // grand total destroyed by OCR
+    ]),
+  );
+  assert.equal(r.amount.value, 248.81, `amount ${r.amount.value}`);
+  assert.ok(r.flags.some((f) => /foot/.test(f.message)), JSON.stringify(r.flags));
+});
+
+test("footing hit tolerance covers independent rounding (67.36 vs printed 67.38)", () => {
+  const r = parseReceipt(
+    ocr([
+      "DINER",
+      "TOTAL 38.00", // OCR lost the leading 6 of 67.38 elsewhere; wrong pick
+      "SUBTOTAL 61.96",
+      "TAX 5.40",
+      "AMOUNT 67.38",
+    ]),
+  );
+  assert.equal(r.amount.value, 67.38, `amount ${r.amount.value}`);
+});
+
+test("dot-matrix date glyphs recover: @2/01/2823 → 2023-02-01", () => {
+  const r = parseReceipt(
+    ocr([
+      "Chevron",
+      "3384 14th Street",
+      "@2/01/2823 1 339856883",
+      "FUEL TOTAL $ 108.30",
+    ]),
+  );
+  assert.equal(r.date.value, "2023-02-01");
+});

@@ -66,7 +66,6 @@ test("buildWorkbook produces a valid multi-sheet workbook with footing totals", 
   const names = wb.worksheets.map((w) => w.name);
   assert.ok(names.includes("Summary"));
   assert.ok(names.includes("Insights"));
-  assert.ok(names.includes("All Receipts"));
   assert.ok(names.includes("Travel"));
   assert.ok(names.includes("Lodging"));
 
@@ -137,15 +136,16 @@ test("buildWorkbook skips failed and zero-amount receipts", async () => {
   assert.equal(result.count, 4); // the zero/failed one is excluded
 });
 
-test("sheet order: Summary, categories, then All Receipts and Insights rightmost", async () => {
+test("sheet order: Summary, categories in taxonomy order, Insights rightmost", async () => {
   const result = await buildWorkbook(batch, receipts, async () => undefined);
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(await result.blob.arrayBuffer());
   const names = wb.worksheets.map((w) => w.name);
   assert.equal(names[0], "Summary");
-  assert.deepEqual(names.slice(-2), ["All Receipts", "Insights"]);
-  // Category sheets sit between, in taxonomy order.
-  assert.deepEqual(names.slice(1, -2), ["Meals & Entertainment", "Travel", "Lodging", "Ground Transportation"]);
+  assert.equal(names[names.length - 1], "Insights");
+  // The Summary IS the receipt table (linked); no redundant flat copy.
+  assert.ok(!names.includes("All Receipts"));
+  assert.deepEqual(names.slice(1, -1), ["Meals & Entertainment", "Travel", "Lodging", "Ground Transportation"]);
 });
 
 test('"Other" receipts are labeled Miscellaneous in the report', async () => {
@@ -181,22 +181,17 @@ test("notes never read Approved; a reviewed receipt reads Manually reviewed", as
   assert.ok(sawManually, "reviewed receipt is marked Manually reviewed");
 });
 
-test("All Receipts has no Conf. column and Insights totals are formulas", async () => {
+test("Insights Total Spend foots from the Summary's subtotal formulas", async () => {
   const result = await buildWorkbook(batch, receipts, async () => undefined);
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(await result.blob.arrayBuffer());
-  const all = wb.getWorksheet("All Receipts")!;
-  const headers: string[] = [];
-  all.getRow(2).eachCell((c) => headers.push(String(c.value ?? "")));
-  assert.ok(!headers.includes("Conf."), headers.join(", "));
-
   const insights = wb.getWorksheet("Insights")!;
   let sawFormula = false;
   insights.eachRow((row) => {
     row.eachCell((cell) => {
       const v = cell.value as { formula?: string } | null;
-      if (v && typeof v === "object" && v.formula?.includes("'All Receipts'")) sawFormula = true;
+      if (v && typeof v === "object" && v.formula?.includes("Summary!F")) sawFormula = true;
     });
   });
-  assert.ok(sawFormula, "insights key figures reference All Receipts");
+  assert.ok(sawFormula, "insights Total Spend references the Summary subtotals");
 });

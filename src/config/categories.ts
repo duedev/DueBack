@@ -31,8 +31,8 @@ export const CATEGORIES: Category[] = [
 /** Display metadata used by the board chips and the workbook theming. */
 export const CATEGORY_META: Record<Category, { color: string; emoji: string }> =
   {
-    "Meals & Entertainment": { color: "FFF59E0B", emoji: "🍽️" },
-    Travel: { color: "FF3B82F6", emoji: "✈️" },
+    "Meals & Entertainment": { color: "FFF97316", emoji: "🍽️" },
+    Travel: { color: "FF0EA5E9", emoji: "✈️" },
     Lodging: { color: "FF8B5CF6", emoji: "🏨" },
     "Ground Transportation": { color: "FF06B6D4", emoji: "🚕" },
     Fuel: { color: "FFEF4444", emoji: "⛽" },

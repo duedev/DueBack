@@ -114,7 +114,7 @@ function rightmostAmount(line: OcrLine, lenient = false): MoneyHit | null {
 }
 
 const TOTAL_LABELS = [
-  { re: /\b(grand\s*total|amount\s*due|balance\s*due|total\s*due|total\s*paid)\b/i, weight: 1.0 },
+  { re: /\b(grand\s*total|amount\s*due|balance\s*due|balance\s+to\s+pay|total\s*due|total\s*paid)\b/i, weight: 1.0 },
   { re: /\btotal\b/i, weight: 0.85 },
   // Gas pumps print "FUEL SALE $31.86" with no other total line; ranked below
   // a plain TOTAL so a combined fuel + car-wash TOTAL still wins.
@@ -234,7 +234,8 @@ interface DateHit {
 
 function parseDatesInLine(line: OcrLine, labeled: boolean): DateHit[] {
   const out: DateHit[] = [];
-  const t = line.text;
+  // Dot-matrix pump printers: '@' is almost always a misread '0'.
+  const t = line.text.replace(/@/g, "0");
 
   // ISO yyyy-mm-dd
   for (const m of t.matchAll(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/g)) {
@@ -302,6 +303,12 @@ function addHit(
 ): void {
   let year = yearRaw;
   if (year < 100) year += 2000;
+  // "2823" is a misread "2023" (0→8 is a common thermal-print confusion);
+  // recover any 2xxx year whose last two digits form a plausible 20xx date.
+  if (year > 2100 && year < 3000 && 2000 + (year % 100) <= 2100) {
+    year = 2000 + (year % 100);
+    ambiguous = true;
+  }
   if (month < 1 || month > 12 || day < 1 || day > 31) return;
   if (year < 2000 || year > 2100) return;
   const d = new Date(year, month - 1, day);
@@ -336,6 +343,10 @@ const ADDRESS_RE =
 // Politeness/boilerplate lines that often sit above the real merchant name.
 const GREETING_RE =
   /^\s*(welcome(\s+to)?|thank\s*(you|s)|have\s+a\s+nice|greetings|hello)\b/i;
+// A short "City ST" line (the zip often sits on the NEXT line, dodging the
+// state+zip guard) — "Anaheim CA" is an address, not a merchant.
+const CITY_STATE_RE =
+  /\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\.?\s*$/;
 const PHONE_RE = /(\+?\d[\d\s().-]{6,}\d)/;
 // "Springfield, IL 62704" — a US state abbreviation followed by a ZIP code.
 const STATE_ZIP_RE = /\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/;
@@ -360,6 +371,8 @@ function looksLikeVendorLine(line: OcrLine): boolean {
   // "WELCOME TO" / "THANK YOU" headers are not the merchant — the name is
   // usually the line below.
   if (GREETING_RE.test(t)) return false;
+  // "Anaheim CA" — a short city/state line from the address block.
+  if (t.split(/\s+/).length <= 4 && CITY_STATE_RE.test(t)) return false;
   // Register boilerplate ("STORE #4821", "REG 2", "TRANS 0071") is not a
   // merchant name — a numbered store/register/transaction line must not win.
   if (/^(store|reg(?:ister)?|lane|till|terminal|cashier|clerk|trans(?:action)?)\b[\s#:.]*\d/i.test(t)) {
@@ -449,17 +462,24 @@ function pumpMathTotal(lines: OcrLine[]): number | null {
   return product >= 1 && product <= 2000 ? product : null;
 }
 
-/** First money hit on any line matching `value` (non-payment lines first). */
+/** Closest money hit to `value` within `tol` (non-payment lines preferred). */
 function findHitByValue(lines: OcrLine[], value: number, tol: number): MoneyHit | null {
-  let fallback: MoneyHit | null = null;
+  let best: { hit: MoneyHit; diff: number; payment: boolean } | null = null;
   for (const line of lines) {
+    const payment = PAYMENT_RE.test(line.text);
     for (const h of moneyHitsFromLine(line)) {
-      if (Math.abs(h.value - value) > tol) continue;
-      if (!PAYMENT_RE.test(line.text)) return h;
-      fallback ??= h;
+      const diff = Math.abs(h.value - value);
+      if (diff > tol) continue;
+      if (
+        !best ||
+        (best.payment && !payment) ||
+        (best.payment === payment && diff < best.diff)
+      ) {
+        best = { hit: h, diff, payment };
+      }
     }
   }
-  return fallback;
+  return best?.hit ?? null;
 }
 
 /** Cross-check/correct the amount with pump math. Returns flags plus whether
@@ -496,6 +516,50 @@ function applyPumpMath(
     amount: corrected,
     verified: true,
     flags: [{ code: "total_mismatch", severity: "info", message: note }],
+  };
+}
+
+/** Correct the amount with the receipt's own footing: when SUBTOTAL + TAX are
+ *  printed and some OTHER printed money value equals their sum, that sum is
+ *  the grand total — an OCR-garbled "total" (e.g. "2@19.28" read as a
+ *  plausible-looking $2,819.28) loses to arithmetic the receipt itself
+ *  provides. Only ever corrects TO a printed value, mirroring the original
+ *  app's reconcile_amount. */
+function applyFootingMath(
+  lines: OcrLine[],
+  amount: Field<number> | null,
+  subtotal: number | null,
+  tax: Field<number> | null,
+): { amount: Field<number> | null; flags: Flag[] } {
+  if (!amount || subtotal === null || !tax || tax.value <= 0) {
+    return { amount, flags: [] };
+  }
+  const expected = Math.round((subtotal + tax.value) * 100) / 100;
+  const tol = Math.max(0.02, expected * 0.005);
+  if (Math.abs(amount.value - expected) <= tol) return { amount, flags: [] };
+  // Subtotal and tax round independently, so the printed grand total can sit
+  // a couple of cents off the sum — search ±3¢ and take the closest.
+  const printed = findHitByValue(lines, expected, 0.03);
+  const wildlyOff = Math.abs(amount.value - expected) > Math.max(1, expected * 0.35);
+  if (!printed && !wildlyOff) return { amount, flags: [] };
+  const corrected: Field<number> = printed
+    ? {
+        value: printed.value,
+        confidence: 0.93,
+        ...(printed.bbox ? { bbox: printed.bbox } : {}),
+      }
+    : // No printed grand total survived OCR, but the amount contradicts the
+      // receipt's own arithmetic by an order of magnitude — the sum wins.
+      { value: expected, confidence: 0.8 };
+  return {
+    amount: corrected,
+    flags: [
+      {
+        code: "total_mismatch",
+        severity: "info",
+        message: `Amount corrected: ${amount.value.toFixed(2)} didn't foot with subtotal + tax (${expected.toFixed(2)}).`,
+      },
+    ],
   };
 }
 
@@ -597,10 +661,14 @@ export function parseReceipt(
 
   const found = findAmount(lines);
   const { subtotal, allMax } = found;
-  // Fuel receipts carry their own ground truth: gallons × price/gal.
-  const pump = applyPumpMath(lines, found.amount);
-  const amount = pump.amount;
   const tax = findTax(lines);
+  // Fuel receipts carry their own ground truth: gallons × price/gal; other
+  // receipts often carry SUBTOTAL + TAX, which must foot to the total.
+  const pump = applyPumpMath(lines, found.amount);
+  const footing = pump.verified
+    ? { amount: pump.amount, flags: [] as Flag[] }
+    : applyFootingMath(lines, pump.amount, subtotal, tax);
+  const amount = footing.amount;
   const date = findDate(lines);
   const currency = detectCurrency(ocr.text, opts.currencyDefault ?? CURRENCY_DEFAULT);
 
@@ -652,10 +720,11 @@ export function parseReceipt(
   }
   // When pump math vouches for the amount, the "larger amount appears above"
   // reconcile warning is noise (stray gallons/garbled tokens) — drop it.
+  const corrected = footing.flags.length > 0;
   const reconcileFlags = reconcile(amount, tax, subtotal, allMax).filter(
-    (f) => !pump.verified || f.code !== "total_mismatch",
+    (f) => (!pump.verified && !corrected) || f.code !== "total_mismatch",
   );
-  flags.push(...reconcileFlags, ...pump.flags);
+  flags.push(...reconcileFlags, ...pump.flags, ...footing.flags);
   flags.push(...dateFlags(date));
 
   const confidence = overallConfidence(ocr.confidence, amount, date, vendor, flags);

@@ -13,9 +13,9 @@ export interface HighlightMark {
 }
 
 export const HIGHLIGHT_COLORS = {
-  vendor: "#1d4ed8",
-  date: "#147246",
-  amount: "#d9480f",
+  vendor: "#1d4ed8", // blue
+  date: "#dc2626", // red
+  amount: "#147246", // green — money reads green everywhere in the app
 } as const;
 
 /** Draw translucent highlighter marks over the given normalized boxes. */

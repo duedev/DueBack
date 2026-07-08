@@ -182,6 +182,179 @@ export async function dailyChartImage(
   );
 }
 
+/** Top vendors — ranked horizontal bars in the single accent hue. */
+export async function vendorsChartImage(
+  insights: Insights,
+): Promise<ChartImage | null> {
+  const rows = insights.topVendors.filter((v) => v.total > 0).slice(0, 6);
+  if (rows.length < 2) return null;
+  const height = 90 + rows.length * 46;
+  return renderToPng(
+    {
+      type: "bar",
+      data: {
+        labels: rows.map((v) => v.vendor.length > 18 ? v.vendor.slice(0, 17) + "…" : v.vendor),
+        datasets: [
+          {
+            data: rows.map((v) => v.total),
+            backgroundColor: ACCENT,
+            borderRadius: { topRight: 4, bottomRight: 4 },
+            borderSkipped: "start",
+            barThickness: 26,
+          },
+        ],
+      },
+      options: {
+        indexAxis: "y",
+        layout: { padding: { right: 90, top: 10, bottom: 6 } },
+        plugins: {
+          legend: { display: false },
+          title: {
+            display: true,
+            text: "Top vendors",
+            align: "start",
+            color: "#1c1917",
+            font: { ...FONT, size: 20, weight: "bold" },
+            padding: { bottom: 10 },
+          },
+          tooltip: { enabled: false },
+        },
+        scales: {
+          x: {
+            grid: { color: GRID },
+            border: { display: false },
+            ticks: { color: INK_SOFT, font: FONT, maxTicksLimit: 5 },
+          },
+          y: {
+            grid: { display: false },
+            border: { display: false },
+            ticks: { color: "#1c1917", font: FONT },
+          },
+        },
+      },
+      plugins: [barEndLabels("y")],
+    },
+    900,
+    height,
+  );
+}
+
+/** Cumulative spend — a running-total line that tells the period's story. */
+export async function cumulativeChartImage(
+  insights: Insights,
+): Promise<ChartImage | null> {
+  const rows = insights.timeline;
+  if (rows.length < 3) return null;
+  let running = 0;
+  const cumulative = rows.map((d) => (running = Math.round((running + d.total) * 100) / 100));
+  return renderToPng(
+    {
+      type: "line",
+      data: {
+        labels: rows.map((d) => d.date.slice(5)),
+        datasets: [
+          {
+            data: cumulative,
+            borderColor: ACCENT,
+            backgroundColor: "rgba(20, 114, 70, 0.12)",
+            fill: true,
+            pointRadius: 3,
+            pointBackgroundColor: ACCENT,
+            borderWidth: 3,
+            tension: 0.25,
+          },
+        ],
+      },
+      options: {
+        layout: { padding: { top: 14, right: 24, bottom: 6 } },
+        plugins: {
+          legend: { display: false },
+          title: {
+            display: true,
+            text: "Cumulative spend",
+            align: "start",
+            color: "#1c1917",
+            font: { ...FONT, size: 20, weight: "bold" },
+            padding: { bottom: 10 },
+          },
+          tooltip: { enabled: false },
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            border: { display: false },
+            ticks: { color: INK_SOFT, font: FONT, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+          },
+          y: {
+            grid: { color: GRID },
+            border: { display: false },
+            ticks: {
+              color: INK_SOFT,
+              font: FONT,
+              maxTicksLimit: 5,
+              callback: (v) => `$${Number(v) >= 1000 ? (Number(v) / 1000).toFixed(1) + "k" : v}`,
+            },
+          },
+        },
+      },
+    },
+    900,
+    400,
+  );
+}
+
+/** Category share — doughnut with the category palette and a right legend. */
+export async function shareChartImage(
+  insights: Insights,
+): Promise<ChartImage | null> {
+  const rows = insights.byCategory.filter((c) => c.total > 0).slice(0, 7);
+  if (rows.length < 2) return null;
+  const total = rows.reduce((s, c) => s + c.total, 0);
+  return renderToPng(
+    {
+      type: "doughnut",
+      data: {
+        labels: rows.map((c) => {
+          const name = c.category === "Other" ? "Miscellaneous" : c.category;
+          return `${name}  ${((c.total / total) * 100).toFixed(0)}%`;
+        }),
+        datasets: [
+          {
+            data: rows.map((c) => c.total),
+            backgroundColor: rows.map((c) =>
+              argbToCss(CATEGORY_META[c.category as Category]?.color ?? "FF94A3B8"),
+            ),
+            borderColor: "#ffffff",
+            borderWidth: 2,
+          },
+        ],
+      },
+      options: {
+        layout: { padding: 12 },
+        // ExcelJS-independent visual: hollow center reads as a share chart.
+        ...( { cutout: "62%" } as object ),
+        plugins: {
+          legend: {
+            position: "right",
+            labels: { color: "#1c1917", font: FONT, boxWidth: 14, padding: 10 },
+          },
+          title: {
+            display: true,
+            text: "Share of spend",
+            align: "start",
+            color: "#1c1917",
+            font: { ...FONT, size: 20, weight: "bold" },
+            padding: { bottom: 6 },
+          },
+          tooltip: { enabled: false },
+        },
+      },
+    },
+    900,
+    380,
+  );
+}
+
 /** Chart.js inline plugin: direct value labels at the data end of each bar. */
 function barEndLabels(indexAxis: "x" | "y") {
   return {

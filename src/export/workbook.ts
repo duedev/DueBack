@@ -7,6 +7,9 @@ import { thumbnail } from "./images.ts";
 import {
   categoryChartImage,
   dailyChartImage,
+  vendorsChartImage,
+  cumulativeChartImage,
+  shareChartImage,
   type ChartImage,
 } from "./charts.ts";
 
@@ -29,7 +32,6 @@ const NOTE_YELLOW = "FFFEF9C3"; // subtotal band
 const TEXT_GRAY = "FF4B5563"; // secondary text
 const FOOT_GRAY = "FF8A93A6"; // footer text
 const WHITE = "FFFFFFFF";
-const AMBER = "FFFEF3C7"; // needs-review row highlight
 
 /** Pastel accent behind each receipt's header band on its image sheet. */
 const CATEGORY_TINTS: Partial<Record<Category, string>> = {
@@ -78,6 +80,14 @@ interface ReceiptAnchor {
   row: number;
 }
 
+// Field color-coding on the detail sheets (NOT the Summary form): the same
+// scheme as the on-image highlighter — vendor blue, date red, amount green.
+const FIELD_TINTS = {
+  vendor: { fill: "FFDBEAFE", ink: "FF1D4ED8" },
+  date: { fill: "FFFEE2E2", ink: "FFB91C1C" },
+  amount: { fill: "FFD8F0E3", ink: "FF116A43" },
+} as const;
+
 const IMG_DISPLAY_W = 380; // ≈ column A at width 55
 const IMG_ROW_PT = 14; // height of each image carrier row
 
@@ -125,6 +135,9 @@ export async function buildWorkbook(
   const charts = {
     category: await categoryChartImage(insights).catch(() => null),
     daily: await dailyChartImage(insights).catch(() => null),
+    vendors: await vendorsChartImage(insights).catch(() => null),
+    cumulative: await cumulativeChartImage(insights).catch(() => null),
+    share: await shareChartImage(insights).catch(() => null),
   };
 
   // Categories present, in taxonomy order; layout is computed up-front so the
@@ -144,15 +157,14 @@ export async function buildWorkbook(
     }
   }
 
-  // Tab order: Summary first, the category image sheets next (Fuel,
-  // Materials, … Miscellaneous), and the reference sheets — All Receipts and
-  // Insights — all the way to the right.
-  buildSummarySheet(wb, batch, perCategory, anchors, currency, insights);
+  // Tab order: Summary first (it IS the per-category receipt table, linked),
+  // the category image sheets next (Fuel, Materials, … Miscellaneous), and
+  // Insights all the way to the right.
+  const subtotalCells = buildSummarySheet(wb, batch, perCategory, anchors, currency, insights);
   for (const g of perCategory) {
     buildImageSheet(wb, g.cat, g.rows, imageByReceipt, batch, currency);
   }
-  buildAllReceiptsSheet(wb, rows, anchors, currency);
-  buildInsightsSheet(wb, batch, insights, currency, charts, rows.length);
+  buildInsightsSheet(wb, batch, insights, currency, charts, subtotalCells);
 
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], {
@@ -207,19 +219,9 @@ function tableHeaderRow(ws: ExcelJS.Worksheet, row: number, size = 11): void {
   });
 }
 
-/** One-line description in the spirit of the original's LLM summaries. */
-function describe(rec: Receipt): string {
-  const vendor = rec.vendor.value.trim();
-  const map: Partial<Record<Category, string>> = {
-    Fuel: "Fuel",
-    "Meals & Entertainment": "Meal",
-    Lodging: "Stay",
-    Travel: "Travel",
-    "Ground Transportation": "Ride",
-  };
-  const noun = map[rec.category.value] ?? "Purchase";
-  return vendor ? `${noun} at ${vendor}` : `${noun} — vendor unreadable`;
-}
+// The original app's Summary column carried real LLM-written descriptions;
+// synthesized "Purchase at …" filler added nothing, so the column stays blank
+// unless something meaningful exists (kept for the office's format parity).
 
 function dateValue(iso: string): Date | string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
@@ -235,7 +237,7 @@ function writeReceiptCells(
   rec: Receipt,
   batch: Batch,
   fmt: string,
-  opts: { link?: ReceiptAnchor; bg?: string; small?: boolean } = {},
+  opts: { link?: ReceiptAnchor; bg?: string; small?: boolean; colorFields?: boolean } = {},
 ): void {
   const line = ws.getRow(row);
   const num = line.getCell(1);
@@ -271,11 +273,24 @@ function writeReceiptCells(
     numFmt: fmt,
     alignment: { horizontal: "right", vertical: "middle" },
   });
-  set(7, describe(rec), { font: { size: 10, color: { argb: TEXT_GRAY } } });
+  set(7, "", { font: { size: 10, color: { argb: TEXT_GRAY } } });
   set(8, notesFor(rec), { font: { size: 10, color: { argb: TEXT_GRAY } } });
 
   if (opts.bg) {
     for (let c = 1; c <= 8; c++) fill(line.getCell(c), opts.bg);
+  }
+  if (opts.colorFields) {
+    const paint = (
+      c: number,
+      t: { fill: string; ink: string },
+    ): void => {
+      const cell = line.getCell(c);
+      fill(cell, t.fill);
+      cell.font = { ...(cell.font ?? {}), color: { argb: t.ink } };
+    };
+    paint(3, FIELD_TINTS.vendor); // Store
+    paint(2, FIELD_TINTS.date); // Date
+    paint(6, FIELD_TINTS.amount); // Amount
   }
 }
 
@@ -288,7 +303,7 @@ function buildSummarySheet(
   anchors: Map<string, ReceiptAnchor>,
   currency: string,
   insights: Insights,
-): void {
+): string[] {
   const ws = wb.addWorksheet("Summary", {
     properties: { tabColor: { argb: TITLE_DARK } },
     views: [{ state: "frozen", ySplit: 4 }],
@@ -395,6 +410,7 @@ function buildSummarySheet(
   foot.getCell(7).font = { size: 9, color: { argb: FOOT_GRAY } };
   foot.getCell(8).value = "github.com/duedev/ReimbursementsF5";
   foot.getCell(8).font = { size: 9, color: { argb: LINK_BLUE } };
+  return subtotalCells;
 }
 
 // ── Per-category image sheets ────────────────────────────────────────────────
@@ -421,7 +437,7 @@ function buildImageSheet(
   for (let c = 2; c <= 8; c++) ws.getColumn(c).width = 14.7;
 
   bandRow(ws, 1, 8, `${displayCategory(cat)} — Receipt Images`, {
-    bg: TITLE_DARK, size: 14, height: 28, align: "center",
+    bg: CATEGORY_META[cat].color, size: 14, height: 28, align: "center",
   });
   tableHeaderRow(ws, 2, 10);
   ws.getRow(2).height = 28;
@@ -464,7 +480,7 @@ function buildImageSheet(
     r += imgRows;
 
     // Data row
-    writeReceiptCells(ws, r, i + 1, rec, batch, fmt, { small: true });
+    writeReceiptCells(ws, r, i + 1, rec, batch, fmt, { small: true, colorFields: true });
     ws.getRow(r).height = 22;
     r++;
 
@@ -474,108 +490,21 @@ function buildImageSheet(
   });
 }
 
-// ── All Receipts index (compact, linked, no images) ─────────────────────────
-
-function buildAllReceiptsSheet(
-  wb: ExcelJS.Workbook,
-  rows: Receipt[],
-  anchors: Map<string, ReceiptAnchor>,
-  currency: string,
-): void {
-  const ws = wb.addWorksheet("All Receipts", {
-    properties: { tabColor: { argb: TABLE_BLUE } },
-    views: [{ state: "frozen", ySplit: 2 }],
-    pageSetup: {
-      orientation: "landscape",
-      fitToPage: true,
-      fitToWidth: 1,
-      fitToHeight: 0,
-    },
-  });
-  const headers = ["#", "Date", "Store", "Category", "Amount", "Tax", "Notes", "File"];
-  const widths = [5, 11, 26, 22, 14, 11, 44, 30];
-  widths.forEach((w, i) => (ws.getColumn(i + 1).width = w));
-
-  bandRow(ws, 1, headers.length, "All Receipts", {
-    bg: TITLE_DARK, size: 14, height: 28, align: "center",
-  });
-  headers.forEach((h, i) => {
-    const cell = ws.getCell(2, i + 1);
-    cell.value = h;
-    cell.font = { bold: true, size: 10, color: { argb: WHITE } };
-    fill(cell, TABLE_BLUE);
-    cell.alignment = { vertical: "middle", horizontal: "center" };
-  });
-  ws.getRow(2).height = 24;
-
-  const fmt = acctFormat(currency);
-  const dataStart = 3;
-  let r = dataStart;
-  rows.forEach((rec, i) => {
-    const line = ws.getRow(r);
-    const link = anchors.get(rec.id);
-    const num = line.getCell(1);
-    num.value = link
-      ? { text: String(i + 1), hyperlink: `#'${link.sheet}'!A${link.row}` }
-      : i + 1;
-    num.font = { bold: true, color: { argb: LINK_BLUE } };
-    num.alignment = { horizontal: "center" };
-    line.getCell(2).value = dateValue(rec.date.value);
-    line.getCell(2).numFmt = "m/d/yy";
-    line.getCell(2).alignment = { horizontal: "center" };
-    line.getCell(3).value = rec.vendor.value || "—";
-    line.getCell(4).value = displayCategory(rec.category.value);
-    line.getCell(5).value = safeAmount(rec.amount.value);
-    line.getCell(5).numFmt = fmt;
-    line.getCell(5).alignment = { horizontal: "right" };
-    line.getCell(6).value = safeAmount(rec.tax.value);
-    line.getCell(6).numFmt = fmt;
-    line.getCell(6).alignment = { horizontal: "right" };
-    line.getCell(7).value = notesFor(rec);
-    line.getCell(7).font = { size: 10, color: { argb: TEXT_GRAY } };
-    line.getCell(8).value = rec.fileName;
-    line.getCell(8).font = { size: 10, color: { argb: TEXT_GRAY } };
-
-    const needsReview = rec.reviewRequired && !rec.approved;
-    const bg = needsReview ? AMBER : i % 2 === 1 ? ZEBRA_BLUE : WHITE;
-    for (let c = 1; c <= headers.length; c++) fill(line.getCell(c), bg);
-    line.height = 18;
-    r++;
-  });
-  const dataEnd = r - 1;
-
-  if (dataEnd >= dataStart) {
-    const totalRow = ws.getRow(r);
-    totalRow.getCell(4).value = "TOTAL";
-    totalRow.getCell(5).value = {
-      formula: `SUM(E${dataStart}:E${dataEnd})`,
-      result: rows.reduce((s, x) => s + safeAmount(x.amount.value), 0),
-    };
-    totalRow.getCell(6).value = {
-      formula: `SUM(F${dataStart}:F${dataEnd})`,
-      result: rows.reduce((s, x) => s + safeAmount(x.tax.value), 0),
-    };
-    for (const c of [4, 5, 6]) {
-      const cell = totalRow.getCell(c);
-      cell.font = { bold: true, size: 12, color: { argb: WHITE } };
-      fill(cell, TITLE_DARK);
-      cell.alignment = { horizontal: "right" };
-      if (c >= 5) cell.numFmt = fmt;
-    }
-    totalRow.height = 22;
-  }
-  ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: Math.max(dataStart, dataEnd), column: headers.length } };
-}
-
-// ── Insights sheet ───────────────────────────────────────────────────────────
+// ── Insights sheet — an executive dashboard ─────────────────────────────────
 
 function buildInsightsSheet(
   wb: ExcelJS.Workbook,
   batch: Batch,
   insights: Insights,
   currency: string,
-  charts: { category: ChartImage | null; daily: ChartImage | null },
-  receiptCount: number,
+  charts: {
+    category: ChartImage | null;
+    daily: ChartImage | null;
+    vendors: ChartImage | null;
+    cumulative: ChartImage | null;
+    share: ChartImage | null;
+  },
+  subtotalCells: string[],
 ): void {
   const ws = wb.addWorksheet("Insights", {
     properties: { tabColor: { argb: SECTION_BLUE } },
@@ -588,110 +517,159 @@ function buildInsightsSheet(
       horizontalCentered: true,
     },
   });
-  const widths = [22, 12, 14, 4, 16, 16, 16, 16];
+  const COLS = 12;
+  const widths = [22, 12, 14, 2, 13, 13, 13, 13, 13, 13, 13, 13];
   widths.forEach((w, i) => (ws.getColumn(i + 1).width = w));
 
-  bandRow(ws, 1, 8, "Insights", { bg: TITLE_DARK, size: 16, height: 30, align: "center" });
-  ws.mergeCells(2, 1, 2, 8);
+  bandRow(ws, 1, COLS, "Insights", { bg: TITLE_DARK, size: 16, height: 30, align: "center" });
+  ws.mergeCells(2, 1, 2, COLS);
   const sub = ws.getCell(2, 1);
-  sub.value = [batch.employee, insights.period].filter(Boolean).join("  ·  ") || "—";
+  sub.value =
+    [batch.employee, insights.period, `${insights.count} receipts`]
+      .filter(Boolean)
+      .join("  ·  ") || "—";
   sub.font = { color: { argb: "FF334155" } };
   sub.alignment = { horizontal: "center", vertical: "middle" };
-  for (let c = 1; c <= 8; c++) fill(ws.getCell(2, c), INFO_BLUE);
+  for (let c = 1; c <= COLS; c++) fill(ws.getCell(2, c), INFO_BLUE);
 
   const fmt = acctFormat(currency);
 
-  // Key figures: label row + big value row (the original's stat tiles)
-  bandRow(ws, 4, 8, "  Key Figures", { bg: SECTION_BLUE });
-  // Live formulas over the All Receipts table (imported from the original's
-  // "totals must foot" practice) with cached results for non-Excel viewers.
-  const dataEnd = 2 + receiptCount;
-  const range = (col: string) => `'All Receipts'!${col}3:${col}${Math.max(3, dataEnd)}`;
-  const f = (formula: string, result: number) =>
-    receiptCount > 0 ? { formula, result } : result;
+  // ── KPI tiles ──────────────────────────────────────────────────────────────
+  bandRow(ws, 4, COLS, "  Key Figures", { bg: SECTION_BLUE });
+  const totalFormula = subtotalCells.map((c) => `Summary!${c}`).join("+");
   const stats: { label: string; value: ExcelJS.CellValue; color?: string; money?: boolean }[] = [
-    { label: "Total Spend", value: f(`SUM(${range("E")})`, insights.total), money: true },
-    { label: "Receipts", value: f(`COUNT(${range("E")})`, insights.count) },
-    { label: "Avg / Receipt", value: f(`AVERAGE(${range("E")})`, insights.average), money: true },
-    { label: "Largest", value: f(`MAX(${range("E")})`, insights.largest), money: true },
-    { label: "Tax", value: f(`SUM(${range("F")})`, insights.tax), money: true },
+    {
+      label: "Total Spend",
+      value: totalFormula
+        ? { formula: totalFormula, result: insights.total }
+        : insights.total,
+      money: true,
+    },
+    { label: "Receipts", value: insights.count },
+    { label: "Avg / Receipt", value: insights.average, money: true },
+    { label: "Largest", value: insights.largest, money: true },
+    { label: "Tax", value: insights.tax, money: true },
     { label: "Flagged", value: insights.flagged, color: "FFB91C1C" },
   ];
-  stats.forEach((s, i) => {
-    const c = i + 1 <= 3 ? i + 1 : i + 2; // skip the narrow spacer column D
+  const TILE_BG = "FFF6F8FB";
+  stats.forEach((st, i) => {
+    const c = i * 2 + 1; // two columns per tile
+    ws.mergeCells(5, c, 5, c + 1);
+    ws.mergeCells(6, c, 6, c + 1);
     const label = ws.getCell(5, c);
-    label.value = s.label;
+    label.value = st.label;
     label.font = { size: 9, color: { argb: "FF64748B" } };
-    label.alignment = { horizontal: "center" };
+    label.alignment = { horizontal: "center", vertical: "bottom" };
     const val = ws.getCell(6, c);
-    val.value = s.value;
-    val.font = { bold: true, size: 15, color: { argb: s.color ?? SECTION_BLUE } };
-    val.alignment = { horizontal: "center" };
-    if (s.money) val.numFmt = fmt;
+    val.value = st.value;
+    val.font = { bold: true, size: 16, color: { argb: st.color ?? SECTION_BLUE } };
+    val.alignment = { horizontal: "center", vertical: "middle" };
+    if (st.money) val.numFmt = fmt;
+    for (const rr of [5, 6]) {
+      for (let cc = c; cc <= c + 1; cc++) fill(ws.getCell(rr, cc), TILE_BG);
+    }
+    val.border = { bottom: { style: "medium", color: { argb: SECTION_BLUE } } };
+    ws.getCell(6, c + 1).border = {
+      bottom: { style: "medium", color: { argb: SECTION_BLUE } },
+    };
   });
   ws.getRow(5).height = 16;
-  ws.getRow(6).height = 24;
+  ws.getRow(6).height = 28;
 
-  // By-category table (cols A–C) with the charts to the right (cols E–H) —
-  // these bands span only the table so they don't run under the charts.
-  bandRow(ws, 8, 3, "  By Category", { bg: SECTION_BLUE });
-  let r = 9;
-  ["Category", "Count", "Total"].forEach((h, i) => {
-    const cell = ws.getCell(r, i + 1);
+  // ── Chart grid: two per row, scaled to sit side by side ────────────────────
+  const SCALE = 0.62; // 900px renders → ~560px display, two-up
+  const pairs: [ChartImage | null, ChartImage | null][] = [
+    [charts.category, charts.share],
+    [charts.daily, charts.cumulative],
+    [charts.vendors, null],
+  ];
+  let r = 8;
+  for (const [left, right] of pairs) {
+    let rowsUsed = 0;
+    for (const [img, col] of [
+      [left, 0],
+      [right, 6],
+    ] as [ChartImage | null, number][]) {
+      if (!img) continue;
+      const id = wb.addImage({ buffer: img.buffer, extension: "png" });
+      const w = Math.round(img.width * SCALE);
+      const h = Math.round(img.height * SCALE);
+      ws.addImage(id, {
+        tl: { col, row: r - 1 },
+        ext: { width: w, height: h },
+        editAs: "oneCell",
+      });
+      rowsUsed = Math.max(rowsUsed, Math.ceil(h / 19) + 2);
+    }
+    r += rowsUsed;
+  }
+
+  // ── Reference tables, side by side under the charts ───────────────────────
+  const tableTop = r + 1;
+  smallTable(
+    ws, tableTop, 1, "By Category",
+    ["Category", "Count", "Total"],
+    insights.byCategory.map((c) => [
+      c.category === "Other" ? "Miscellaneous" : c.category,
+      c.count,
+      c.total,
+    ]),
+    fmt,
+    insights.byCategory.map(
+      (c) => CATEGORY_META[c.category as Category]?.color,
+    ),
+  );
+  smallTable(
+    ws, tableTop, 5, "Top Vendors",
+    ["Vendor", "Count", "Total"],
+    insights.topVendors.map((v) => [v.vendor, v.count, v.total]),
+    fmt,
+  );
+}
+
+/** Small 3-column table with a section band, header and zebra rows. */
+function smallTable(
+  ws: ExcelJS.Worksheet,
+  top: number,
+  col: number,
+  heading: string,
+  headers: string[],
+  data: (string | number)[][],
+  moneyFmt: string,
+  nameColors?: (string | undefined)[],
+): void {
+  ws.mergeCells(top, col, top, col + 2);
+  const band = ws.getCell(top, col);
+  band.value = `  ${heading}`;
+  band.font = { bold: true, size: 13, color: { argb: WHITE } };
+  band.alignment = { vertical: "middle", horizontal: "left" };
+  for (let c = col; c <= col + 2; c++) fill(ws.getCell(top, c), SECTION_BLUE);
+  ws.getRow(top).height = 24;
+
+  headers.forEach((h, i) => {
+    const cell = ws.getCell(top + 1, col + i);
     cell.value = h;
     cell.font = { bold: true, size: 10, color: { argb: WHITE } };
     fill(cell, TABLE_BLUE);
     cell.alignment = { horizontal: "center" };
   });
-  r++;
-  insights.byCategory.forEach((c, i) => {
-    ws.getCell(r, 1).value = c.category;
-    ws.getCell(r, 2).value = c.count;
-    ws.getCell(r, 2).alignment = { horizontal: "center" };
-    ws.getCell(r, 3).value = c.total;
-    ws.getCell(r, 3).numFmt = fmt;
-    if (i % 2 === 1) {
-      for (let col = 1; col <= 3; col++) fill(ws.getCell(r, col), ZEBRA_BLUE);
-    }
-    r++;
-  });
 
-  // Full-size charts — sized and typeset to be readable at 100% zoom.
-  let chartRow = 8;
-  for (const img of [charts.category, charts.daily]) {
-    if (!img) continue;
-    const id = wb.addImage({ buffer: img.buffer, extension: "png" });
-    ws.addImage(id, {
-      tl: { col: 4, row: chartRow },
-      ext: { width: img.width, height: img.height },
-      editAs: "oneCell",
+  data.forEach((rowData, i) => {
+    const r = top + 2 + i;
+    rowData.forEach((v, j) => {
+      const cell = ws.getCell(r, col + j);
+      cell.value = v;
+      cell.alignment = { horizontal: j === 0 ? "left" : j === 1 ? "center" : "right" };
+      if (j === 2 && typeof v === "number") cell.numFmt = moneyFmt;
     });
-    chartRow += Math.ceil(img.height / 19) + 2;
-  }
-
-  // Top vendors below (cols A–C, clear of the charts on the right).
-  r += 1;
-  bandRow(ws, r, 3, "  Top Vendors", { bg: SECTION_BLUE });
-  r++;
-  ["Vendor", "Count", "Total"].forEach((h, i) => {
-    const cell = ws.getCell(r, i + 1);
-    cell.value = h;
-    cell.font = { bold: true, size: 10, color: { argb: WHITE } };
-    fill(cell, TABLE_BLUE);
-    cell.alignment = { horizontal: "center" };
-  });
-  r++;
-  for (const [i, v] of insights.topVendors.entries()) {
-    ws.getCell(r, 1).value = v.vendor;
-    ws.getCell(r, 2).value = v.count;
-    ws.getCell(r, 2).alignment = { horizontal: "center" };
-    ws.getCell(r, 3).value = v.total;
-    ws.getCell(r, 3).numFmt = fmt;
-    if (i % 2 === 1) {
-      for (let col = 1; col <= 3; col++) fill(ws.getCell(r, col), ZEBRA_BLUE);
+    const nameColor = nameColors?.[i];
+    if (nameColor) {
+      ws.getCell(r, col).font = { bold: true, color: { argb: nameColor } };
     }
-    r++;
-  }
+    if (i % 2 === 1) {
+      for (let c = col; c <= col + 2; c++) fill(ws.getCell(r, c), ZEBRA_BLUE);
+    }
+  });
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

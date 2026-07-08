@@ -280,10 +280,13 @@ async function main() {
     const names = wb.worksheets.map((w) => w.name);
     check(names.includes("Summary"), "workbook has Summary sheet");
     check(names.includes("Insights"), "workbook has Insights sheet");
-    check(names.includes("All Receipts"), "workbook has All Receipts sheet");
     check(
       names.includes("Meals & Entertainment") && names.includes("Fuel"),
       `workbook has the category sheets (sheets: ${names.join(", ")})`,
+    );
+    check(
+      !names.includes("All Receipts") && names[names.length - 1] === "Insights",
+      "summary+receipts merged; Insights is the rightmost tab",
     );
     // The Summary "#" cells hyperlink to each receipt's image-sheet anchor.
     const summarySheet = wb.getWorksheet("Summary");
