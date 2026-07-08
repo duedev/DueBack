@@ -248,7 +248,9 @@
         <p>
           Images stay in your browser's storage. OCR, logo recognition,
           extraction and the Excel build all run on your hardware. Close the
-          tab and it's still there; clear it and it's gone.
+          tab and it's still there; clear it and it's gone. The hosted site
+          counts visits anonymously (Cloudflare Web Analytics, no cookies);
+          your receipts and their contents are never part of that.
         </p>
       </div>
       <div class="card priv">
