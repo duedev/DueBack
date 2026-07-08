@@ -24,10 +24,16 @@ export function detectCurrency(text: string, fallback = "USD"): string {
 /**
  * Parse a human/OCR money string into a finite number of major units.
  * Handles "$1,234.56", "1.234,56" (EU), "USD 12.00", trailing "-", etc.
+ * Also accepts a plain number — Svelte binds `<input type="number">` to a
+ * number, and a `.replace` call on it threw, silently discarding the edit.
  * Returns null for anything not safely finite and non-negative.
  */
-export function parseAmount(raw: string): number | null {
-  if (!raw) return null;
+export function parseAmount(raw: string | number | null | undefined): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw) || Math.abs(raw) > 1_000_000) return null;
+    return Math.round(raw * 100) / 100;
+  }
   let s = raw.replace(/[^\d.,\-]/g, "");
   if (!s || !/\d/.test(s)) return null;
 

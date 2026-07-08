@@ -17,11 +17,13 @@
   const index = $derived(list.findIndex((r) => r.id === app.reviewId));
   const current = $derived(index >= 0 ? list[index] : undefined);
 
-  // Editable copies (re-seeded whenever the open receipt changes).
+  // Editable copies (re-seeded whenever the open receipt changes). The amount
+  // and tax fields are number inputs — Svelte rebinds them as numbers after a
+  // user edit, so their type is honest about carrying either.
   let vendor = $state("");
   let date = $state("");
-  let amount = $state("");
-  let tax = $state("");
+  let amount = $state<string | number>("");
+  let tax = $state<string | number>("");
   let currency = $state("USD");
   let category = $state<Category>("Other");
 

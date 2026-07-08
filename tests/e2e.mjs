@@ -257,6 +257,23 @@ async function main() {
     await page.getByRole("dialog", { name: /Review receipt/ }).waitFor({ timeout: 10000 });
     check(true, "review modal opened");
     const dialog = page.getByRole("dialog", { name: /Review receipt/ });
+
+    // Editing the amount must persist. (Svelte binds a number input to a
+    // NUMBER; parseAmount threw on it and the edit was silently discarded.)
+    const beforeEdit = await page.locator("#rv-amount").inputValue();
+    await page.locator("#rv-amount").fill("123.45");
+    await page.locator("#rv-amount").dispatchEvent("change");
+    await page.waitForTimeout(400);
+    const afterEdit = (await readRows()).map((r) => r.amount);
+    check(
+      afterEdit.includes(123.45),
+      `review edit persists the amount (amounts: ${afterEdit.join(", ")})`,
+    );
+    // Restore the true value so the workbook totals below stay canonical.
+    await page.locator("#rv-amount").fill(beforeEdit);
+    await page.locator("#rv-amount").dispatchEvent("change");
+    await page.waitForTimeout(400);
+
     for (let i = 0; i < 5 && (await dialog.isVisible()); i++) {
       await page.getByRole("button", { name: /Approve/ }).click();
       await page.waitForTimeout(500);

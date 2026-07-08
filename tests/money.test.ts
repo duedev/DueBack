@@ -56,3 +56,16 @@ test("parseAmount: 3-decimal unit prices/quantities are decimals, not thousands"
   assert.equal(parseAmount("1.234,56"), 1234.56);
   assert.equal(parseAmount("1,000"), 1000);
 });
+
+test("parseAmount: accepts a plain number (Svelte number-input binding)", () => {
+  // <input type="number"> rebinds as a number after a user edit; the review
+  // modal's save path passes it straight through.
+  assert.equal(parseAmount(123.45), 123.45);
+  assert.equal(parseAmount(0), 0);
+  assert.equal(parseAmount(45.678), 45.68); // rounded to cents
+  assert.equal(parseAmount(Number.NaN), null);
+  assert.equal(parseAmount(Number.POSITIVE_INFINITY), null);
+  assert.equal(parseAmount(2_000_000), null); // absurd magnitude
+  assert.equal(parseAmount(null), null);
+  assert.equal(parseAmount(undefined), null);
+});
