@@ -24,7 +24,7 @@ export interface ChartImage {
 const INK_SOFT = "#55524d";
 const GRID = "rgba(85, 82, 77, 0.14)";
 const ACCENT = "#147246";
-const FONT = { family: "Inter, system-ui, sans-serif", size: 11 };
+const FONT = { family: "Inter, system-ui, sans-serif", size: 16 };
 
 function argbToCss(argb: string): string {
   // "FFRRGGBB" → "#RRGGBB"
@@ -75,7 +75,7 @@ export async function categoryChartImage(
   const colors = rows.map((c) =>
     argbToCss(CATEGORY_META[c.category as Category]?.color ?? "FF94A3B8"),
   );
-  const height = 60 + rows.length * 34;
+  const height = 90 + rows.length * 52;
   return renderToPng(
     {
       type: "bar",
@@ -87,13 +87,13 @@ export async function categoryChartImage(
             backgroundColor: colors,
             borderRadius: { topRight: 4, bottomRight: 4 },
             borderSkipped: "start",
-            barThickness: 18,
+            barThickness: 30,
           },
         ],
       },
       options: {
         indexAxis: "y",
-        layout: { padding: { right: 64, top: 8, bottom: 4 } },
+        layout: { padding: { right: 96, top: 10, bottom: 6 } },
         plugins: {
           legend: { display: false },
           title: {
@@ -101,7 +101,7 @@ export async function categoryChartImage(
             text: "Spend by category",
             align: "start",
             color: "#1c1917",
-            font: { ...FONT, size: 13, weight: "bold" },
+            font: { ...FONT, size: 20, weight: "bold" },
             padding: { bottom: 10 },
           },
           tooltip: { enabled: false },
@@ -122,7 +122,7 @@ export async function categoryChartImage(
       },
       plugins: [barEndLabels("y")],
     },
-    560,
+    900,
     height,
   );
 }
@@ -144,7 +144,7 @@ export async function dailyChartImage(
             backgroundColor: ACCENT,
             borderRadius: { topLeft: 4, topRight: 4 },
             borderSkipped: "bottom",
-            maxBarThickness: 26,
+            maxBarThickness: 40,
           },
         ],
       },
@@ -157,7 +157,7 @@ export async function dailyChartImage(
             text: "Daily spend",
             align: "start",
             color: "#1c1917",
-            font: { ...FONT, size: 13, weight: "bold" },
+            font: { ...FONT, size: 20, weight: "bold" },
             padding: { bottom: 10 },
           },
           tooltip: { enabled: false },
@@ -177,8 +177,8 @@ export async function dailyChartImage(
       },
       plugins: [barEndLabels("x")],
     },
-    560,
-    240,
+    900,
+    400,
   );
 }
 
@@ -193,7 +193,7 @@ function barEndLabels(indexAxis: "x" | "y") {
       if (!data) return;
       ctx.save();
       ctx.fillStyle = INK_SOFT;
-      ctx.font = `600 10px ${FONT.family}`;
+      ctx.font = `600 15px ${FONT.family}`;
       meta.data.forEach((el, i) => {
         const v = data[i];
         if (v === undefined || v <= 0) return;
@@ -204,11 +204,11 @@ function barEndLabels(indexAxis: "x" | "y") {
         if (indexAxis === "y") {
           ctx.textAlign = "left";
           ctx.textBaseline = "middle";
-          ctx.fillText(label, ex + 6, pos.y ?? 0);
+          ctx.fillText(label, ex + 8, pos.y ?? 0);
         } else {
           ctx.textAlign = "center";
           ctx.textBaseline = "bottom";
-          ctx.fillText(label, pos.x ?? 0, ey - 4);
+          ctx.fillText(label, pos.x ?? 0, ey - 6);
         }
       });
       ctx.restore();

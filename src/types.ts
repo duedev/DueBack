@@ -22,6 +22,7 @@ export type Category =
   | "Lodging"
   | "Ground Transportation"
   | "Fuel"
+  | "Materials"
   | "Office Supplies"
   | "Software & Subscriptions"
   | "Utilities & Phone"
@@ -105,9 +106,13 @@ export interface Receipt {
   /** Pointer to the original blob in the file store (IndexedDB blob store). */
   fileKey: string;
   /** Pointer to the cleaned/downscaled image the OCR boxes map to (review + export). */
+  annotatedKey?: string;
   cleanedKey?: string;
   /** Basename-only, sanitized original filename — for display and export. */
   fileName: string;
+  /** The upload's original name, kept when the file is renamed to the
+   *  {category}_{MM-DD-YY}_{vendor} convention after extraction. */
+  originalFileName?: string;
   mimeType: string;
 
   status: ReceiptStatus;
@@ -164,7 +169,7 @@ export interface Job {
 export interface StoredBlob {
   key: string;
   blob: Blob;
-  kind: "original" | "cleaned" | "export";
+  kind: "original" | "cleaned" | "annotated" | "export";
   createdAt: number;
 }
 

@@ -24,7 +24,7 @@ test("matches a known brand and its category", () => {
 
   const hd = matchVendor("THE HOME DEPOT #1234");
   assert.equal(hd?.name, "The Home Depot");
-  assert.equal(hd?.category, "Office Supplies");
+  assert.equal(hd?.category, "Materials");
 
   const wm = matchVendor("WALMART SUPERCENTER");
   assert.equal(wm?.name, "Walmart");

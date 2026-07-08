@@ -29,7 +29,7 @@
   aria-label={`Open ${receipt.fileName}`}
 >
   <div class="thumb" class:skeleton={busy}>
-    {#await app.blobUrl(receipt.cleanedKey ?? receipt.fileKey) then url}
+    {#await app.blobUrl(receipt.annotatedKey ?? receipt.cleanedKey ?? receipt.fileKey) then url}
       {#if url}
         <img src={url} alt="" loading="lazy" />
       {/if}

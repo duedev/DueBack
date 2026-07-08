@@ -2,8 +2,9 @@
   import { app } from "./state.svelte.ts";
   import { repo } from "../store/repo.ts";
   import { CATEGORIES } from "../config/categories.ts";
-  import { parseAmount, safeAmount, formatMoney } from "../util/money.ts";
+  import { parseAmount, safeAmount } from "../util/money.ts";
   import { isValidIso } from "../util/format.ts";
+  import { receiptFileName } from "../util/rename.ts";
   import type { Receipt, BBox, Category } from "../types.ts";
 
   // The review sweep: board → modal → keyboard Approve & Next. On-image markers
@@ -79,6 +80,14 @@
       tax: { value: tx !== null ? safeAmount(tx) : r.tax.value, confidence: 1, edited: true },
       currency: currency.toUpperCase(),
       category: { value: category, confidence: 1, edited: true },
+      // Edits change the fields the file is named after — keep it in sync.
+      fileName: receiptFileName({
+        category,
+        date: date && isValidIso(date) ? date : r.date.value,
+        vendor: vendor.trim(),
+        fileName: r.originalFileName ?? r.fileName,
+      }),
+      originalFileName: r.originalFileName ?? r.fileName,
     };
   }
 
@@ -325,7 +334,7 @@
               · brand via {current.logoMatch.source === "logo" ? "visual logo" : current.logoMatch.source}
               ({Math.round(current.logoMatch.score * 100)}%)
             {/if}
-            · {Math.round(current.confidence * 100)}% confidence · cost {formatMoney(current.cost)}
+            · {Math.round(current.confidence * 100)}% confidence
           </p>
         </div>
       </div>

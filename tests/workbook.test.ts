@@ -57,7 +57,8 @@ test("buildWorkbook produces a valid multi-sheet workbook with footing totals", 
   const result = await buildWorkbook(batch, receipts, async () => undefined);
   assert.equal(result.count, 4);
   assert.equal(result.totalCost, 0);
-  assert.match(result.fileName, /Q1_Travel_\d{4}-\d{2}-\d{2}\.xlsx/);
+  // The original app's convention: Reimbursements_{Employee}_{YYYYMMDD}.xlsx
+  assert.match(result.fileName, /^Reimbursements_Ada_Lovelace_\d{8}\.xlsx$/);
 
   // Re-open the produced bytes and assert structure.
   const wb = new ExcelJS.Workbook();
@@ -76,7 +77,11 @@ test("buildWorkbook produces a valid multi-sheet workbook with footing totals", 
   insightsWs.eachRow((row) => {
     row.eachCell((cell, col) => {
       if (String(cell.value ?? "") === "Total Spend") {
-        const v = insightsWs.getCell(row.number + 1, col).value;
+        const raw = insightsWs.getCell(row.number + 1, col).value as
+          | number
+          | { result?: number }
+          | null;
+        const v = typeof raw === "object" ? raw?.result : raw;
         assert.ok(Math.abs(Number(v) - sumAmounts) < 0.001, `total spend ${String(v)}`);
         foundInsightsTotal = true;
       }
@@ -130,4 +135,68 @@ test("buildWorkbook skips failed and zero-amount receipts", async () => {
   ];
   const result = await buildWorkbook(batch, withBad, async () => undefined);
   assert.equal(result.count, 4); // the zero/failed one is excluded
+});
+
+test("sheet order: Summary, categories, then All Receipts and Insights rightmost", async () => {
+  const result = await buildWorkbook(batch, receipts, async () => undefined);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  const names = wb.worksheets.map((w) => w.name);
+  assert.equal(names[0], "Summary");
+  assert.deepEqual(names.slice(-2), ["All Receipts", "Insights"]);
+  // Category sheets sit between, in taxonomy order.
+  assert.deepEqual(names.slice(1, -2), ["Meals & Entertainment", "Travel", "Lodging", "Ground Transportation"]);
+});
+
+test('"Other" receipts are labeled Miscellaneous in the report', async () => {
+  const withOther = [
+    ...receipts,
+    receipt({ vendor: "Corner Store", amount: 12.5, category: "Other", date: "2026-01-07" }),
+  ];
+  const result = await buildWorkbook(batch, withOther, async () => undefined);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  const names = wb.worksheets.map((w) => w.name);
+  assert.ok(names.includes("Miscellaneous"), names.join(", "));
+  assert.ok(!names.includes("Other"));
+});
+
+test("notes never read Approved; a reviewed receipt reads Manually reviewed", async () => {
+  const reviewed = receipt({ vendor: "Shop", amount: 9.99, category: "Other", date: "2026-01-08" });
+  reviewed.reviewRequired = true;
+  reviewed.approved = true;
+  const result = await buildWorkbook(batch, [reviewed], async () => undefined);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  let sawManually = false;
+  wb.eachSheet((ws) => {
+    ws.eachRow((row) => {
+      row.eachCell((cell) => {
+        const v = String(cell.value ?? "");
+        assert.notEqual(v, "Approved");
+        if (v === "Manually reviewed") sawManually = true;
+      });
+    });
+  });
+  assert.ok(sawManually, "reviewed receipt is marked Manually reviewed");
+});
+
+test("All Receipts has no Conf. column and Insights totals are formulas", async () => {
+  const result = await buildWorkbook(batch, receipts, async () => undefined);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  const all = wb.getWorksheet("All Receipts")!;
+  const headers: string[] = [];
+  all.getRow(2).eachCell((c) => headers.push(String(c.value ?? "")));
+  assert.ok(!headers.includes("Conf."), headers.join(", "));
+
+  const insights = wb.getWorksheet("Insights")!;
+  let sawFormula = false;
+  insights.eachRow((row) => {
+    row.eachCell((cell) => {
+      const v = cell.value as { formula?: string } | null;
+      if (v && typeof v === "object" && v.formula?.includes("'All Receipts'")) sawFormula = true;
+    });
+  });
+  assert.ok(sawFormula, "insights key figures reference All Receipts");
 });

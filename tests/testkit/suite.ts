@@ -9,7 +9,7 @@ import type { OcrResult, OcrLine, OcrWord } from "../../src/types.ts";
 // rules on degraded *confidence*.
 //
 // Truth categories are this app's taxonomy (the original's fuel/mats/misc,
-// mapped: fuel→Fuel, mats→Office Supplies, misc→the richer bucket).
+// mapped: fuel→Fuel, mats→Materials, misc→the richer bucket).
 
 export interface Challenge {
   id: string;
@@ -48,7 +48,7 @@ export function challengeSuite(): Challenge[] {
     {
       id: "rotated_90",
       description: "Rotated 90° (image path) — rules gate on the recovered text.",
-      truth: { vendor: "Home Depot", date: "2026-05-03", amount: 128.74, category: "Office Supplies" },
+      truth: { vendor: "Home Depot", date: "2026-05-03", amount: 128.74, category: "Materials" },
       lines: body(
         "Home Depot",
         [["2x4 Lumber", 48.0], ["Screws box", 12.74], ["Paint 1gal", 68.0]],
@@ -90,7 +90,7 @@ export function challengeSuite(): Challenge[] {
     {
       id: "noisy_scan",
       description: "Speckled, blurred scan — degraded confidence.",
-      truth: { vendor: "Lowe's", date: "2026-05-06", amount: 73.55, category: "Office Supplies" },
+      truth: { vendor: "Lowe's", date: "2026-05-06", amount: 73.55, category: "Materials" },
       lines: body("Lowe's", [["PVC pipe", 23.55], ["Fittings", 50.0]], 73.55, "05/06/2026"),
       confidence: 58,
     },
@@ -131,7 +131,7 @@ export function challengeSuite(): Challenge[] {
     {
       id: "big_amount",
       description: "Large multi-thousand total.",
-      truth: { vendor: "Ferguson", date: "2026-05-15", amount: 4218.0, category: "Office Supplies" },
+      truth: { vendor: "Ferguson", date: "2026-05-15", amount: 4218.0, category: "Materials" },
       lines: body("Ferguson Supply", [["HVAC unit", 3998.0], ["Delivery", 220.0]], 4218.0, "05/15/2026"),
     },
   ];

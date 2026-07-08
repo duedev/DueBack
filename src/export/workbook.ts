@@ -34,7 +34,8 @@ const AMBER = "FFFEF3C7"; // needs-review row highlight
 /** Pastel accent behind each receipt's header band on its image sheet. */
 const CATEGORY_TINTS: Partial<Record<Category, string>> = {
   Fuel: "FFFFF3CC",
-  "Office Supplies": "FFD4FAE8",
+  Materials: "FFD4FAE8",
+  "Office Supplies": "FFF0FDF4",
   "Meals & Entertainment": "FFFFE4E6",
   Travel: "FFE0F2FE",
   Lodging: "FFEDE9FF",
@@ -101,7 +102,7 @@ export async function buildWorkbook(
   // sharp when printed); reused by id across sheets.
   const imageByReceipt = new Map<string, EmbeddedImage>();
   for (const r of rows) {
-    const key = r.cleanedKey ?? r.fileKey;
+    const key = r.annotatedKey ?? r.cleanedKey ?? r.fileKey;
     const blob = await getBlob(key);
     if (!blob) continue;
     try {
@@ -143,12 +144,15 @@ export async function buildWorkbook(
     }
   }
 
-  buildSummarySheet(wb, batch, perCategory, anchors, currency, insights, totalCost);
-  buildInsightsSheet(wb, batch, insights, currency, charts);
-  buildAllReceiptsSheet(wb, rows, anchors, currency);
+  // Tab order: Summary first, the category image sheets next (Fuel,
+  // Materials, … Miscellaneous), and the reference sheets — All Receipts and
+  // Insights — all the way to the right.
+  buildSummarySheet(wb, batch, perCategory, anchors, currency, insights);
   for (const g of perCategory) {
     buildImageSheet(wb, g.cat, g.rows, imageByReceipt, batch, currency);
   }
+  buildAllReceiptsSheet(wb, rows, anchors, currency);
+  buildInsightsSheet(wb, batch, insights, currency, charts, rows.length);
 
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], {
@@ -284,7 +288,6 @@ function buildSummarySheet(
   anchors: Map<string, ReceiptAnchor>,
   currency: string,
   insights: Insights,
-  totalCost: number,
 ): void {
   const ws = wb.addWorksheet("Summary", {
     properties: { tabColor: { argb: TITLE_DARK } },
@@ -304,13 +307,11 @@ function buildSummarySheet(
     bg: TITLE_DARK, size: 16, height: 30, align: "center",
   });
 
+  // Job name/number are per-receipt columns, not report headers.
   const info: [string, string][] = [
     ["Employee:", batch.employee || "—"],
     ["Expense Period:", insights.period || "—"],
   ];
-  if (batch.jobName || batch.jobNumber) {
-    info.push(["Job:", [batch.jobName, batch.jobNumber].filter(Boolean).join("  ·  ")]);
-  }
   let r = 2;
   for (const [k, v] of info) {
     const label = ws.getCell(r, 2);
@@ -331,7 +332,7 @@ function buildSummarySheet(
   const subtotalCells: string[] = [];
 
   for (const g of perCategory) {
-    bandRow(ws, r, 8, `  ${g.cat}`, { bg: SECTION_BLUE });
+    bandRow(ws, r, 8, `  ${displayCategory(g.cat)}`, { bg: SECTION_BLUE });
     r++;
     tableHeaderRow(ws, r);
     ws.getRow(r).height = 32;
@@ -390,7 +391,7 @@ function buildSummarySheet(
   const foot = ws.getRow(r);
   foot.getCell(7).value = `Generated ${new Date().toLocaleDateString("en-US", {
     year: "numeric", month: "long", day: "numeric",
-  })} by Reimbursements F5${totalCost === 0 ? " · extraction cost $0.00" : ""}`;
+  })} by Reimbursements F5`;
   foot.getCell(7).font = { size: 9, color: { argb: FOOT_GRAY } };
   foot.getCell(8).value = "github.com/duedev/ReimbursementsF5";
   foot.getCell(8).font = { size: 9, color: { argb: LINK_BLUE } };
@@ -419,7 +420,7 @@ function buildImageSheet(
   ws.getColumn(1).width = 55;
   for (let c = 2; c <= 8; c++) ws.getColumn(c).width = 14.7;
 
-  bandRow(ws, 1, 8, `${cat} — Receipt Images`, {
+  bandRow(ws, 1, 8, `${displayCategory(cat)} — Receipt Images`, {
     bg: TITLE_DARK, size: 14, height: 28, align: "center",
   });
   tableHeaderRow(ws, 2, 10);
@@ -491,8 +492,8 @@ function buildAllReceiptsSheet(
       fitToHeight: 0,
     },
   });
-  const headers = ["#", "Date", "Store", "Category", "Amount", "Tax", "Conf.", "Notes", "File"];
-  const widths = [5, 11, 26, 22, 14, 11, 8, 40, 28];
+  const headers = ["#", "Date", "Store", "Category", "Amount", "Tax", "Notes", "File"];
+  const widths = [5, 11, 26, 22, 14, 11, 44, 30];
   widths.forEach((w, i) => (ws.getColumn(i + 1).width = w));
 
   bandRow(ws, 1, headers.length, "All Receipts", {
@@ -523,19 +524,17 @@ function buildAllReceiptsSheet(
     line.getCell(2).numFmt = "m/d/yy";
     line.getCell(2).alignment = { horizontal: "center" };
     line.getCell(3).value = rec.vendor.value || "—";
-    line.getCell(4).value = rec.category.value;
+    line.getCell(4).value = displayCategory(rec.category.value);
     line.getCell(5).value = safeAmount(rec.amount.value);
     line.getCell(5).numFmt = fmt;
     line.getCell(5).alignment = { horizontal: "right" };
     line.getCell(6).value = safeAmount(rec.tax.value);
     line.getCell(6).numFmt = fmt;
     line.getCell(6).alignment = { horizontal: "right" };
-    line.getCell(7).value = Math.round(rec.confidence * 100);
-    line.getCell(7).alignment = { horizontal: "center" };
-    line.getCell(8).value = notesFor(rec);
+    line.getCell(7).value = notesFor(rec);
+    line.getCell(7).font = { size: 10, color: { argb: TEXT_GRAY } };
+    line.getCell(8).value = rec.fileName;
     line.getCell(8).font = { size: 10, color: { argb: TEXT_GRAY } };
-    line.getCell(9).value = rec.fileName;
-    line.getCell(9).font = { size: 10, color: { argb: TEXT_GRAY } };
 
     const needsReview = rec.reviewRequired && !rec.approved;
     const bg = needsReview ? AMBER : i % 2 === 1 ? ZEBRA_BLUE : WHITE;
@@ -564,22 +563,6 @@ function buildAllReceiptsSheet(
       if (c >= 5) cell.numFmt = fmt;
     }
     totalRow.height = 22;
-
-    // Confidence data bar — free signal, no visual cost when everything is fine.
-    ws.addConditionalFormatting({
-      ref: `G${dataStart}:G${dataEnd}`,
-      rules: [
-        {
-          type: "dataBar",
-          cfvo: [
-            { type: "num", value: 0 },
-            { type: "num", value: 100 },
-          ],
-          color: { argb: TABLE_BLUE },
-          priority: 1,
-        } as ExcelJS.ConditionalFormattingRule,
-      ],
-    });
   }
   ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: Math.max(dataStart, dataEnd), column: headers.length } };
 }
@@ -592,6 +575,7 @@ function buildInsightsSheet(
   insights: Insights,
   currency: string,
   charts: { category: ChartImage | null; daily: ChartImage | null },
+  receiptCount: number,
 ): void {
   const ws = wb.addWorksheet("Insights", {
     properties: { tabColor: { argb: SECTION_BLUE } },
@@ -619,12 +603,18 @@ function buildInsightsSheet(
 
   // Key figures: label row + big value row (the original's stat tiles)
   bandRow(ws, 4, 8, "  Key Figures", { bg: SECTION_BLUE });
-  const stats: { label: string; value: number | string; color?: string; money?: boolean }[] = [
-    { label: "Total Spend", value: insights.total, money: true },
-    { label: "Receipts", value: insights.count },
-    { label: "Avg / Receipt", value: insights.average, money: true },
-    { label: "Largest", value: insights.largest, money: true },
-    { label: "Tax", value: insights.tax, money: true },
+  // Live formulas over the All Receipts table (imported from the original's
+  // "totals must foot" practice) with cached results for non-Excel viewers.
+  const dataEnd = 2 + receiptCount;
+  const range = (col: string) => `'All Receipts'!${col}3:${col}${Math.max(3, dataEnd)}`;
+  const f = (formula: string, result: number) =>
+    receiptCount > 0 ? { formula, result } : result;
+  const stats: { label: string; value: ExcelJS.CellValue; color?: string; money?: boolean }[] = [
+    { label: "Total Spend", value: f(`SUM(${range("E")})`, insights.total), money: true },
+    { label: "Receipts", value: f(`COUNT(${range("E")})`, insights.count) },
+    { label: "Avg / Receipt", value: f(`AVERAGE(${range("E")})`, insights.average), money: true },
+    { label: "Largest", value: f(`MAX(${range("E")})`, insights.largest), money: true },
+    { label: "Tax", value: f(`SUM(${range("F")})`, insights.tax), money: true },
     { label: "Flagged", value: insights.flagged, color: "FFB91C1C" },
   ];
   stats.forEach((s, i) => {
@@ -666,18 +656,17 @@ function buildInsightsSheet(
     r++;
   });
 
+  // Full-size charts — sized and typeset to be readable at 100% zoom.
   let chartRow = 8;
   for (const img of [charts.category, charts.daily]) {
     if (!img) continue;
     const id = wb.addImage({ buffer: img.buffer, extension: "png" });
-    const w = Math.round(img.width * 0.72);
-    const h = Math.round(img.height * 0.72);
     ws.addImage(id, {
       tl: { col: 4, row: chartRow },
-      ext: { width: w, height: h },
+      ext: { width: img.width, height: img.height },
       editAs: "oneCell",
     });
-    chartRow += Math.ceil(h / 19) + 2;
+    chartRow += Math.ceil(img.height / 19) + 2;
   }
 
   // Top vendors below (cols A–C, clear of the charts on the right).
@@ -708,7 +697,11 @@ function buildInsightsSheet(
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function notesFor(r: Receipt): string {
-  if (r.flags.length === 0) return r.approved ? "Approved" : "";
+  // "Approved" read like a workflow stamp; what the office cares about is
+  // whether a human checked the numbers.
+  if (r.flags.length === 0) {
+    return r.reviewRequired && r.approved ? "Manually reviewed" : "";
+  }
   return r.flags
     .filter((f) => f.code !== "low_confidence" || !r.approved)
     .map((f) => f.message)
@@ -725,9 +718,15 @@ function dominantCurrency(rows: Receipt[]): string {
   return best;
 }
 
+/** Report label for a category — "Other" reads "Miscellaneous", like the
+ *  original app's fuel/materials/miscellaneous taxonomy. */
+function displayCategory(cat: Category): string {
+  return cat === "Other" ? "Miscellaneous" : cat;
+}
+
 function sheetName(cat: Category): string {
   // Excel sheet names: max 31 chars, no []:*?/\
-  return cat.replace(/[[\]:*?/\\]/g, "").slice(0, 31);
+  return displayCategory(cat).replace(/[[\]:*?/\\]/g, "").slice(0, 31);
 }
 
 function toLocalIso(d: Date): string {
@@ -738,10 +737,12 @@ function toLocalIso(d: Date): string {
 }
 
 function makeFileName(batch: Batch): string {
-  const safe = (batch.jobName || batch.employee || "reimbursement")
-    .replace(/[^A-Za-z0-9 _-]/g, "")
+  // The original app's convention: Reimbursements_{Employee}_{YYYYMMDD}.xlsx
+  const safe = (batch.employee || "Employee")
+    .replace(/[^\w\s-]/g, "")
+    .trim()
     .replace(/\s+/g, "_")
     .slice(0, 40);
-  const stamp = toLocalIso(new Date());
-  return `${safe || "reimbursement"}_${stamp}.xlsx`;
+  const stamp = toLocalIso(new Date()).replace(/-/g, "");
+  return `Reimbursements_${safe || "Employee"}_${stamp}.xlsx`;
 }

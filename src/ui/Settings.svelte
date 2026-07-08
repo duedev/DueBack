@@ -132,9 +132,18 @@
 
       <div class="p-body">
         <!-- ============== account & sync ============== -->
-        {#if app.syncConfigured}
-          <section>
-            <h4>Account &amp; sync</h4>
+        <section>
+          <h4>Account &amp; sync</h4>
+          {#if !app.syncConfigured}
+            <p class="muted small">
+              Sign-in (Google or email) needs a cloud workspace configured at
+              build time (<code>VITE_SUPABASE_URL</code> +
+              <code>VITE_SUPABASE_ANON_KEY</code>). This deployment doesn't
+              have one, so everything stays on this device — add the keys and
+              redeploy to enable accounts, settings sync and cross-device
+              batches.
+            </p>
+          {:else}
             {#if app.userEmail}
               <p class="muted">
                 Signed in as <strong>{app.userEmail}</strong> · sync
@@ -179,8 +188,8 @@
                 <p class="ok small">Check your inbox — the link signs you in here.</p>
               {/if}
             {/if}
-          </section>
-        {/if}
+          {/if}
+        </section>
 
         <!-- ============== AI assist ============== -->
         <section>

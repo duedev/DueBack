@@ -6,6 +6,8 @@ import { findSemanticDuplicate, type DupRecord } from "./dedup.ts";
 import { getOcrEngine, type OcrEngine } from "./ocr.ts";
 import { runVisionAssist } from "./vision/index.ts";
 import { matchVendor } from "../config/vendors.ts";
+import { receiptFileName } from "../util/rename.ts";
+import { annotateReceipt, HIGHLIGHT_COLORS } from "./annotate.ts";
 import { logoIndexAvailable, cropHeaderBand, searchLogo, type LogoHit } from "./logo/index.ts";
 import { fuseVendorIdentity } from "./logo/fuse.ts";
 import { CONFIDENCE, OCR_RESCUE } from "../config/constants.ts";
@@ -202,8 +204,38 @@ export async function processReceipt(
       ex.confidence < CONFIDENCE.reviewBelow ||
       ex.amount.value <= 0;
 
+    // Bake highlighter marks (vendor/date/amount) onto an annotated copy for
+    // exports and thumbnails — the review modal keeps the clean image with
+    // live overlays. Best-effort: any failure just skips the highlights.
+    let annotatedKey: string | undefined;
+    try {
+      const annotated = await annotateReceipt(cleaned.blob, [
+        ...(ex.vendor.bbox ? [{ bbox: ex.vendor.bbox, color: HIGHLIGHT_COLORS.vendor }] : []),
+        ...(ex.date.bbox ? [{ bbox: ex.date.bbox, color: HIGHLIGHT_COLORS.date }] : []),
+        ...(ex.amount.bbox ? [{ bbox: ex.amount.bbox, color: HIGHLIGHT_COLORS.amount }] : []),
+      ]);
+      if (annotated) annotatedKey = await repo.putBlob(annotated, "annotated");
+    } catch {
+      /* highlights are pure upside */
+    }
+
+    // Rename to the original app's {category}_{MM-DD-YY}_{vendor} convention
+    // once fields are known (review edits recompute it).
+    const renamed =
+      ex.amount.value > 0
+        ? receiptFileName({
+            category: ex.category.value,
+            date: ex.date.value,
+            vendor: ex.vendor.value,
+            fileName: receipt.originalFileName ?? receipt.fileName,
+          })
+        : receipt.fileName;
+
     const patch: Partial<Receipt> = {
+      fileName: renamed,
+      originalFileName: receipt.originalFileName ?? receipt.fileName,
       cleanedKey,
+      ...(annotatedKey ? { annotatedKey } : {}),
       imageHash,
       imageWidth: cleaned.width,
       imageHeight: cleaned.height,

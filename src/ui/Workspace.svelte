@@ -9,6 +9,15 @@
 
   const total = $derived(app.receipts.length);
   const finished = $derived(app.counts.done + app.counts.needs_review + app.counts.failed);
+
+  let cameraInput = $state<HTMLInputElement | null>(null);
+
+  function onCameraPicked(e: Event): void {
+    const input = e.currentTarget as HTMLInputElement;
+    const files = input.files ? Array.from(input.files) : [];
+    input.value = ""; // ready for the next shot immediately
+    if (files.length) void app.addFiles(files);
+  }
 </script>
 
 <div class="ws">
@@ -84,6 +93,26 @@
     {/if}
   </main>
 </div>
+
+<!-- Mobile-only floating camera: bottom-right, under the thumb. Each shot is
+     queued instantly and the button stays put, so snapping a batch is just
+     tap → shoot → tap → shoot. -->
+<input
+  type="file"
+  bind:this={cameraInput}
+  onchange={onCameraPicked}
+  accept="image/*"
+  capture="environment"
+  class="sr-only"
+  aria-hidden="true"
+  tabindex="-1"
+/>
+<button class="camera-fab" onclick={() => cameraInput?.click()} aria-label="Snap a receipt">
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M14.5 4h-5L7.9 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.9L14.5 4Z" />
+    <circle cx="12" cy="13" r="3.6" />
+  </svg>
+</button>
 
 <ReviewModal />
 <Settings />
@@ -170,5 +199,31 @@
   .empty p {
     max-width: 26rem;
     margin-inline: auto;
+  }
+
+  /* Floating camera — touch devices only. */
+  .camera-fab {
+    display: none;
+    position: fixed;
+    right: 1.1rem;
+    bottom: 1.3rem;
+    z-index: 60;
+    width: 3.6rem;
+    height: 3.6rem;
+    border: 0;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--accent-ink);
+    box-shadow: var(--shadow-3);
+    cursor: pointer;
+  }
+  .camera-fab:active {
+    transform: scale(0.96);
+  }
+  @media (pointer: coarse) {
+    .camera-fab {
+      display: grid;
+      place-items: center;
+    }
   }
 </style>

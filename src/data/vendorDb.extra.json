@@ -21,14 +21,14 @@
   },
   {
     "name": "84 Lumber",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "84 lumber"
     ]
   },
   {
     "name": "ABC Supply",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "abc supply"
     ]
@@ -73,7 +73,7 @@
   },
   {
     "name": "Ace Hardware",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "ace hardware"
     ]
@@ -137,7 +137,7 @@
   },
   {
     "name": "AlphaGraphics",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "alphagraphics"
     ]
@@ -241,7 +241,7 @@
   },
   {
     "name": "Beacon Building Products",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "beacon building",
       "beacon roofing"
@@ -257,14 +257,14 @@
   },
   {
     "name": "Behr",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "behr"
     ]
   },
   {
     "name": "Benjamin Moore",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "benjamin moore"
     ]
@@ -332,7 +332,7 @@
   },
   {
     "name": "Builders FirstSource",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "builders firstsource"
     ]
@@ -385,7 +385,7 @@
   },
   {
     "name": "Carter Lumber",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "carter lumber"
     ]
@@ -480,7 +480,7 @@
   },
   {
     "name": "City Electric Supply",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "city electric supply"
     ]
@@ -646,7 +646,7 @@
   },
   {
     "name": "Do it Best",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "do it best"
     ]
@@ -698,7 +698,7 @@
   },
   {
     "name": "Dunn-Edwards",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "dunn edwards",
       "dunn-edwards"
@@ -772,7 +772,7 @@
   },
   {
     "name": "Fastenal",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "fastenal"
     ]
@@ -786,7 +786,7 @@
   },
   {
     "name": "FedEx Office",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "fedex office",
       "kinko's",
@@ -795,7 +795,7 @@
   },
   {
     "name": "Ferguson",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "ferguson"
     ]
@@ -844,7 +844,7 @@
   },
   {
     "name": "Floor & Decor",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "floor & decor",
       "floor and decor",
@@ -925,7 +925,7 @@
   },
   {
     "name": "Grainger",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "grainger",
       "w.w. grainger"
@@ -933,7 +933,7 @@
   },
   {
     "name": "Graybar",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "graybar"
     ]
@@ -955,7 +955,7 @@
   },
   {
     "name": "HD Supply",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "hd supply"
     ]
@@ -969,7 +969,7 @@
   },
   {
     "name": "Harbor Freight",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "harbor freight"
     ]
@@ -1147,7 +1147,7 @@
   },
   {
     "name": "Johnstone Supply",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "johnstone supply"
     ]
@@ -1162,7 +1162,7 @@
   },
   {
     "name": "Kelly-Moore",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "kelly moore paints",
       "kelly-moore"
@@ -1221,7 +1221,7 @@
   },
   {
     "name": "LL Flooring",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "ll flooring",
       "lumber liquidators"
@@ -1267,7 +1267,7 @@
   },
   {
     "name": "Lowe's",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "lowe's",
       "lowes"
@@ -1293,7 +1293,7 @@
   },
   {
     "name": "MSC Industrial",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "msc industrial"
     ]
@@ -1336,7 +1336,7 @@
   },
   {
     "name": "McCoy's Building Supply",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "mccoy's building",
       "mccoys building supply"
@@ -1366,7 +1366,7 @@
   },
   {
     "name": "Menards",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "menards"
     ]
@@ -1402,7 +1402,7 @@
   },
   {
     "name": "Minuteman Press",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "minuteman press"
     ]
@@ -1497,7 +1497,7 @@
   },
   {
     "name": "Northern Tool",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "northern tool"
     ]
@@ -1513,7 +1513,7 @@
   },
   {
     "name": "Office Depot",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "office depot",
       "office max",
@@ -1543,7 +1543,7 @@
   },
   {
     "name": "PPG Paints",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "ppg paint",
       "ppg paints"
@@ -1638,7 +1638,7 @@
   },
   {
     "name": "Platt Electric",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "platt electric"
     ]
@@ -1696,7 +1696,7 @@
   },
   {
     "name": "Quill",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "quill.com"
     ]
@@ -1768,7 +1768,7 @@
   },
   {
     "name": "Rexel",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "rexel"
     ]
@@ -1804,7 +1804,7 @@
   },
   {
     "name": "Rural King",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "rural king"
     ]
@@ -1885,7 +1885,7 @@
   },
   {
     "name": "Sherwin-Williams",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "sherwin williams",
       "sherwin-williams"
@@ -1907,14 +1907,14 @@
   },
   {
     "name": "Sir Speedy",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "sir speedy"
     ]
   },
   {
     "name": "SiteOne",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "siteone"
     ]
@@ -1986,7 +1986,7 @@
   },
   {
     "name": "Staples",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "staples"
     ],
@@ -2054,7 +2054,7 @@
   },
   {
     "name": "Sutherlands",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "sutherlands"
     ]
@@ -2115,7 +2115,7 @@
   },
   {
     "name": "The Home Depot",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "home depot",
       "homedepot",
@@ -2128,14 +2128,14 @@
   },
   {
     "name": "The Tile Shop",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "tile shop"
     ]
   },
   {
     "name": "The UPS Store",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "the ups store",
       "ups store"
@@ -2171,7 +2171,7 @@
   },
   {
     "name": "Tractor Supply",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "tractor supply"
     ]
@@ -2195,7 +2195,7 @@
   },
   {
     "name": "True Value",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "true value"
     ]
@@ -2290,7 +2290,7 @@
   },
   {
     "name": "W.B. Mason",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "w.b. mason",
       "wb mason"
@@ -2366,7 +2366,7 @@
   },
   {
     "name": "White Cap",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "white cap"
     ]
@@ -2403,7 +2403,7 @@
   },
   {
     "name": "Winsupply",
-    "category": "Office Supplies",
+    "category": "Materials",
     "aliases": [
       "winnelson",
       "winsupply"

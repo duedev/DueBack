@@ -122,7 +122,9 @@ class Repo {
   async deleteReceipt(id: string): Promise<void> {
     const r = await this.getReceipt(id);
     if (r) {
-      await this.deleteBlob(r.fileKey).catch(() => {});
+      for (const key of [r.fileKey, r.cleanedKey, r.annotatedKey]) {
+        if (key) await this.deleteBlob(key).catch(() => {});
+      }
     }
     const conn = await db();
     await conn.delete("receipts", id);
