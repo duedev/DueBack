@@ -1,16 +1,32 @@
 import { IMAGE_PREP } from "../config/constants.ts";
 import { isPdf } from "../util/files.ts";
 import { correctPerspective, perspectiveEnabled } from "./perspective.ts";
+import {
+  toGrayscale,
+  bradleyBinarize,
+  estimateSkewAngle,
+  maskToRgba,
+  borderColor,
+} from "./binarize.ts";
 
 // Image pre-pass (§5 step 1, §14). Runs entirely client-side on a <canvas>:
-//   decode → auto-rotate (EXIF) → grayscale → auto-crop background → downscale.
-// Free, improves every downstream step, shrinks uploads, and lowers the cost of
-// any optional paid call. Output is a sharp JPEG that OCR and export both reuse.
+//   decode → auto-rotate (EXIF) → deskew (small tilt) → grayscale →
+//   auto-crop background → downscale.
+// Free, improves every downstream step, shrinks uploads, and lowers the cost
+// of any optional paid call. Two renders come out of the same cleaned frame:
+// a transient higher-res copy for OCR (small print survives) and the stored
+// JPEG for display/export — identical content, so normalized OCR boxes land
+// correctly on either.
 
 export interface CleanedImage {
   blob: Blob;
   width: number;
   height: number;
+  /** Transient higher-res render of the SAME frame, for OCR only (never
+   *  persisted). Same aspect as `blob`, so normalized boxes are shared. */
+  ocrBlob: Blob;
+  ocrWidth: number;
+  ocrHeight: number;
   /** Object URL for display; caller is responsible for revoking. */
   url: string;
 }
@@ -95,8 +111,72 @@ function detectContentBox(
   return { x: left, y: top, w: right - left + 1, h: bottom - top + 1 };
 }
 
+/** Draw a small (≤480px) analysis copy and return its pixels. */
+function analysisFrame(
+  src: ImageBitmap | HTMLCanvasElement,
+): { data: Uint8ClampedArray; w: number; h: number; scale: number } {
+  const srcW = src.width;
+  const srcH = src.height;
+  const aMax = 480;
+  const scale = Math.min(1, aMax / Math.max(srcW, srcH));
+  const w = Math.max(1, Math.round(srcW * scale));
+  const h = Math.max(1, Math.round(srcH * scale));
+  const ac = document.createElement("canvas");
+  ac.width = w;
+  ac.height = h;
+  const actx = ac.getContext("2d", { willReadFrequently: true })!;
+  actx.drawImage(src, 0, 0, w, h);
+  return { data: actx.getImageData(0, 0, w, h).data, w, h, scale };
+}
+
+/** Rotate the full frame by `deg` (positive = clockwise) about its center —
+ *  used for small deskew corrections only, so the clipped corner slivers are
+ *  background, not content. The uncovered wedges are filled with the photo's
+ *  own border color: a hard-coded white fill against a dark table injects
+ *  bright corner edges that defeat the auto-crop's content detection. */
+function rotateFrame(
+  src: ImageBitmap | HTMLCanvasElement,
+  deg: number,
+  fill: [number, number, number] = [255, 255, 255],
+): HTMLCanvasElement {
+  const w = src.width;
+  const h = src.height;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = `rgb(${fill[0]},${fill[1]},${fill[2]})`;
+  ctx.fillRect(0, 0, w, h);
+  ctx.translate(w / 2, h / 2);
+  ctx.rotate((deg * Math.PI) / 180);
+  ctx.drawImage(src, -w / 2, -h / 2);
+  return canvas;
+}
+
+/** Render a source region to a canvas capped at `maxEdge`, with the standard
+ *  grayscale/contrast treatment. */
+function renderRegion(
+  src: ImageBitmap | HTMLCanvasElement,
+  crop: { x: number; y: number; w: number; h: number },
+  maxEdge: number,
+): HTMLCanvasElement {
+  const scale = Math.min(1, maxEdge / Math.max(crop.w, crop.h));
+  const outW = Math.max(1, Math.round(crop.w * scale));
+  const outH = Math.max(1, Math.round(crop.h * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = outW;
+  canvas.height = outH;
+  const ctx = canvas.getContext("2d")!;
+  if (IMAGE_PREP.grayscale && "filter" in ctx) {
+    ctx.filter = "grayscale(1) contrast(1.08)";
+  }
+  ctx.drawImage(src, crop.x, crop.y, crop.w, crop.h, 0, 0, outW, outH);
+  return canvas;
+}
+
 export async function cleanImage(file: File | Blob): Promise<CleanedImage> {
-  let bmp = await decode(file);
+  const bmp = await decode(file);
+  let src: ImageBitmap | HTMLCanvasElement = bmp;
 
   // Optional document straightening (angled phone photos). Best-effort and
   // opt-in (VITE_PERSPECTIVE=1 + a vendored OpenCV.js) — null keeps the
@@ -105,58 +185,104 @@ export async function cleanImage(file: File | Blob): Promise<CleanedImage> {
     const warped = await correctPerspective(bmp).catch(() => null);
     if (warped) {
       bmp.close();
-      bmp = warped;
+      src = warped;
     }
   }
 
-  const srcW = bmp.width;
-  const srcH = bmp.height;
+  const bigEnough = src.width > 200 && src.height > 200;
+  // One analysis copy serves both deskew and autocrop; it is only recomputed
+  // when the frame was actually rotated.
+  let a = bigEnough ? analysisFrame(src) : null;
 
-  // --- auto-crop analysis on a small copy (cheap) ---
+  // --- deskew: estimate small tilt on the analysis copy, correct in full ---
+  if (IMAGE_PREP.deskew && a) {
+    const gray = toGrayscale(a.data, a.w, a.h);
+    const mask = bradleyBinarize(gray, a.w, a.h);
+    const angle = estimateSkewAngle(mask, a.w, a.h, {
+      maxAngle: IMAGE_PREP.deskewMaxAngle,
+    });
+    if (angle !== 0) {
+      const rotated = rotateFrame(src, angle, borderColor(a.data, a.w, a.h));
+      if (src instanceof ImageBitmap) src.close();
+      src = rotated;
+      a = analysisFrame(src);
+    }
+  }
+
+  const srcW = src.width;
+  const srcH = src.height;
+
+  // --- auto-crop analysis on the small copy of the (now upright) frame ---
   let crop = { x: 0, y: 0, w: srcW, h: srcH };
-  if (IMAGE_PREP.autoCrop && srcW > 200 && srcH > 200) {
-    const aMax = 480;
-    const aScale = Math.min(1, aMax / Math.max(srcW, srcH));
-    const aw = Math.max(1, Math.round(srcW * aScale));
-    const ah = Math.max(1, Math.round(srcH * aScale));
-    const ac = document.createElement("canvas");
-    ac.width = aw;
-    ac.height = ah;
-    const actx = ac.getContext("2d", { willReadFrequently: true })!;
-    actx.drawImage(bmp, 0, 0, aw, ah);
-    const box = detectContentBox(actx.getImageData(0, 0, aw, ah).data, aw, ah);
-    const area = (box.w * box.h) / (aw * ah);
+  if (IMAGE_PREP.autoCrop && a) {
+    const box = detectContentBox(a.data, a.w, a.h);
+    const area = (box.w * box.h) / (a.w * a.h);
     // Only accept a crop that keeps a sensible region (guards over-cropping).
-    if (area > 0.45 && box.w > aw * 0.4 && box.h > ah * 0.4) {
+    if (area > 0.45 && box.w > a.w * 0.4 && box.h > a.h * 0.4) {
       const pad = 0.02;
       const px = box.w * pad;
       const py = box.h * pad;
       crop = {
-        x: Math.max(0, (box.x - px) / aScale),
-        y: Math.max(0, (box.y - py) / aScale),
-        w: Math.min(srcW, (box.w + 2 * px) / aScale),
-        h: Math.min(srcH, (box.h + 2 * py) / aScale),
+        x: Math.max(0, (box.x - px) / a.scale),
+        y: Math.max(0, (box.y - py) / a.scale),
+        w: Math.min(srcW, (box.w + 2 * px) / a.scale),
+        h: Math.min(srcH, (box.h + 2 * py) / a.scale),
       };
     }
   }
 
-  // --- downscale the (cropped) region to the target max edge ---
-  const scale = Math.min(1, IMAGE_PREP.maxEdge / Math.max(crop.w, crop.h));
-  const outW = Math.max(1, Math.round(crop.w * scale));
-  const outH = Math.max(1, Math.round(crop.h * scale));
+  // --- render the same frame twice: stored copy + transient OCR copy ---
+  const stored = renderRegion(src, crop, IMAGE_PREP.maxEdge);
+  const ocr = renderRegion(src, crop, IMAGE_PREP.ocrMaxEdge);
+  if (src instanceof ImageBitmap) src.close();
 
+  const blob = await canvasToBlob(stored, "image/jpeg", IMAGE_PREP.quality);
+  const ocrBlob = await canvasToBlob(ocr, "image/jpeg", IMAGE_PREP.ocrQuality);
+  return {
+    blob,
+    width: stored.width,
+    height: stored.height,
+    ocrBlob,
+    ocrWidth: ocr.width,
+    ocrHeight: ocr.height,
+    url: URL.createObjectURL(blob),
+  };
+}
+
+export interface BinarizedImage {
+  blob: Blob;
+  width: number;
+  height: number;
+}
+
+/** Adaptively binarize an image blob (Bradley threshold → pure black/white).
+ *  Used by the weak-read OCR rescue; the result is transient. The frame is
+ *  capped at `maxEdge` (default: the stored-image size) — the rescue targets
+ *  uneven LIGHTING, not resolution, and the pixel loops run synchronously on
+ *  the main thread, so binarizing the full 2600px OCR render would stall the
+ *  UI for hundreds of ms. Callers must use the RETURNED dimensions when
+ *  normalizing OCR boxes. */
+export async function binarizeBlob(
+  blob: Blob,
+  maxEdge: number = IMAGE_PREP.maxEdge,
+): Promise<BinarizedImage> {
+  const bmp = await createImageBitmap(blob);
+  const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
+  const w = Math.max(1, Math.round(bmp.width * scale));
+  const h = Math.max(1, Math.round(bmp.height * scale));
   const canvas = document.createElement("canvas");
-  canvas.width = outW;
-  canvas.height = outH;
-  const ctx = canvas.getContext("2d")!;
-  if (IMAGE_PREP.grayscale && "filter" in ctx) {
-    ctx.filter = "grayscale(1) contrast(1.08)";
-  }
-  ctx.drawImage(bmp, crop.x, crop.y, crop.w, crop.h, 0, 0, outW, outH);
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  ctx.drawImage(bmp, 0, 0, w, h);
   bmp.close();
-
-  const blob = await canvasToBlob(canvas, "image/jpeg", IMAGE_PREP.quality);
-  return { blob, width: outW, height: outH, url: URL.createObjectURL(blob) };
+  const img = ctx.getImageData(0, 0, w, h);
+  const gray = toGrayscale(img.data, w, h);
+  const mask = bradleyBinarize(gray, w, h);
+  maskToRgba(mask, img.data);
+  ctx.putImageData(img, 0, 0);
+  const out = await canvasToBlob(canvas, "image/png", 1);
+  return { blob: out, width: w, height: h };
 }
 
 function canvasToBlob(

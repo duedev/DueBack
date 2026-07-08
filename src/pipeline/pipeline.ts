@@ -1,5 +1,5 @@
 import { repo } from "../store/repo.ts";
-import { cleanImage } from "./imagePrep.ts";
+import { cleanImage, binarizeBlob } from "./imagePrep.ts";
 import { hashBlob } from "./hash.ts";
 import { parseReceipt, type Extraction } from "./extract.ts";
 import { findSemanticDuplicate, type DupRecord } from "./dedup.ts";
@@ -8,7 +8,7 @@ import { runVisionAssist } from "./vision/index.ts";
 import { matchVendor } from "../config/vendors.ts";
 import { logoIndexAvailable, cropHeaderBand, searchLogo, type LogoHit } from "./logo/index.ts";
 import { fuseVendorIdentity } from "./logo/fuse.ts";
-import { CONFIDENCE } from "../config/constants.ts";
+import { CONFIDENCE, OCR_RESCUE } from "../config/constants.ts";
 import type { Receipt, Flag, OcrResult, ExtractionMethod, LogoMatch } from "../types.ts";
 
 // The worker's job, end to end (§8 "Process"): clean → hash (cache/dedup) →
@@ -55,11 +55,51 @@ export async function processReceipt(
         words: [],
       };
     } else {
-      ocr = await engine.recognize(cleaned.blob, cleaned.width, cleaned.height);
+      // Recognize the transient higher-res render; boxes are normalized to
+      // its dimensions, and it shares the stored image's frame exactly.
+      ocr = await engine.recognize(
+        cleaned.ocrBlob,
+        cleaned.ocrWidth,
+        cleaned.ocrHeight,
+      );
     }
 
     // 4. Rules extraction (free, deterministic, on-device).
     let ex: Extraction = parseReceipt(ocr, { currencyDefault: receipt.currency });
+
+    // 4a. Weak-read rescue: when the grayscale pass reads poorly (or the
+    //     rules can't find an amount), retry on an adaptively binarized copy
+    //     and keep whichever read extracts better. Binarization rescues
+    //     unevenly lit thermal paper but can hurt clean scans, so it is
+    //     strictly retry-only — never the first pass. Best-effort: any
+    //     failure keeps the original read.
+    if (
+      !cached?.ocrText &&
+      OCR_RESCUE.binarize &&
+      (ocr.confidence < OCR_RESCUE.minConfidence || ex.amount.value <= 0)
+    ) {
+      try {
+        const bin = await binarizeBlob(cleaned.ocrBlob);
+        const ocr2 = await engine.recognize(bin.blob, bin.width, bin.height);
+        const ex2 = parseReceipt(ocr2, { currencyDefault: receipt.currency });
+        // Swap only when the retry is strictly safer: it found an amount the
+        // first pass missed, or BOTH passes agree on the amount (then it's a
+        // pure text/vendor/date upgrade) and it scores higher. A confidently
+        // WRONG binarized amount must never displace a correct weak read.
+        const foundMissingAmount = ex2.amount.value > 0 && ex.amount.value <= 0;
+        const amountsAgree =
+          Math.abs(ex2.amount.value - ex.amount.value) < 0.005;
+        if (
+          foundMissingAmount ||
+          (amountsAgree && ex2.confidence > ex.confidence)
+        ) {
+          ocr = ocr2;
+          ex = ex2;
+        }
+      } catch {
+        /* rescue is pure upside — never fail the receipt over it */
+      }
+    }
     let methodUsed: ExtractionMethod = "rules";
     let methodDetail: string | undefined;
     let cost = 0;

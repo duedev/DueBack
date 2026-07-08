@@ -27,7 +27,8 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + Fraunces).
 |---|---|
 | `src/types.ts` | Domain model: Receipt/Batch/Job/Field/Flag/LogoMatch/StoredBrand |
 | `src/pipeline/pipeline.ts` | Per-receipt flow: clean → hash/cache → OCR → rules → **logo fusion** → vision assist → dedup → status |
-| `src/pipeline/imagePrep.ts` | canvas prep: EXIF rotate → (opt) perspective → grayscale → edge-energy autocrop → downscale |
+| `src/pipeline/imagePrep.ts` | canvas prep: EXIF rotate → (opt) perspective → projection-profile deskew → grayscale → edge-energy autocrop → two renders (transient hi-res `ocrBlob` for OCR + stored 1600px blob); `binarizeBlob` for the weak-read rescue |
+| `src/pipeline/binarize.ts` | pure image math (no DOM, Node-tested): luminance, Bradley adaptive threshold, projection-profile skew estimation |
 | `src/pipeline/perspective.ts` | opt-in OpenCV.js quad detect + warp (`VITE_PERSPECTIVE=1`, vendored lib) |
 | `src/pipeline/ocr.ts` | `OcrEngine` seam; Tesseract default; `VITE_OCR_ENGINE=paddle` → `engines/paddle/*` (ONNX det+rec+CTC) |
 | `src/config/vendors.ts` | Brand matcher: curated table + `src/data/vendorDb.extra.json` (generated, 329 brands); passes: exact → glyph-normalized (`normalizeGlyphs`) → bounded fuzzy (`fuzzyMatchVendor`); slogans as long aliases |
@@ -60,6 +61,11 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   value wins (FUEL TOTAL vs combined TOTAL, as in the original app), and the
   line *below* a label-only TOTAL must match strict money (a lenient grab
   there turned "Date: 05/10/2026" into a $2,026 total).
+- **OCR reads a transient higher-res render (`ocrMaxEdge` 2600px), not the
+  stored 1600px blob** — both come from the same cleaned frame, so normalized
+  boxes land on either; never persist `ocrBlob`. Binarization is retry-only
+  (`OCR_RESCUE`): it rescues unevenly lit photos but can hurt clean scans, so
+  it only runs when the grayscale pass reads weak or finds no amount.
 - **Copy a picker's FileList before clearing `input.value`**
   (Landing/Dropzone `onPicked`) — resetting the input empties the live
   FileList mid-await, silently dropping every file after the first.

@@ -97,6 +97,29 @@ async function makeGasReceiptPng() {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
+// A tilted phone photo: the whole receipt rotated ~3.5° — Tesseract's line
+// finder degrades quickly past ~1–2° of skew, so this gates the deskew pass.
+async function makeSkewedReceiptPng() {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="560" height="520">
+    <rect width="560" height="520" fill="#ffffff"/>
+    <g font-family="monospace" font-size="24" fill="#000000">
+      <text x="40" y="70" font-size="32" font-weight="bold">ACME HARDWARE</text>
+      <text x="40" y="115">450 OAK STREET</text>
+      <text x="40" y="160">Date: 04/22/2026</text>
+      <text x="40" y="215">Hammer</text><text x="520" y="215" text-anchor="end">24.99</text>
+      <text x="40" y="255">Nails 5lb</text><text x="520" y="255" text-anchor="end">18.75</text>
+      <text x="40" y="295">Tape measure</text><text x="520" y="295" text-anchor="end">12.49</text>
+      <text x="40" y="345">Subtotal</text><text x="520" y="345" text-anchor="end">56.23</text>
+      <text x="40" y="385">Tax</text><text x="520" y="385" text-anchor="end">4.89</text>
+      <text x="40" y="435" font-weight="bold">TOTAL</text><text x="520" y="435" text-anchor="end" font-weight="bold">$61.12</text>
+    </g>
+  </svg>`;
+  return sharp(Buffer.from(svg))
+    .rotate(3.5, { background: "#ffffff" })
+    .png()
+    .toBuffer();
+}
+
 // A receipt whose TOTAL label sits on its own line with the value below it and
 // a date line after — the layout that once turned "2026" into the total.
 async function makeSplitTotalReceiptPng() {
@@ -148,7 +171,7 @@ async function main() {
     //    the picker FileList regression (clearing input.value used to drop
     //    every file after the first). The gas and split-total receipts gate
     //    the real-OCR amount rules the unit tests can only simulate.
-    log("uploading 3 synthetic receipts, running on-device OCR…");
+    log("uploading 4 synthetic receipts, running on-device OCR…");
     await page
       .locator('input[type=file][multiple]')
       .first()
@@ -156,6 +179,7 @@ async function main() {
         { name: "coffee.png", mimeType: "image/png", buffer: await makeReceiptPng() },
         { name: "gas.png", mimeType: "image/png", buffer: await makeGasReceiptPng() },
         { name: "diner.png", mimeType: "image/png", buffer: await makeSplitTotalReceiptPng() },
+        { name: "skewed.png", mimeType: "image/png", buffer: await makeSkewedReceiptPng() },
       ]);
 
     // 3. Workspace board appears with the processing cards.
@@ -192,7 +216,7 @@ async function main() {
     while (Date.now() < deadline) {
       rows = await readRows();
       if (
-        rows.length === 3 &&
+        rows.length === 4 &&
         rows.every((r) => ["done", "needs_review", "failed"].includes(r.status))
       )
         break;
@@ -200,7 +224,7 @@ async function main() {
     }
     for (const r of rows) log(`extracted → ${r.file}: vendor="${r.vendor}" amount=${r.amount} [${r.status}]`);
 
-    check(rows.length === 3, `multi-select stored all 3 receipts (got ${rows.length})`);
+    check(rows.length === 4, `multi-select stored all 4 receipts (got ${rows.length})`);
     const byFile = (n) => rows.find((r) => r.file === n) ?? {};
 
     const coffee = byFile("coffee.png");
@@ -216,6 +240,10 @@ async function main() {
 
     const diner = byFile("diner.png");
     check(diner.amount === 24.11, `diner: label-only TOTAL takes the value below, not the date (got ${diner.amount})`);
+
+    const skewed = byFile("skewed.png");
+    check(skewed.amount === 61.12, `skewed: deskew recovers a 3.5° tilted receipt (got ${skewed.amount})`);
+    check(/ACME|HARDWARE/i.test(skewed.vendor || ""), `skewed: vendor (got ${skewed.vendor})`);
 
     // 6. Review modal: open the first card and approve through the sweep.
     await page.locator(".rc").first().click();
