@@ -69,27 +69,32 @@ test("buildWorkbook produces a valid multi-sheet workbook with footing totals", 
   assert.ok(names.includes("Travel"));
   assert.ok(names.includes("Lodging"));
 
-  // Insights sheet surfaces the headline total.
+  // Insights sheet surfaces the headline total (Key Figures stat tile).
   const insightsWs = wb.getWorksheet("Insights")!;
   const sumAmounts = receipts.reduce((s, r) => s + r.amount.value, 0);
   let foundInsightsTotal = false;
   insightsWs.eachRow((row) => {
-    if (String(row.getCell(2).value ?? "") === "Total") {
-      assert.ok(Math.abs(Number(row.getCell(3).value) - sumAmounts) < 0.001);
-      foundInsightsTotal = true;
-    }
+    row.eachCell((cell, col) => {
+      if (String(cell.value ?? "") === "Total Spend") {
+        const v = insightsWs.getCell(row.number + 1, col).value;
+        assert.ok(Math.abs(Number(v) - sumAmounts) < 0.001, `total spend ${String(v)}`);
+        foundInsightsTotal = true;
+      }
+    });
   });
-  assert.ok(foundInsightsTotal, "insights has a total KPI");
+  assert.ok(foundInsightsTotal, "insights has a Total Spend stat");
 
-  // Summary grand total formula footing should equal the sum of amounts.
+  // Summary TOTAL row foots the per-category subtotals to the full sum.
   const expectedTotal = receipts.reduce((s, r) => s + r.amount.value, 0);
   const summary = wb.getWorksheet("Summary")!;
   let foundTotal = false;
+  let subtotals = 0;
   summary.eachRow((row) => {
-    const label = String(row.getCell(2).value ?? "");
-    if (label === "Grand total") {
-      const cell = row.getCell(4).value as { result?: number } | number;
-      const val = typeof cell === "object" ? cell.result : cell;
+    const label = String(row.getCell(5).value ?? "");
+    if (label === "Subtotal") subtotals++;
+    if (label === "TOTAL") {
+      const cell = row.getCell(6).value as { result?: number } | number;
+      const val = typeof cell === "object" ? cell?.result : cell;
       assert.ok(
         Math.abs(Number(val) - expectedTotal) < 0.001,
         `grand total ${String(val)} ≈ ${expectedTotal}`,
@@ -97,7 +102,25 @@ test("buildWorkbook produces a valid multi-sheet workbook with footing totals", 
       foundTotal = true;
     }
   });
-  assert.ok(foundTotal, "summary has a grand total row");
+  assert.equal(subtotals, 4, "one Subtotal row per category section");
+  assert.ok(foundTotal, "summary has a TOTAL row");
+
+  // Every Summary "#" cell hyperlinks to its receipt's anchor row on the
+  // category image sheet (the ported linking feature).
+  const links: string[] = [];
+  summary.eachRow((row) => {
+    const v = row.getCell(1).value as { hyperlink?: string } | null;
+    if (v && typeof v === "object" && v.hyperlink) links.push(v.hyperlink);
+  });
+  assert.equal(links.length, 4, `one link per receipt (got ${JSON.stringify(links)})`);
+  assert.ok(links.every((l) => /^#'[^']+'!A\d+$/.test(l)), links.join(", "));
+  // …and each target sheet block exists ("Receipt 1  ·  <file>").
+  const travel = wb.getWorksheet("Travel")!;
+  let foundBand = false;
+  travel.eachRow((row) => {
+    if (/^Receipt 1\s+·/.test(String(row.getCell(1).value ?? ""))) foundBand = true;
+  });
+  assert.ok(foundBand, "category sheet has the per-receipt header band");
 });
 
 test("buildWorkbook skips failed and zero-amount receipts", async () => {

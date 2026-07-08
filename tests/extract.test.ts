@@ -166,3 +166,80 @@ test("vendor is never fabricated from an item line carrying a price", () => {
   assert.equal(r.vendor.value, "");
   assert.ok(r.flags.some((f) => f.code === "no_vendor"));
 });
+
+// ── Regressions from real user receipts (review-modal screenshots) ──────────
+
+test("real 7-Eleven slip: slogan names the brand when the logo font is unreadable", () => {
+  // The stylized "7-ELEVEN" line OCRs to garbage beyond the glyph folds, but
+  // the slogan line reads cleanly. Vendor must be the brand, not the slogan.
+  const r = parseReceipt(
+    ocr([
+      "OH THANK HEAVEN",
+      "FOR 7-ELEUEH", // mangled past u→v folding (N read as H)
+      "TID : 00073852001",
+      "09/17/2024 11:12:23",
+      "Receipt # 2026875",
+      "20625 VAN BUREN BLVD",
+      "RIVERSIDE, CA",
+      "STORE: 38520",
+      "SALE",
+      "AMEX",
+      "AMOUNT $73.22",
+    ]),
+  );
+  assert.equal(r.vendor.value, "7-Eleven");
+  assert.equal(r.category.value, "Fuel");
+  assert.equal(r.amount.value, 73.22);
+  assert.equal(r.date.value, "2024-09-17");
+});
+
+test("real Home Depot receipt: qty@price never glues into the amount", () => {
+  const r = parseReceipt(
+    ocr([
+      "A get more done.", // OCR ate "How doers" — fragment slogan must match
+      "5755 MISSION AVENUE",
+      "OCEANSIDE, CA 92057 (760)945-8686",
+      "1018 00061 63802 09/05/23 12:00 PM",
+      "SALE SELF CHECKOUT",
+      "045242357741 M12M18CHG <A> 99.00",
+      "1005-667-380 2 YR REPLACE <A,U> 12.00",
+      "885911413763 DW 18GA 1\" B <A>",
+      "2@19.28 38.56",
+      "092097283077 75PK TAPCON <A> 29.47",
+      "6@8.47 50.82",
+      "SUBTOTAL 229.85",
+      "SALES TAX 18.96",
+      "TOTAL $248.81",
+      "XXXXXXXXXXX1016 AMEX",
+      "USD$ 248.81",
+    ]),
+  );
+  assert.equal(r.amount.value, 248.81, `amount ${r.amount.value}`);
+  assert.equal(r.vendor.value, "The Home Depot");
+  assert.equal(r.date.value, "2023-09-05");
+  // No glued qty@price monster may even appear as a larger-amount flag.
+  assert.ok(!r.flags.some((f) => f.message.match(/2819|21928|819/)), JSON.stringify(r.flags));
+});
+
+test("real Mobil pump receipt: FUEL SALE is the total, $4.599/G never is", () => {
+  const r = parseReceipt(
+    ocr([
+      "WELCOME TO",
+      "MOBIL",
+      "DATE 12/27/22 6:38",
+      "TRAN#9014604",
+      "PUMP# 01",
+      "SERVICE LEVEL: SELF",
+      "PRODUCT: Regular",
+      "GALLONS: 6.927",
+      "PRICE/G: $4.599",
+      "FUEL SALE $31.86",
+      "CREDIT $31.86",
+    ]),
+  );
+  assert.equal(r.amount.value, 31.86, `amount ${r.amount.value}`);
+  assert.ok(r.amount.confidence > 0.5, "FUEL SALE is a labeled total, not a guess");
+  assert.equal(r.vendor.value, "Mobil");
+  assert.equal(r.category.value, "Fuel");
+  assert.equal(r.date.value, "2022-12-27");
+});

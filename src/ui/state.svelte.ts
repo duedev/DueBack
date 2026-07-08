@@ -57,7 +57,12 @@ class AppState {
     return c;
   });
 
-  showWorkspace = $derived(this.entered || this.receipts.length > 0);
+  /** True after the user explicitly navigated back to the landing page. */
+  wentHome = $state(false);
+
+  showWorkspace = $derived(
+    !this.wentHome && (this.entered || this.receipts.length > 0),
+  );
 
   /** Object URLs for stored blobs, keyed by blob key (revoked on refresh). */
   private urlCache = new Map<string, string>();
@@ -124,6 +129,27 @@ class AppState {
 
   enter(): void {
     this.entered = true;
+    this.wentHome = false;
+  }
+
+  /** Navigate back to the landing page (receipts stay put). */
+  goHome(): void {
+    this.wentHome = true;
+  }
+
+  /** Delete every receipt on the board. Immediate — no dialog; the action is
+   *  explicit enough and a blocking confirm popup was unwanted friction. */
+  async clearAll(): Promise<void> {
+    const ids = this.receipts.map((r) => r.id);
+    for (const id of ids) await repo.deleteReceipt(id);
+    this.toast(
+      ids.length === 0
+        ? "Nothing to delete."
+        : ids.length === 1
+          ? "Deleted 1 receipt."
+          : `Deleted ${ids.length} receipts.`,
+      "info",
+    );
   }
 
   applyTheme(pref: ThemePref): void {
@@ -154,6 +180,7 @@ class AppState {
   async addFiles(files: Iterable<File>): Promise<void> {
     if (!this.batch) return;
     this.entered = true;
+    this.wentHome = false;
     const existing = this.receipts.length;
     let accepted = 0;
     for (const file of files) {

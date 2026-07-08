@@ -123,7 +123,8 @@
   async function deleteCurrent(): Promise<void> {
     const r = current;
     if (!r) return;
-    if (!confirm(`Delete "${r.vendor.value || r.fileName}"?`)) return;
+    // Deletes immediately — a blocking confirm dialog here was unwanted
+    // friction (the button is explicit and the modal shows what it targets).
     const wasIndex = index;
     await app.deleteReceipt(r.id);
     const fresh = app.receipts;

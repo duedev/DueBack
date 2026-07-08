@@ -278,6 +278,31 @@ async function main() {
       names.includes("Meals & Entertainment") && names.includes("Fuel"),
       `workbook has the category sheets (sheets: ${names.join(", ")})`,
     );
+    // The Summary "#" cells hyperlink to each receipt's image-sheet anchor.
+    const summarySheet = wb.getWorksheet("Summary");
+    let linkCount = 0;
+    summarySheet.eachRow((row) => {
+      const v = row.getCell(1).value;
+      if (v && typeof v === "object" && v.hyperlink) linkCount++;
+    });
+    check(linkCount === 4, `summary links every receipt to its image (got ${linkCount})`);
+
+    // 8. Header brand navigates home; the hero offers the way back.
+    await page.locator("header.ws-head .brand").click();
+    await page.getByRole("heading", { name: /Receipts in/ }).waitFor({ timeout: 10000 });
+    check(true, "brand click returns to the landing page");
+    await page.getByRole("button", { name: /Back to your receipts \(4\)/ }).click();
+    await page.getByText("Drop receipts here").waitFor({ timeout: 10000 });
+    check(true, "landing offers the way back to the workspace");
+
+    // 9. Delete all receipts — immediate, no confirm dialog.
+    await page.getByRole("button", { name: /Delete all/ }).click();
+    await page.waitForFunction(
+      () => document.querySelectorAll(".rc").length === 0,
+      { timeout: 15000 },
+    );
+    const left = (await readRows()).length;
+    check(left === 0, `delete-all clears the board and the store (left ${left})`);
   } finally {
     if (browser) await browser.close();
     server.kill("SIGKILL");

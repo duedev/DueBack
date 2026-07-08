@@ -39,16 +39,16 @@
   --accent-soft: rgb(20 114 70 / 0.1);
   --accent-line: rgb(20 114 70 / 0.35);
 
-  --gold: #a35c0a; /* highlights, "review" accents — 4.9:1 on --bg */
-  --gold-soft: rgb(163 92 10 / 0.12);
+  --gold: #d9480f; /* highlights, "review" accents — vivid orange, 4.6:1 on --bg */
+  --gold-soft: rgb(217 72 15 / 0.12);
   --ok: #147246;
-  --warn: #a35c0a;
+  --warn: #d9480f;
   --err: #b42323;
   --err-soft: rgb(180 35 35 / 0.1);
 
   /* charts + category chips (AA against both bg tones for fills w/ ink text) */
   --cat-1: #147246;
-  --cat-2: #a35c0a;
+  --cat-2: #d9480f;
   --cat-3: #1d4ed8;
   --cat-4: #7c3aed;
   --cat-5: #0e7490;
@@ -74,15 +74,15 @@
   --accent-soft: rgb(62 207 130 / 0.13);
   --accent-line: rgb(62 207 130 / 0.4);
 
-  --gold: #e0a34e;
-  --gold-soft: rgb(224 163 78 / 0.14);
+  --gold: #ffa94d;
+  --gold-soft: rgb(255 169 77 / 0.16);
   --ok: #3ecf82;
-  --warn: #e0a34e;
+  --warn: #ffa94d;
   --err: #f37272;
   --err-soft: rgb(243 114 114 / 0.12);
 
   --cat-1: #3ecf82;
-  --cat-2: #e0a34e;
+  --cat-2: #ffa94d;
   --cat-3: #7aa5ff;
   --cat-4: #c39bff;
   --cat-5: #5fd0e8;
@@ -114,15 +114,15 @@
     --accent-soft: rgb(62 207 130 / 0.13);
     --accent-line: rgb(62 207 130 / 0.4);
 
-    --gold: #e0a34e;
-    --gold-soft: rgb(224 163 78 / 0.14);
+    --gold: #ffa94d;
+    --gold-soft: rgb(255 169 77 / 0.16);
     --ok: #3ecf82;
-    --warn: #e0a34e;
+    --warn: #ffa94d;
     --err: #f37272;
     --err-soft: rgb(243 114 114 / 0.12);
 
     --cat-1: #3ecf82;
-    --cat-2: #e0a34e;
+    --cat-2: #ffa94d;
     --cat-3: #7aa5ff;
     --cat-4: #c39bff;
     --cat-5: #5fd0e8;

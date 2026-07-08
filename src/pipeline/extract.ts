@@ -71,8 +71,12 @@ function moneyHitsFromLine(line: OcrLine, lenient = false): MoneyHit[] {
   for (const w of line.words) {
     if (!/\d/.test(w.text)) continue;
     scan.lastIndex = 0;
-    if (scan.test(w.text)) {
-      const v = parseAmount(w.text);
+    const m = scan.exec(w.text);
+    if (m) {
+      // Parse the MATCHED substring, never the whole word — a qty@price token
+      // like "2@19.28" tests as money but whole-word parsing glued the qty
+      // digits onto the price ($219.28… and worse with an OCR-misread digit).
+      const v = parseAmount(m[0]);
       if (v !== null) hits.push({ value: v, bbox: w.bbox });
     }
   }
@@ -112,6 +116,9 @@ function rightmostAmount(line: OcrLine, lenient = false): MoneyHit | null {
 const TOTAL_LABELS = [
   { re: /\b(grand\s*total|amount\s*due|balance\s*due|total\s*due|total\s*paid)\b/i, weight: 1.0 },
   { re: /\btotal\b/i, weight: 0.85 },
+  // Gas pumps print "FUEL SALE $31.86" with no other total line; ranked below
+  // a plain TOTAL so a combined fuel + car-wash TOTAL still wins.
+  { re: /\bfuel\s+(?:total|sale)\b/i, weight: 0.8 },
 ];
 const SUBTOTAL_RE = /\bsub[\s-]?total\b/i;
 // A generic "total" line that is really something else — subtotal/tax/tender/

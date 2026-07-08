@@ -91,7 +91,13 @@
             <path d="M12 16V4m0 0 4.5 4.5M12 4 7.5 8.5M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2" />
           </svg>
         </button>
-        <a class="btn btn-lg" href="#how">See how it works</a>
+        {#if app.receipts.length > 0}
+          <button class="btn btn-lg" onclick={() => app.enter()}>
+            Back to your receipts ({app.receipts.length})
+          </button>
+        {:else}
+          <a class="btn btn-lg" href="#how">See how it works</a>
+        {/if}
       </div>
       <ul class="hero-trust" aria-label="Key facts">
         <li><strong>$0</strong> per receipt</li>

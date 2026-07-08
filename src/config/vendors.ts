@@ -92,9 +92,25 @@ export const KNOWN_VENDORS: KnownVendor[] = [
   { name: "Kum & Go", category: "Fuel", aliases: ["kum & go", "kum and go"] },
   { name: "Thorntons", category: "Fuel", aliases: ["thorntons"] },
   { name: "Costco Gas", category: "Fuel", aliases: ["costco gas", "costco gasoline", "costco fuel"] },
+  // 7-Eleven's brand line is printed in a stylized font OCR often mangles
+  // beyond the glyph folds — but its trademark slogan line reads cleanly.
+  {
+    name: "7-Eleven",
+    category: "Fuel",
+    aliases: ["7-eleven", "7 eleven", "7eleven", "seven eleven"],
+    slogans: ["oh thank heaven for 7-eleven", "oh thank heaven"],
+  },
 
   // ── Office / hardware / general retail → Office Supplies ──────────────────
-  { name: "The Home Depot", category: "Office Supplies", aliases: ["the home depot", "home depot", "homedepot"] },
+  // The Home Depot's name is a logo; the only machine-readable brand text is
+  // usually the slogan — and OCR often eats its first words ("A get more
+  // done."), so distinctive fragments are aliases too.
+  {
+    name: "The Home Depot",
+    category: "Office Supplies",
+    aliases: ["the home depot", "home depot", "homedepot"],
+    slogans: ["how doers get more done", "doers get more done", "get more done"],
+  },
   { name: "Lowe's", category: "Office Supplies", aliases: ["lowe's", "lowes"] },
   { name: "Menards", category: "Office Supplies", aliases: ["menards"] },
   { name: "Ace Hardware", category: "Office Supplies", aliases: ["ace hardware"] },

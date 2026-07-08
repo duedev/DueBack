@@ -14,10 +14,15 @@
 <div class="ws">
   <header class="ws-head">
     <div class="wrap ws-head-in">
-      <div class="brand">
+      <button
+        class="brand"
+        onclick={() => app.goHome()}
+        title="Back to the home page"
+        aria-label="Back to the home page"
+      >
         <span class="brand-mark">F5</span>
         <span class="brand-name">Reimbursements&nbsp;F5</span>
-      </div>
+      </button>
       {#if total > 0}
         <div class="progress" aria-label="Processing progress">
           <span class="muted">{finished}/{total} processed</span>
@@ -29,6 +34,18 @@
       <div class="head-actions">
         {#if app.userEmail}
           <span class="chip chip-ok" title="Synced to your cloud workspace">☁ synced</span>
+        {/if}
+        {#if total > 0}
+          <button
+            class="btn btn-ghost clear-all"
+            onclick={() => app.clearAll()}
+            title="Delete all receipts"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            </svg>
+            Delete all
+          </button>
         {/if}
         <button
           class="btn btn-ghost"
@@ -96,6 +113,21 @@
     align-items: center;
     gap: 0.55rem;
     margin-right: auto;
+    border: 0;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+  }
+  .brand:hover .brand-name {
+    color: var(--accent);
+  }
+  .clear-all {
+    color: var(--err);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
   }
   .brand-mark {
     font: 600 0.85rem/1 var(--font-display);
