@@ -35,7 +35,8 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + Fraunces).
 | `src/pipeline/perspective.ts` | opt-in OpenCV.js quad detect + warp (`VITE_PERSPECTIVE=1`, vendored lib) |
 | `src/pipeline/ocr.ts` | `OcrEngine` seam; Tesseract default; `VITE_OCR_ENGINE=paddle` → `engines/paddle/*` (ONNX det+rec+CTC) |
 | `src/config/vendors.ts` | Brand matcher: curated table + `src/data/vendorDb.extra.json` (generated, 329 brands); passes: exact → glyph-normalized (`normalizeGlyphs`) → bounded fuzzy (`fuzzyMatchVendor`); slogans as long aliases |
-| `src/pipeline/extract.ts` | Rules: grand-total tiers + reconcile, **pump-math reconcile** (corroboration-gated: decimal-slip signature corrects, echoed/anchored totals are kept, moderate disagreement → keep + review), footing math with tip guard, US-first dates (stamp-glyph repair), tax, vendor line heuristic (greeting/address/pump-data rejects) + fuzzy hook, confidence, flags, `forcesManualReview()` (suspicious totals / `vendor_unclear` force human review); per-field `bbox` powers review markers/callouts |
+| `src/pipeline/extract.ts` | Rules: grand-total tiers + reconcile, **pump-math reconcile** (corroboration-gated; payment-line anchors correct, non-payment anchors keep), footing math with tip guard, US-first dates (stamp-glyph repair), tax, vendor line heuristic (greeting/address/pump-data rejects) + fuzzy hook, confidence, flags, `forcesManualReview()` (**`total_suspect`**/`vendor_unclear` warns force review — `total_mismatch` stays advisory), `locateValue()` (post-hoc field location for corrections) |
+| `src/train/corrections.ts` | The improvement loop: review edits diffed into `CorrectionRecord`s (with located bbox + OCR line), appended to kv `training.log` (cap 2000); Settings → Improvement log downloads/clears it |
 | `src/pipeline/logo/` | Visual logo layer: `embedder.ts` (CLIP seam, lazy, test-fakeable), `index.ts` (bundled `logoIndex.json` + user brands, cosine NN, header-band crop, `addBrandFromImage`), `fuse.ts` (Layer-3 fusion; `LOGO_ACCEPT`) — inert (no model download) while the index is empty |
 | `src/pipeline/vision/` | Opt-in AI assist (OpenRouter/Gemini/Anthropic), spend cap, build-time free key; signed-in users route via `supabase/aiProxy.ts` → `ai-extract` Edge Function |
 | `src/store/` | `db.ts` (IndexedDB v1: batches/receipts/jobs/blobs/brands/kv), `repo.ts` (the one read/write + notify seam), `sync.ts` (Supabase mirror: LWW on `updatedAt`, storage blobs, realtime) |
@@ -93,6 +94,19 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   building brands map to Materials (the original's `mats`). The meals category
   is named **"Meals"** (renamed from "Meals & Entertainment"); legacy stored
   values are normalized on every `repo` read (`LEGACY_CATEGORIES`).
+- **`total_mismatch` is advisory; `total_suspect` gates.** Only the dedicated
+  `total_suspect` warn (and `vendor_unclear`) force `needs_review` — reconcile's
+  advisories fire on ordinary tip/savings/balance receipts and must not. Tip
+  awareness must stay symmetric between `applyFootingMath` and parseReceipt's
+  far-above-subtotal gate (2× subtotal ceiling with a TIP line, 1.5× without).
+- **Receipts persist pruned `ocrLines`** (text+bbox, no words) so a review
+  correction can be re-located (`locateValue`), re-highlighted (ReviewModal
+  `applyPatch` re-bakes the annotated copy), and logged for training.
+- **Board views:** Workspace has a Grid/Kanban toggle + sort select
+  (localStorage `board.view`/`board.sort`); kanban lanes are status groups.
+- **Dark scan borders** (CamScanner sawtooth strips) are trimmed by
+  `darkBorderInsets` (binarize.ts, Node-tested) before the edge-energy crop —
+  pre-scanned uploads otherwise look "uncropped" (nothing else to trim).
 - **Corrections never silently swap a plausible total.** Pump/footing math only
   auto-corrects decimal-slip-scale garbles (ratio ≈ ×10/×100) or values the
   receipt's own arithmetic contradicts; anything moderate keeps the printed

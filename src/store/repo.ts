@@ -21,6 +21,11 @@ function normalizeReceipt(r: Receipt): Receipt {
   return mapped ? { ...r, category: { ...r.category, value: mapped } } : r;
 }
 
+function normalizeBrand(b: StoredBrand): StoredBrand {
+  const mapped = LEGACY_CATEGORIES[b.category as string];
+  return mapped ? { ...b, category: mapped } : b;
+}
+
 // Repository over the local stores. This is the one place that reads/writes the
 // source of truth, and the one place that announces changes — the UI subscribes
 // here instead of holding a connection open (§13: live updates by polling/push,
@@ -211,7 +216,7 @@ class Repo {
 
   async listBrands(): Promise<StoredBrand[]> {
     const all = await (await db()).getAll("brands");
-    return all.sort((a, b) => a.createdAt - b.createdAt);
+    return all.map(normalizeBrand).sort((a, b) => a.createdAt - b.createdAt);
   }
 
   async deleteBrand(id: string): Promise<void> {

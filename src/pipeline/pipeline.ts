@@ -106,6 +106,14 @@ export async function processReceipt(
     let methodDetail: string | undefined;
     let cost = 0;
     let ocrTextOut = ocr.text;
+    // Pruned per-line geometry is persisted so a later human correction can
+    // be located on the image, re-highlighted, and logged for training.
+    const ocrLines = ocr.lines.map((l) => ({
+      text: l.text,
+      confidence: l.confidence,
+      bbox: l.bbox,
+      words: [],
+    }));
 
     // 4b. Visual logo identity. A confident OCR-text brand match is recorded as
     //     provenance; otherwise, when there is a logo index to match against and
@@ -247,6 +255,7 @@ export async function processReceipt(
       confidence: ex.confidence,
       flags,
       ocrText: ocrTextOut,
+      ocrLines,
       logoMatch,
       methodUsed,
       methodDetail,

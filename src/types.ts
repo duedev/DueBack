@@ -45,6 +45,7 @@ export type FlagCode =
   | "no_date"
   | "no_vendor"
   | "total_mismatch"
+  | "total_suspect"
   | "vendor_unclear"
   | "future_date"
   | "stale_date"
@@ -135,6 +136,9 @@ export interface Receipt {
 
   /** Full OCR text, kept for re-parsing and the review panel. */
   ocrText?: string;
+  /** Pruned per-line OCR geometry (no words), kept so a human correction can
+   *  be located and re-highlighted on the image and logged for training. */
+  ocrLines?: OcrLine[];
 
   /** Result of the visual-logo / brand-identity fusion, when it ran. */
   logoMatch?: LogoMatch;

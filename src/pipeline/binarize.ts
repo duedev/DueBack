@@ -221,3 +221,41 @@ export function maskToRgba(
     data[i + 3] = 255;
   }
 }
+
+/** Insets (px) of near-black scan borders at each frame edge — the sawtooth
+ *  strips scan apps (CamScanner et al.) leave behind. Those strips carry
+ *  edge energy, so the content-box crop alone keeps them. A line belongs to
+ *  the border while ≥ `frac` of its pixels are darker than `darkPx`; the
+ *  walk-in stops at the first non-dark line or at `maxFrac` of the frame
+ *  (sparse dark TEXT rows never reach the fraction). */
+export function darkBorderInsets(
+  gray: Float32Array,
+  w: number,
+  h: number,
+  opts: { darkPx?: number; frac?: number; maxFrac?: number } = {},
+): { left: number; top: number; right: number; bottom: number } {
+  const darkPx = opts.darkPx ?? 80;
+  const frac = opts.frac ?? 0.3;
+  const maxFrac = opts.maxFrac ?? 0.08;
+  const rowDark = (y: number): number => {
+    let n = 0;
+    for (let x = 0; x < w; x++) if ((gray[y * w + x] ?? 255) < darkPx) n++;
+    return n / w;
+  };
+  const colDark = (x: number): number => {
+    let n = 0;
+    for (let y = 0; y < h; y++) if ((gray[y * w + x] ?? 255) < darkPx) n++;
+    return n / h;
+  };
+  const maxV = Math.floor(h * maxFrac);
+  const maxH = Math.floor(w * maxFrac);
+  let top = 0;
+  while (top < maxV && rowDark(top) >= frac) top++;
+  let bottom = 0;
+  while (bottom < maxV && rowDark(h - 1 - bottom) >= frac) bottom++;
+  let left = 0;
+  while (left < maxH && colDark(left) >= frac) left++;
+  let right = 0;
+  while (right < maxH && colDark(w - 1 - right) >= frac) right++;
+  return { left, top, right, bottom };
+}

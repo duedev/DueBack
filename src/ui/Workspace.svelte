@@ -6,9 +6,56 @@
   import ReviewModal from "./ReviewModal.svelte";
   import ExportBar from "./ExportBar.svelte";
   import Settings from "./Settings.svelte";
+  import type { Receipt, ReceiptStatus } from "../types.ts";
 
   const total = $derived(app.receipts.length);
   const finished = $derived(app.counts.done + app.counts.needs_review + app.counts.failed);
+
+  // ---- Board view + sorting -------------------------------------------------
+  type BoardView = "grid" | "kanban";
+  type SortKey = "added" | "date" | "amount" | "vendor" | "category" | "status";
+  let view = $state<BoardView>(
+    (localStorage.getItem("board.view") as BoardView) || "grid",
+  );
+  let sortKey = $state<SortKey>(
+    (localStorage.getItem("board.sort") as SortKey) || "added",
+  );
+  $effect(() => localStorage.setItem("board.view", view));
+  $effect(() => localStorage.setItem("board.sort", sortKey));
+
+  const STATUS_RANK: Record<ReceiptStatus, number> = {
+    needs_review: 0, failed: 1, processing: 2, queued: 3, done: 4,
+  };
+  function compare(a: Receipt, b: Receipt): number {
+    switch (sortKey) {
+      case "date":
+        return (b.date.value || "").localeCompare(a.date.value || "");
+      case "amount":
+        return b.amount.value - a.amount.value;
+      case "vendor":
+        return (a.vendor.value || "\uffff").localeCompare(b.vendor.value || "\uffff");
+      case "category":
+        return a.category.value.localeCompare(b.category.value);
+      case "status":
+        return STATUS_RANK[a.status] - STATUS_RANK[b.status];
+      default:
+        return b.createdAt - a.createdAt; // newest first
+    }
+  }
+  const sorted = $derived([...app.receipts].sort(compare));
+
+  // Kanban lanes: attention first, then the pipeline, then done.
+  const LANES: { key: string; label: string; match: (r: Receipt) => boolean }[] = [
+    { key: "review", label: "Needs review", match: (r) => r.status === "needs_review" },
+    { key: "working", label: "Processing", match: (r) => r.status === "queued" || r.status === "processing" },
+    { key: "done", label: "Done", match: (r) => r.status === "done" },
+    { key: "failed", label: "Failed", match: (r) => r.status === "failed" },
+  ];
+  const lanes = $derived(
+    LANES.map((l) => ({ ...l, items: sorted.filter(l.match) })).filter(
+      (l) => l.items.length > 0 || l.key === "done" || l.key === "review",
+    ),
+  );
 
   let cameraInput = $state<HTMLInputElement | null>(null);
 
@@ -84,11 +131,50 @@
         </p>
       </div>
     {:else}
-      <div class="grid">
-        {#each app.receipts as r (r.id)}
-          <Card receipt={r} />
-        {/each}
+      <div class="board-bar">
+        <div class="seg" role="tablist" aria-label="Board view">
+          <button class="seg-btn" class:active={view === "grid"} onclick={() => (view = "grid")}>Grid</button>
+          <button class="seg-btn" class:active={view === "kanban"} onclick={() => (view = "kanban")}>Kanban</button>
+        </div>
+        <label class="sort">
+          <span class="muted small">Sort</span>
+          <select bind:value={sortKey} aria-label="Sort receipts">
+            <option value="added">Newest added</option>
+            <option value="status">Needs attention</option>
+            <option value="date">Receipt date</option>
+            <option value="amount">Amount (high first)</option>
+            <option value="vendor">Vendor A–Z</option>
+            <option value="category">Category</option>
+          </select>
+        </label>
       </div>
+
+      {#if view === "grid"}
+        <div class="grid">
+          {#each sorted as r (r.id)}
+            <Card receipt={r} />
+          {/each}
+        </div>
+      {:else}
+        <div class="kanban">
+          {#each lanes as lane (lane.key)}
+            <section class="lane lane-{lane.key}">
+              <header class="lane-head">
+                <span>{lane.label}</span>
+                <span class="lane-count">{lane.items.length}</span>
+              </header>
+              <div class="lane-cards">
+                {#each lane.items as r (r.id)}
+                  <Card receipt={r} />
+                {/each}
+                {#if lane.items.length === 0}
+                  <p class="muted small lane-empty">Nothing here.</p>
+                {/if}
+              </div>
+            </section>
+          {/each}
+        </div>
+      {/if}
       <ExportBar />
     {/if}
   </main>
@@ -226,5 +312,89 @@
       display: grid;
       place-items: center;
     }
+  }
+
+  /* ---- board view bar + kanban lanes ---- */
+  .board-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    margin: 1rem 0 0.75rem;
+    flex-wrap: wrap;
+  }
+  .seg {
+    display: inline-flex;
+    border: 1px solid var(--line-strong);
+    border-radius: 9px;
+    overflow: hidden;
+  }
+  .seg-btn {
+    border: 0;
+    background: transparent;
+    color: var(--ink-soft);
+    font: 600 0.85rem/1 var(--font-ui);
+    padding: 0.5rem 0.9rem;
+    cursor: pointer;
+  }
+  .seg-btn.active {
+    background: var(--accent);
+    color: var(--accent-ink);
+  }
+  .sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+  .sort select {
+    padding: 0.4rem 0.55rem;
+    border-radius: 8px;
+    border: 1px solid var(--line-strong);
+    background: var(--raised);
+    color: var(--ink);
+    font: 500 0.85rem/1.2 var(--font-ui);
+  }
+  .kanban {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(260px, 1fr);
+    gap: 0.9rem;
+    align-items: start;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+  }
+  .lane {
+    background: color-mix(in srgb, var(--raised) 70%, transparent);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 0.6rem;
+    min-height: 8rem;
+  }
+  .lane-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font: 700 0.8rem/1 var(--font-ui);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    padding: 0.25rem 0.3rem 0.6rem;
+  }
+  .lane-review .lane-head { color: var(--warn); }
+  .lane-failed .lane-head { color: var(--err); }
+  .lane-count {
+    background: var(--line);
+    color: var(--ink);
+    border-radius: 999px;
+    padding: 0.15rem 0.55rem;
+    font-size: 0.75rem;
+  }
+  .lane-cards {
+    display: grid;
+    gap: 0.6rem;
+  }
+  .lane-empty {
+    text-align: center;
+    padding: 1rem 0;
   }
 </style>

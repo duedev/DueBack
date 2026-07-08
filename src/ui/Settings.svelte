@@ -12,6 +12,7 @@
   import { addBrandFromImage } from "../pipeline/logo/index.ts";
   import { signInWithGoogle, signInWithEmail, signOut } from "../supabase/auth.ts";
   import { formatMoney } from "../util/money.ts";
+  import { getCorrections, clearCorrections } from "../train/corrections.ts";
   import type { ProviderId } from "../pipeline/vision/types.ts";
   import type { Category, StoredBrand } from "../types.ts";
 
@@ -62,6 +63,30 @@
     brands = await repo.listBrands();
   }
   void loadBrands();
+
+  // ---- Improvement log (review corrections) -------------------------------
+  let correctionCount = $state(0);
+  $effect(() => {
+    if (!app.settingsOpen) return;
+    void getCorrections().then((r) => (correctionCount = r.length));
+  });
+
+  async function downloadCorrections(): Promise<void> {
+    const records = await getCorrections();
+    const blob = new Blob([JSON.stringify(records, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `dueback_corrections_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function resetCorrections(): Promise<void> {
+    await clearCorrections();
+    correctionCount = 0;
+    app.toast("Improvement log cleared.", "ok");
+  }
 
   async function addBrand(): Promise<void> {
     const file = brandFile?.files?.[0];
@@ -305,6 +330,26 @@
               {/each}
             </ul>
           {/if}
+        </section>
+
+        <!-- ============== improvement log ============== -->
+        <section>
+          <h4>Improvement log</h4>
+          <p class="muted small">
+            Every correction you make in review is recorded with where the
+            right value sits on the receipt and what the reader believed
+            beforehand. Download it (and the images ZIP) to tune extraction
+            against your real receipts. Stays on this device.
+          </p>
+          <div class="test-row">
+            <span class="chip">{correctionCount} corrections</span>
+            <button class="btn btn-sm" onclick={() => void downloadCorrections()} disabled={correctionCount === 0}>
+              Download JSON
+            </button>
+            <button class="btn btn-ghost btn-sm btn-danger" onclick={() => void resetCorrections()} disabled={correctionCount === 0}>
+              Clear
+            </button>
+          </div>
         </section>
       </div>
     </div>

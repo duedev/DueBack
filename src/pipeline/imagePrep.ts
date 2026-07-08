@@ -7,6 +7,7 @@ import {
   estimateSkewAngle,
   maskToRgba,
   borderColor,
+  darkBorderInsets,
 } from "./binarize.ts";
 
 // Image pre-pass (§5 step 1, §14). Runs entirely client-side on a <canvas>:
@@ -212,21 +213,43 @@ export async function cleanImage(file: File | Blob): Promise<CleanedImage> {
   const srcW = src.width;
   const srcH = src.height;
 
+  // --- trim near-black scan borders (CamScanner-style sawtooth strips) ---
+  // Pre-scanned uploads arrive already cropped/deskewed, but with black edge
+  // strips the content-box crop alone keeps (they carry edge energy).
+  let inset = { left: 0, top: 0, right: 0, bottom: 0 };
+  if (a) {
+    inset = darkBorderInsets(toGrayscale(a.data, a.w, a.h), a.w, a.h);
+  }
+
   // --- auto-crop analysis on the small copy of the (now upright) frame ---
   let crop = { x: 0, y: 0, w: srcW, h: srcH };
+  if (a && (inset.left || inset.top || inset.right || inset.bottom)) {
+    crop = {
+      x: inset.left / a.scale,
+      y: inset.top / a.scale,
+      w: Math.max(1, (a.w - inset.left - inset.right) / a.scale),
+      h: Math.max(1, (a.h - inset.top - inset.bottom) / a.scale),
+    };
+  }
   if (IMAGE_PREP.autoCrop && a) {
     const box = detectContentBox(a.data, a.w, a.h);
-    const area = (box.w * box.h) / (a.w * a.h);
+    // Keep the content box inside the border-trimmed region.
+    const x1 = Math.max(box.x, inset.left);
+    const y1 = Math.max(box.y, inset.top);
+    const x2 = Math.min(box.x + box.w, a.w - inset.right);
+    const y2 = Math.min(box.y + box.h, a.h - inset.bottom);
+    const nbox = { x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
+    const area = (nbox.w * nbox.h) / (a.w * a.h);
     // Only accept a crop that keeps a sensible region (guards over-cropping).
-    if (area > 0.45 && box.w > a.w * 0.4 && box.h > a.h * 0.4) {
+    if (area > 0.45 && nbox.w > a.w * 0.4 && nbox.h > a.h * 0.4) {
       const pad = 0.02;
-      const px = box.w * pad;
-      const py = box.h * pad;
+      const px = nbox.w * pad;
+      const py = nbox.h * pad;
       crop = {
-        x: Math.max(0, (box.x - px) / a.scale),
-        y: Math.max(0, (box.y - py) / a.scale),
-        w: Math.min(srcW, (box.w + 2 * px) / a.scale),
-        h: Math.min(srcH, (box.h + 2 * py) / a.scale),
+        x: Math.max(0, (nbox.x - px) / a.scale),
+        y: Math.max(0, (nbox.y - py) / a.scale),
+        w: Math.min(srcW, (nbox.w + 2 * px) / a.scale),
+        h: Math.min(srcH, (nbox.h + 2 * py) / a.scale),
       };
     }
   }

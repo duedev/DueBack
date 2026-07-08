@@ -5,7 +5,9 @@
   import { parseAmount, safeAmount } from "../util/money.ts";
   import { isValidIso } from "../util/format.ts";
   import { receiptFileName } from "../util/rename.ts";
-  import type { Receipt, BBox, Category } from "../types.ts";
+  import { annotateReceipt, HIGHLIGHT_COLORS } from "../pipeline/annotate.ts";
+  import { buildCorrectionRecords, appendCorrections } from "../train/corrections.ts";
+  import type { Receipt, BBox, Category, OcrLine, Field } from "../types.ts";
 
   // The review sweep: board → modal → keyboard Approve & Next. On-image markers
   // and per-field zoomed callouts show each extracted value beside the slice of
@@ -68,14 +70,6 @@
     const newVendor = vendor.trim();
     const newDate = date && isValidIso(date) ? date : r.date.value;
     const newAmount = amt !== null ? safeAmount(amt) : r.amount.value;
-    // A hand-corrected value invalidates the baked highlighter copy — the
-    // marks would keep pointing at the OLD (wrong) tokens in every export.
-    // Drop it and fall back to the clean image.
-    const highlightsStale =
-      Boolean(r.annotatedKey) &&
-      (newVendor !== r.vendor.value ||
-        newDate !== r.date.value ||
-        newAmount !== r.amount.value);
     return {
       vendor: { value: newVendor, confidence: 1, edited: true, ...(r.vendor.bbox ? { bbox: r.vendor.bbox } : {}) },
       date: {
@@ -106,17 +100,63 @@
           }
         : {}),
       originalFileName: r.originalFileName ?? r.fileName,
-      ...(highlightsStale ? { annotatedKey: undefined } : {}),
     };
   }
 
-  /** Apply a patch; if it retired the annotated copy, drop the orphan blob. */
-  async function applyPatch(r: Receipt, patch: Partial<Receipt>): Promise<void> {
+  /** Apply a review patch, closing the improvement loop: locate each
+   *  corrected value on the receipt, move its highlight there, re-bake the
+   *  annotated copy, and log the correction for training. */
+  async function applyPatch(receipt: Receipt, patch: Partial<Receipt>): Promise<void> {
+    const r = $state.snapshot(receipt) as Receipt;
+    const lines = (r.ocrLines ?? []) as OcrLine[];
+    const records = buildCorrectionRecords(r, patch, lines);
+
+    // Corrected values that were found printed on the receipt get their
+    // provenance boxes moved — markers, callouts and baked highlights all
+    // follow the human's value from now on.
+    for (const rec of records) {
+      if (!rec.bbox) continue;
+      if (rec.field === "vendor" || rec.field === "date") {
+        const f = patch[rec.field] as Field<string> | undefined;
+        if (f) f.bbox = rec.bbox;
+      } else if (rec.field === "amount") {
+        const f = patch.amount as Field<number> | undefined;
+        if (f) f.bbox = rec.bbox;
+      }
+    }
+
+    // Re-bake the highlighter copy whenever a highlighted field changed;
+    // fall back to the clean image if the bake fails.
     const oldKey = r.annotatedKey;
+    const highlightedChanged = records.some(
+      (rec) => rec.field === "vendor" || rec.field === "date" || rec.field === "amount",
+    );
+    if (highlightedChanged) {
+      let newKey: string | undefined;
+      try {
+        const cleanBlob = r.cleanedKey ? await repo.getBlob(r.cleanedKey) : undefined;
+        if (cleanBlob) {
+          const box = (field: "vendor" | "date" | "amount"): BBox | undefined =>
+            (patch[field] as Field<unknown> | undefined)?.bbox ?? r[field].bbox;
+          const marks = [
+            ...(box("vendor") ? [{ bbox: box("vendor")!, color: HIGHLIGHT_COLORS.vendor }] : []),
+            ...(box("date") ? [{ bbox: box("date")!, color: HIGHLIGHT_COLORS.date }] : []),
+            ...(box("amount") ? [{ bbox: box("amount")!, color: HIGHLIGHT_COLORS.amount }] : []),
+          ];
+          const baked = await annotateReceipt(cleanBlob, marks);
+          if (baked) newKey = await repo.putBlob(baked, "annotated");
+        }
+      } catch {
+        /* highlights are pure upside */
+      }
+      patch.annotatedKey = newKey; // undefined = clean image fallback
+    }
+
     await repo.updateReceipt(r.id, patch);
-    if ("annotatedKey" in patch && oldKey) {
+    if (highlightedChanged && oldKey && patch.annotatedKey !== oldKey) {
       await repo.deleteBlob(oldKey).catch(() => {});
     }
+    await appendCorrections(records).catch(() => {});
   }
 
   async function save(): Promise<void> {

@@ -605,7 +605,7 @@ test("total far above the printed subtotal (no tax read) demands review", () => 
   // Nothing printable sits in the subtotal window, so the amount stays — but
   // it must be flagged for a human.
   assert.ok(
-    r.flags.some((f) => f.code === "total_mismatch" && f.severity === "warn"),
+    r.flags.some((f) => f.code === "total_suspect" && f.severity === "warn"),
     JSON.stringify(r.flags),
   );
   assert.ok(forcesManualReview(r.flags));
@@ -635,4 +635,75 @@ test("a comma-for-dot per-gallon price ($4,599) never flags the total", () => {
     JSON.stringify(r.flags),
   );
   assert.equal(forcesManualReview(r.flags), false);
+});
+
+// ── Round-5 adversarial-review findings ──────────────────────────────────────
+
+test("tender line equal to the pump product corrects a garbled larger total", () => {
+  // TOTAL is a single-digit garble; the CREDIT tender matches gallons × price.
+  const r = parseReceipt(
+    ocr(["SHELL STATION", "GALLONS: 6.927", "PRICE/GAL: 4.599", "TOTAL 37.86", "CREDIT $31.86"]),
+  );
+  assert.equal(r.amount.value, 31.86, `amount ${r.amount.value}`);
+});
+
+test("corroborated fuel + big-store total is kept for review, not slip-corrected", () => {
+  const r = parseReceipt(
+    ocr([
+      "SHELL",
+      "GALLONS: 2.500",
+      "PRICE/GAL 4.000",
+      "FUEL TOTAL 10.00",
+      "SNACKS 90.00",
+      "TOTAL 100.00",
+      "VISA 100.00",
+    ]),
+  );
+  assert.equal(r.amount.value, 100, `amount ${r.amount.value}`);
+  assert.ok(forcesManualReview(r.flags), JSON.stringify(r.flags));
+});
+
+test("advisory reconcile warns no longer force review (tip + savings receipts)", () => {
+  const tip = parseReceipt(
+    ocr(["OLIVE GARDEN", "SUBTOTAL 20.00", "TAX 1.60", "TIP 4.00", "TOTAL 25.60", "VISA 25.60"]),
+  );
+  assert.equal(tip.amount.value, 25.6);
+  assert.equal(forcesManualReview(tip.flags), false, JSON.stringify(tip.flags));
+
+  const savings = parseReceipt(
+    ocr(["WALGREENS", "Date: 03/14/2026", "TOTAL 4.99", "YOU SAVED TODAY 6.50"]),
+  );
+  assert.equal(savings.amount.value, 4.99);
+  assert.equal(forcesManualReview(savings.flags), false, JSON.stringify(savings.flags));
+});
+
+test("generous tip with no tax line is accepted, not force-reviewed", () => {
+  const r = parseReceipt(
+    ocr(["BELLA TRATTORIA", "SUBTOTAL 20.00", "TIP 12.00", "TOTAL 32.00", "VISA 32.00"]),
+  );
+  assert.equal(r.amount.value, 32, `amount ${r.amount.value}`);
+  assert.equal(forcesManualReview(r.flags), false, JSON.stringify(r.flags));
+});
+
+test("window net never adopts the TIP line's own value", () => {
+  const r = parseReceipt(ocr(["CAFE", "SUBTOTAL 20.00", "TIP 25.00", "TOTAL 45.00"]));
+  assert.equal(r.amount.value, 45, `amount ${r.amount.value}`);
+  // Unverifiable with a tip: kept and queued for a human.
+  assert.ok(forcesManualReview(r.flags), JSON.stringify(r.flags));
+});
+
+test("merchant headers with store numbers survive the pump-data vendor reject", () => {
+  const r = parseReceipt(
+    ocr(["PRICE CHOPPER #123", "456 Oak Ave", "GROCERIES 12.50", "TAX 1.00", "TOTAL 13.50"]),
+  );
+  assert.match(r.vendor.value, /PRICE CHOPPER/i, r.vendor.value);
+});
+
+test("keyword-less per-gallon rate line can't flag or out-rank the total", () => {
+  const r = parseReceipt(
+    ocr(["SHELL STATION", "GALLONS: 6.927", "UNL $4,599/GAL", "TOTAL 31.86", "CREDIT $31.86"]),
+  );
+  assert.equal(r.amount.value, 31.86);
+  assert.equal(forcesManualReview(r.flags), false, JSON.stringify(r.flags));
+  assert.ok(!r.flags.some((f) => f.code === "total_mismatch"), JSON.stringify(r.flags));
 });

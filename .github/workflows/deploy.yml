@@ -32,14 +32,17 @@ jobs:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run build # prebuild vendors Tesseract core + language data
       - uses: actions/configure-pages@v5
+      # The Pages actions below still declare Node 20 upstream; runners force
+      # them onto Node 24 (a harmless warning) until GitHub ships node24
+      # releases — bump these majors when they do.
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

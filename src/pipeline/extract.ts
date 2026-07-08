@@ -196,7 +196,11 @@ function findAmount(lines: OcrLine[]): {
     // skip payment/tender lines whose value can exceed the actual total, and
     // per-gallon price lines — "PRICE/G: $4,599" (comma-for-dot OCR) parses
     // as thousands and would flag every pump receipt for review.
-    if (!PAYMENT_RE.test(text) && !FUEL_UNIT_RE.test(line.text)) {
+    if (
+      !PAYMENT_RE.test(text) &&
+      !FUEL_UNIT_RE.test(line.text) &&
+      !FUEL_RATE_RE.test(line.text)
+    ) {
       for (const h of moneyHitsFromLine(line)) {
         if (!allMax || h.value > allMax.value) allMax = h;
       }
@@ -456,12 +460,17 @@ function looksLikeVendorLine(line: OcrLine): boolean {
   if (/^(store|reg(?:ister)?|lane|till|terminal|cashier|clerk|trans(?:action)?)\b[\s#:.]*\d/i.test(t)) {
     return false;
   }
-  // Pump/quantity data ("GALLONS: 6.927", "PRICE/GAL 4.599") dodges the
-  // money-line reject (3-decimal quantities aren't strict money) but its
-  // letter count out-scored short real names like "nob" for the vendor slot.
+  // Pump/quantity data ("GALLONS: 6.927", "PRICE/GAL 4.599", "PUMP# 01")
+  // dodges the money-line reject (3-decimal quantities aren't strict money)
+  // but its letter count out-scored short real names like "nob" for the
+  // vendor slot. Only pump-SHAPED data rejects — a merchant header with a
+  // store number ("PRICE CHOPPER #123") must survive.
   if (
-    /\b(gallons?|litres?|liters?|price|pump|grade|octane|unleaded|diesel)\b/i.test(t) &&
-    /\d/.test(t)
+    QTY_AFTER_RE.test(t) ||
+    QTY_BEFORE_RE.test(t) ||
+    FUEL_UNIT_RE.test(t) ||
+    FUEL_RATE_RE.test(t) ||
+    /\b(?:pump|grade|octane|unleaded|diesel|gallons?|litres?|liters?)\b[\s#:=.]*\d/i.test(t)
   ) {
     return false;
   }
@@ -543,6 +552,9 @@ const FUEL_PROMO_RE =
 const QTY_AFTER_RE =
   /^[^A-Za-z0-9]*(?:fuel\s+|unleaded\s+|diesel\s+)?(?:gallons?|gal|litres?|liters?)\b[\s:.#=]*(\d+\.\d{1,3})/i;
 const QTY_BEFORE_RE = /(\d+\.\d{1,3})\s*(?:gallons?|gal|litres?|liters?)\b/i;
+// A keyword-less per-gallon rate ("UNL $4.599/GAL", comma-misread "$4,599/GAL"):
+// money-or-3-decimal token right before the (possibly glyph-garbled) /GAL.
+const FUEL_RATE_RE = /\d[.,]\d{2,3}\s*[\/z7l1\\]\s*g(?:al(?:lon)?)?\b/i;
 const PLAIN_NUM_RE = /\d+\.\d{1,3}/g;
 
 /** gallons × price/gal from the printed pump lines, or null. */
@@ -551,7 +563,7 @@ function pumpMathTotal(lines: OcrLine[]): number | null {
   let unit: number | null = null;
   for (const line of lines) {
     if (FUEL_PROMO_RE.test(line.text)) continue;
-    const isUnitLine = FUEL_UNIT_RE.test(line.text);
+    const isUnitLine = FUEL_UNIT_RE.test(line.text) || FUEL_RATE_RE.test(line.text);
     if (qty === null && !isUnitLine) {
       const m = QTY_AFTER_RE.exec(line.text) ?? QTY_BEFORE_RE.exec(line.text);
       const v = m ? Number(m[1]) : NaN;
@@ -578,8 +590,15 @@ function countHitsNear(lines: OcrLine[], value: number, tol: number): number {
   return n;
 }
 
-/** Closest money hit to `value` within `tol` (non-payment lines preferred). */
-function findHitByValue(lines: OcrLine[], value: number, tol: number): MoneyHit | null {
+/** Closest money hit to `value` within `tol` (non-payment lines preferred).
+ *  Whether the winning hit sits on a payment/tender line is reported — a
+ *  tender equal to the pump product means the charge WAS fuel-only, which
+ *  reads very differently from a printed FUEL TOTAL sub-line. */
+function findHitByValue(
+  lines: OcrLine[],
+  value: number,
+  tol: number,
+): (MoneyHit & { payment: boolean }) | null {
   let best: { hit: MoneyHit; diff: number; payment: boolean } | null = null;
   for (const line of lines) {
     const payment = PAYMENT_RE.test(line.text);
@@ -595,7 +614,7 @@ function findHitByValue(lines: OcrLine[], value: number, tol: number): MoneyHit 
       }
     }
   }
-  return best?.hit ?? null;
+  return best ? { ...best.hit, payment: best.payment } : null;
 }
 
 /** Cross-check/correct the amount with pump math. Returns flags plus whether
@@ -627,42 +646,47 @@ function applyPumpMath(
   const anchor = findHitByValue(lines, expected, tol); // the printed fuel-only value
   if (amount) {
     const ratio = amount.value / expected;
+    const suspect: Flag = {
+      code: "total_suspect",
+      severity: "warn",
+      message: `Total ${amount.value.toFixed(2)} doesn't match gallons × price/gal (≈ ${expected.toFixed(2)}) — needs review.`,
+    };
     // A vanished decimal point multiplies by exactly ×10/×100 — and it
-    // vanishes on EVERY line printing that value (same faint dot), so even a
-    // tender-line echo can't vouch for it. Anything else that big is judged
-    // by corroboration below.
+    // vanishes on EVERY line printing that value (same faint dot), so a
+    // tender-line echo can't vouch for a slip-scale total.
     const decimalSlip = [10, 100, 1000, 0.1, 0.01].some(
       (k) => Math.abs(ratio - k) / k <= 0.03,
     );
-    if (!decimalSlip) {
+    if (decimalSlip) {
+      // …but a printed fuel-only line (non-payment anchor) under a larger
+      // total is real fuel+extras evidence: a $100 total over a $10 FUEL
+      // TOTAL is indistinguishable from a ×10 slip — a human decides.
+      if (anchor && !anchor.payment && amount.value > expected) {
+        return { amount, verified: false, isPump: true, flags: [suspect] };
+      }
+      // Uncorroborated slip: the garbled-total class this net exists for —
+      // fall through and correct.
+    } else {
       // Another line echoing the chosen total (the tender line usually does)
       // means two independent reads agree — the computed product loses.
       if (countHitsNear(lines, amount.value, tol) >= 2) {
         return { amount, verified: false, isPump: true, flags: [] };
       }
-      if (amount.value > expected && anchor && ratio < 2) {
+      if (anchor?.payment) {
+        // The tender equals the pump product: the charge WAS the fuel-only
+        // value and the larger "total" is the misread — fall through and
+        // correct toward the printed tender.
+      } else if (amount.value > expected && anchor && ratio < 2) {
         // The fuel-only value is printed elsewhere (FUEL TOTAL) and the total
         // is plausibly fuel + extras — keep the larger combined total.
         return { amount, verified: false, isPump: true, flags: [] };
+      } else {
+        // Unexplained disagreement: never silently swap in either direction
+        // (the gallons digits are misread as often as the total) — keep the
+        // printed total and demand a human look.
+        return { amount, verified: false, isPump: true, flags: [suspect] };
       }
-      // Unexplained disagreement: never silently swap in either direction
-      // (the gallons digits are misread as often as the total) — keep the
-      // printed total and demand a human look.
-      return {
-        amount,
-        verified: false,
-        isPump: true,
-        flags: [
-          {
-            code: "total_mismatch",
-            severity: "warn",
-            message: `Total ${amount.value.toFixed(2)} doesn't match gallons × price/gal (≈ ${expected.toFixed(2)}) — needs review.`,
-          },
-        ],
-      };
     }
-    // Decimal-slip signature: the garbled-total class this net exists for —
-    // fall through and correct.
   }
 
   // Prefer a printed money value that matches the product (keeps an on-image
@@ -711,10 +735,26 @@ function applyFootingMath(
     const lo = subtotal - 0.01;
     const hi = subtotal * (tipPresent ? 2 : 1.35) + 0.5;
     if (amount.value >= lo && amount.value <= hi) return { amount, flags: [] };
+    if (tipPresent) {
+      // A tip makes the total unverifiable from the subtotal alone — never
+      // "correct" it (the tip line's own value would win the window), just
+      // demand a human look.
+      return {
+        amount,
+        flags: [
+          {
+            code: "total_suspect",
+            severity: "warn",
+            message: `Total ${amount.value.toFixed(2)} can't be verified against subtotal ${subtotal.toFixed(2)} with a tip printed — needs review.`,
+          },
+        ],
+      };
+    }
     let bestInWindow: MoneyHit | null = null;
     for (const line of lines) {
       const folded = labelFold(line.text);
       if (SUBTOTAL_RE.test(folded) || TAX_RE.test(folded) || PAYMENT_RE.test(folded)) continue;
+      if (TIP_RE.test(line.text)) continue;
       for (const h of moneyHitsFromLine(line)) {
         if (h.value < lo || h.value > hi) continue;
         if (!bestInWindow || h.value > bestInWindow.value) bestInWindow = h;
@@ -747,7 +787,7 @@ function applyFootingMath(
         amount,
         flags: [
           {
-            code: "total_mismatch",
+            code: "total_suspect",
             severity: "warn",
             message: `Total ${amount.value.toFixed(2)} is far above subtotal + tax (${expected.toFixed(2)}) — needs review.`,
           },
@@ -870,7 +910,7 @@ export function forcesManualReview(flags: Flag[]): boolean {
     (f) =>
       f.severity === "error" ||
       (f.severity === "warn" &&
-        (f.code === "total_mismatch" || f.code === "vendor_unclear")),
+        (f.code === "total_suspect" || f.code === "vendor_unclear")),
   );
 }
 
@@ -978,13 +1018,15 @@ export function parseReceipt(
   // A printed SUBTOTAL with no readable tax caps what the total could foot
   // to; a chosen total far above it that no pump/footing net vouched for is
   // probably a garbled token the nets couldn't recover — demand a human look.
+  // A printed tip widens the ceiling exactly like footing's own window does.
+  const tipPresent = lines.some((l) => TIP_RE.test(l.text));
   if (
-    amount && subtotal !== null && !tax &&
+    amount && subtotal !== null && (!tax || tax.value <= 0) &&
     !pump.verified && !corrected &&
-    amount.value > subtotal * 1.5 + 0.02
+    amount.value > subtotal * (tipPresent ? 2 : 1.5) + 0.02
   ) {
     flags.push({
-      code: "total_mismatch",
+      code: "total_suspect",
       severity: "warn",
       message: `Total ${amount.value.toFixed(2)} is far above the printed subtotal ${subtotal.toFixed(2)} — needs review.`,
     });
@@ -1010,4 +1052,71 @@ export function parseReceipt(
     confidence,
     flags,
   };
+}
+
+// ── Post-hoc field location ──────────────────────────────────────────────────
+// The digital "go back and find it": after a human corrects a field in
+// review, locate the corrected value on the receipt's OCR lines so the
+// highlight can be re-baked onto the image and the correction logged with
+// provenance for training.
+
+export function locateValue(
+  lines: OcrLine[],
+  kind: "amount" | "vendor" | "date",
+  value: string | number,
+): { bbox: BBox; lineText: string } | null {
+  if (kind === "amount") {
+    const target = Number(value);
+    if (!Number.isFinite(target) || target <= 0) return null;
+    let best: { bbox: BBox; lineText: string; payment: boolean } | null = null;
+    for (const line of lines) {
+      const payment = PAYMENT_RE.test(line.text);
+      for (const h of moneyHitsFromLine(line)) {
+        if (Math.abs(h.value - target) > 0.005) continue;
+        if (!best || (best.payment && !payment)) {
+          best = { bbox: h.bbox ?? line.bbox, lineText: line.text, payment };
+        }
+      }
+    }
+    return best ? { bbox: best.bbox, lineText: best.lineText } : null;
+  }
+
+  if (kind === "vendor") {
+    const needle = String(value).trim().toLowerCase();
+    // Full name first; then the leading word — corrections often use the
+    // canonical brand form the receipt doesn't print in full.
+    const probes = [needle, needle.split(/\s+/)[0] ?? ""].filter((p) => p.length >= 3);
+    for (const probe of probes) {
+      for (const line of lines) {
+        const idx = line.text.toLowerCase().indexOf(probe);
+        if (idx < 0) continue;
+        const bbox = sliceBBox(line, idx, idx + probe.length) ?? line.bbox;
+        return { bbox, lineText: line.text };
+      }
+    }
+    return null;
+  }
+
+  // date: match printed variants of the ISO value (glyph-repaired text).
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value));
+  if (!m) return null;
+  const [, y, mo, d] = m as unknown as [string, string, string, string];
+  const yy = y.slice(2);
+  const M = String(Number(mo));
+  const D = String(Number(d));
+  const variants = [
+    `${mo}/${d}/${y}`, `${M}/${D}/${y}`, `${mo}/${d}/${yy}`, `${M}/${D}/${yy}`,
+    `${mo}-${d}-${y}`, `${mo}-${d}-${yy}`, `${M}-${D}-${yy}`, `${y}-${mo}-${d}`,
+    `${mo}.${d}.${yy}`, `${mo}.${d}.${y}`,
+  ];
+  for (const line of lines) {
+    const hay = fixDateGlyphs(line.text);
+    for (const v of variants) {
+      const idx = hay.indexOf(v);
+      if (idx < 0) continue;
+      const bbox = sliceBBox(line, idx, idx + v.length) ?? line.bbox;
+      return { bbox, lineText: line.text };
+    }
+  }
+  return null;
 }

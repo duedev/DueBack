@@ -6,6 +6,7 @@ import {
   estimateSkewAngle,
   maskToRgba,
   borderColor,
+  darkBorderInsets,
 } from "../src/pipeline/binarize.ts";
 
 // Synthetic-image helpers ----------------------------------------------------
@@ -169,4 +170,23 @@ test("borderColor handles degenerate sizes", () => {
   assert.deepEqual(borderColor(new Uint8ClampedArray(0), 0, 0), [255, 255, 255]);
   const one = borderColor(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1);
   assert.deepEqual(one, [10, 20, 30]);
+});
+
+test("darkBorderInsets trims black scan strips but not sparse text rows", () => {
+  const w = 100;
+  const h = 100;
+  const gray = new Float32Array(w * h).fill(240); // white page
+  // 3-row black strip at the top covering 40% of the width (sawtooth scan edge).
+  for (let y = 0; y < 3; y++) for (let x = 60; x < 100; x++) gray[y * w + x] = 10;
+  // A text-like row lower down: only 10% dark pixels.
+  for (let x = 0; x < 10; x++) gray[50 * w + x] = 10;
+  const inset = darkBorderInsets(gray, w, h);
+  assert.equal(inset.top, 3, `top ${inset.top}`);
+  assert.equal(inset.bottom, 0);
+  assert.equal(inset.left, 0);
+  assert.equal(inset.right, 0);
+
+  const clean = new Float32Array(w * h).fill(240);
+  const none = darkBorderInsets(clean, w, h);
+  assert.deepEqual(none, { left: 0, top: 0, right: 0, bottom: 0 });
 });

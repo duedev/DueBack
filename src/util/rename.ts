@@ -50,7 +50,10 @@ export function receiptFileName(r: {
   fileName: string;
 }): string {
   const ext = (/\.[a-z0-9]{2,5}$/i.exec(r.fileName)?.[0] ?? ".jpg").toLowerCase();
-  const prefix = CATEGORY_PREFIX[r.category] ?? "misc";
+  // Renamed categories that predate stored data ("Meals & Entertainment")
+  // are normalized on repo reads, but belt-and-braces here too.
+  const LEGACY_PREFIX: Record<string, string> = { "Meals & Entertainment": "meals" };
+  const prefix = CATEGORY_PREFIX[r.category] ?? LEGACY_PREFIX[r.category as string] ?? "misc";
   const vendor = sanitizeFilePart(r.vendor || "");
   const stem = vendor
     ? `${prefix}_${dateMMDDYY(r.date)}_${vendor}`
