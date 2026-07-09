@@ -30,7 +30,6 @@ const LINK_BLUE = "FF4F8EF7"; // hyperlinked "#" cells
 const ZEBRA_BLUE = "FFE4EEF8"; // striped data rows
 const INFO_BLUE = "FFEBF5FB"; // employee/period info band
 const NOTE_YELLOW = "FFFEF9C3"; // subtotal band
-const TEXT_GRAY = "FF4B5563"; // secondary text
 const FOOT_GRAY = "FF8A93A6"; // footer text
 const WHITE = "FFFFFFFF";
 
@@ -211,23 +210,30 @@ export async function buildWorkbook(
   })).filter((g) => g.rows.length > 0);
 
   const anchors = new Map<string, ReceiptAnchor>();
+  // The category-sheet amount cell is the single source of truth; the
+  // Summary's copy references it, so its address is computed up-front from
+  // the same block layout the image sheets will draw.
+  const amountRefs = new Map<string, string>();
   for (const g of perCategory) {
     const sheet = sheetName(g.cat);
     let row = 3; // first receipt block starts right under the header rows
     for (const rec of g.rows) {
       anchors.set(rec.id, { sheet, row: row + 1 }); // the 4pt anchor row
-      row += blockRows(imageByReceipt.get(rec.id));
+      const img = imageByReceipt.get(rec.id);
+      const imgRows = img ? Math.max(1, Math.ceil((img.h * 0.75) / IMG_ROW_PT)) : 1;
+      amountRefs.set(rec.id, `'${sheet}'!F${row + 2 + imgRows}`); // the data row
+      row += blockRows(img);
     }
   }
 
   // Tab order: Summary first (it IS the per-category receipt table, linked),
   // the category image sheets next (Fuel, Materials, … Miscellaneous), and
   // Insights all the way to the right.
-  const subtotalCells = buildSummarySheet(wb, batch, perCategory, anchors, currency, insights);
+  const refs = buildSummarySheet(wb, batch, perCategory, anchors, amountRefs, currency, insights);
   for (const g of perCategory) {
     buildImageSheet(wb, g.cat, g.rows, imageByReceipt, batch, currency);
   }
-  buildInsightsSheet(wb, batch, insights, currency, charts, subtotalCells);
+  buildInsightsSheet(wb, batch, insights, currency, charts, refs);
 
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], {
@@ -270,10 +276,10 @@ function bandRow(
   ws.getRow(row).height = opts.height ?? 24;
 }
 
-// The Notes column is gone by request: it only ever carried app-generated
-// review chatter ("Manually reviewed", flag text) that the office doesn't
-// need on the report — review state lives in the app, not the deliverable.
-const TABLE_HEADERS = ["#", "Date", "Store", "Job Name", "Job Number", "Amount", "Summary"];
+// The Notes column carried app-generated review chatter and the Summary
+// column was permanently blank ("Purchase at …" filler added nothing) —
+// both are gone: six columns, all of them earning their print width.
+const TABLE_HEADERS = ["#", "Date", "Store", "Job Name", "Job Number", "Amount"];
 
 function tableHeaderRow(ws: ExcelJS.Worksheet, row: number, size = 11): void {
   TABLE_HEADERS.forEach((h, i) => {
@@ -285,17 +291,15 @@ function tableHeaderRow(ws: ExcelJS.Worksheet, row: number, size = 11): void {
   });
 }
 
-// The original app's Summary column carried real LLM-written descriptions;
-// synthesized "Purchase at …" filler added nothing, so the column stays blank
-// unless something meaningful exists (kept for the office's format parity).
-
 function dateValue(iso: string): Date | string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   if (!m) return "—";
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  // UTC midnight: ExcelJS converts via UTC, so a local-TZ Date would leak a
+  // spurious time-of-day into the serial (receipts showed "07:00").
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
 }
 
-/** Write one receipt's 7-column data cells starting at `row`. */
+/** Write one receipt's 6-column data cells starting at `row`. */
 function writeReceiptCells(
   ws: ExcelJS.Worksheet,
   row: number,
@@ -303,7 +307,16 @@ function writeReceiptCells(
   rec: Receipt,
   batch: Batch,
   fmt: string,
-  opts: { link?: ReceiptAnchor; bg?: string; small?: boolean; colorFields?: boolean } = {},
+  opts: {
+    link?: ReceiptAnchor;
+    bg?: string;
+    small?: boolean;
+    colorFields?: boolean;
+    /** Cell address on the category sheet holding this receipt's amount —
+     *  the Summary copy becomes a live reference to it, so an office edit
+     *  can't silently drift the two copies apart. */
+    amountRef?: string;
+  } = {},
 ): void {
   const line = ws.getRow(row);
   const num = line.getCell(1);
@@ -333,16 +346,18 @@ function writeReceiptCells(
   };
   set(2, dateValue(rec.date.value), { numFmt: "m/d/yy" });
   set(3, rec.vendor.value || "—", {});
-  set(4, batch.jobName || "Default Job Name", {});
-  set(5, batch.jobNumber || "Default Job Number", {});
-  set(6, safeAmount(rec.amount.value), {
+  // Literal "Default Job Name" read as unfinished on a real form — an
+  // em-dash matches the sheet's other unknown-value cells.
+  set(4, batch.jobName || "—", {});
+  set(5, batch.jobNumber || "—", {});
+  const amount = safeAmount(rec.amount.value);
+  set(6, opts.amountRef ? { formula: opts.amountRef, result: amount } : amount, {
     numFmt: fmt,
     alignment: { horizontal: "right", vertical: "middle" },
   });
-  set(7, "", { font: { size: 10, color: { argb: TEXT_GRAY } } });
 
   if (opts.bg) {
-    for (let c = 1; c <= 7; c++) fill(line.getCell(c), opts.bg);
+    for (let c = 1; c <= 6; c++) fill(line.getCell(c), opts.bg);
   }
   if (opts.colorFields) {
     const paint = (
@@ -361,14 +376,25 @@ function writeReceiptCells(
 
 // ── Summary sheet ────────────────────────────────────────────────────────────
 
+/** Cell references collected while building the Summary, for the Insights
+ *  formulas: everything downstream derives from these instead of pasting
+ *  its own static copies. */
+export interface SummaryRefs {
+  /** Subtotal cells ("F12"), aligned with the category order. */
+  subtotalCells: string[];
+  /** Per category: the Summary data range ("F7:F11") + its subtotal cell. */
+  byCategory: Map<Category, { range: string; subtotal: string }>;
+}
+
 function buildSummarySheet(
   wb: ExcelJS.Workbook,
   batch: Batch,
   perCategory: { cat: Category; rows: Receipt[] }[],
   anchors: Map<string, ReceiptAnchor>,
+  amountRefs: Map<string, string>,
   currency: string,
   insights: Insights,
-): string[] {
+): SummaryRefs {
   const ws = wb.addWorksheet("Summary", {
     properties: { tabColor: { argb: TITLE_DARK } },
     views: [{ state: "frozen", ySplit: 4 }],
@@ -379,11 +405,11 @@ function buildSummarySheet(
       fitToHeight: 0,
     },
   });
-  [24, 18.5, 24, 24, 21.8, 16.3, 30].forEach(
+  [6, 12, 24, 18, 18, 16].forEach(
     (w, i) => (ws.getColumn(i + 1).width = w),
   );
 
-  bandRow(ws, 1, 7, "Expense Reimbursement Form", {
+  bandRow(ws, 1, 6, "Expense Reimbursement Form", {
     bg: TITLE_DARK, size: 16, height: 30, align: "center",
   });
 
@@ -409,14 +435,14 @@ function buildSummarySheet(
 
   // Credits sit up top beside the employee info (merged cells are skipped by
   // the autofit, so the long strings can't balloon a column).
-  ws.mergeCells(2, 5, 2, 7);
+  ws.mergeCells(2, 5, 2, 6);
   const gen = ws.getCell(2, 5);
   gen.value = `Generated ${new Date().toLocaleDateString("en-US", {
     year: "numeric", month: "long", day: "numeric",
   })} by ${APP_NAME}`;
   gen.font = { size: 9, color: { argb: FOOT_GRAY } };
   gen.alignment = { horizontal: "right", vertical: "middle" };
-  ws.mergeCells(3, 5, 3, 7);
+  ws.mergeCells(3, 5, 3, 6);
   const src = ws.getCell(3, 5);
   src.value = { text: "github.com/duedev/ReimbursementsF5", hyperlink: "https://github.com/duedev/ReimbursementsF5" };
   src.font = { size: 9, color: { argb: LINK_BLUE }, underline: true };
@@ -426,9 +452,10 @@ function buildSummarySheet(
 
   const fmt = acctFormat(currency);
   const subtotalCells: string[] = [];
+  const byCategory: SummaryRefs["byCategory"] = new Map();
 
   for (const g of perCategory) {
-    bandRow(ws, r, 7, `  ${displayCategory(g.cat)}`, { bg: SECTION_BLUE });
+    bandRow(ws, r, 6, `  ${displayCategory(g.cat)}`, { bg: SECTION_BLUE });
     r++;
     tableHeaderRow(ws, r);
     ws.getRow(r).height = 32;
@@ -439,6 +466,7 @@ function buildSummarySheet(
       writeReceiptCells(ws, r, i + 1, rec, batch, fmt, {
         link: anchors.get(rec.id),
         bg: i % 2 === 1 ? ZEBRA_BLUE : WHITE,
+        amountRef: amountRefs.get(rec.id),
       });
       ws.getRow(r).height = 30;
       r++;
@@ -460,6 +488,7 @@ function buildSummarySheet(
     fill(sub.getCell(6), NOTE_YELLOW);
     sub.height = 20;
     subtotalCells.push(`F${r}`);
+    byCategory.set(g.cat, { range: `F${firstData}:F${r - 1}`, subtotal: `F${r}` });
     r += 2; // spacer between sections
   }
 
@@ -483,8 +512,8 @@ function buildSummarySheet(
   totalRow.height = 24;
 
   // Fit every column to its content.
-  autofitColumns(ws, [1, 2, 3, 4, 5, 6, 7], { min: 6, max: 46 });
-  return subtotalCells;
+  autofitColumns(ws, [1, 2, 3, 4, 5, 6], { min: 6, max: 46 });
+  return { subtotalCells, byCategory };
 }
 
 // ── Per-category image sheets ────────────────────────────────────────────────
@@ -508,11 +537,19 @@ function buildImageSheet(
     },
   });
   ws.getColumn(1).width = 55;
-  for (let c = 2; c <= 7; c++) ws.getColumn(c).width = 14.7;
+  for (let c = 2; c <= 6; c++) ws.getColumn(c).width = 14.7;
+  // Header band + column headers repeat when a long sheet prints across pages.
+  ws.pageSetup.printTitlesRow = "1:2";
 
-  bandRow(ws, 1, 7, `${displayCategory(cat)} — Receipt Images`, {
+  bandRow(ws, 1, 5, `${displayCategory(cat)} — Receipt Images`, {
     bg: CATEGORY_META[cat].color, size: 14, height: 28, align: "center",
   });
+  // A way back: the Summary links here, so this links home.
+  const back = ws.getCell(1, 6);
+  back.value = { text: "↩ Summary", hyperlink: "#'Summary'!A1" };
+  back.font = { bold: true, size: 10, color: { argb: WHITE }, underline: true };
+  back.alignment = { horizontal: "center", vertical: "middle" };
+  fill(back, CATEGORY_META[cat].color);
   tableHeaderRow(ws, 2, 10);
   ws.getRow(2).height = 28;
 
@@ -521,17 +558,17 @@ function buildImageSheet(
   let r = 3;
   rows.forEach((rec, i) => {
     // Receipt header band
-    ws.mergeCells(r, 1, r, 7);
+    ws.mergeCells(r, 1, r, 6);
     const head = ws.getCell(r, 1);
     head.value = `Receipt ${i + 1}  ·  ${rec.fileName}`;
     head.font = { bold: true, size: 10, color: { argb: "FF374151" } };
     head.alignment = { horizontal: "left", vertical: "middle" };
-    for (let c = 1; c <= 7; c++) fill(ws.getCell(r, c), tint);
+    for (let c = 1; c <= 6; c++) fill(ws.getCell(r, c), tint);
     ws.getRow(r).height = 16;
     r++;
 
     // 4pt anchor row — the Summary "#" hyperlink lands here, image in view.
-    ws.mergeCells(r, 1, r, 7);
+    ws.mergeCells(r, 1, r, 6);
     ws.getRow(r).height = 4;
     r++;
 
@@ -564,7 +601,7 @@ function buildImageSheet(
   });
 
   // Fit the data columns; column A stays fixed — it carries the images.
-  autofitColumns(ws, [2, 3, 4, 5, 6, 7], { min: 8, max: 40 });
+  autofitColumns(ws, [2, 3, 4, 5, 6], { min: 8, max: 40 });
 }
 
 // ── Insights sheet — an executive dashboard ─────────────────────────────────
@@ -581,7 +618,7 @@ function buildInsightsSheet(
     cumulative: ChartImage | null;
     share: ChartImage | null;
   },
-  subtotalCells: string[],
+  refs: SummaryRefs,
 ): void {
   const ws = wb.addWorksheet("Insights", {
     properties: { tabColor: { argb: SECTION_BLUE } },
@@ -595,7 +632,7 @@ function buildInsightsSheet(
     },
   });
   const COLS = 12;
-  const widths = [22, 12, 14, 2, 13, 13, 13, 13, 13, 13, 13, 13];
+  const widths = [22, 12, 14, 2, 18, 13, 13, 13, 13, 13, 13, 13];
   widths.forEach((w, i) => (ws.getColumn(i + 1).width = w));
 
   bandRow(ws, 1, COLS, "Insights", { bg: TITLE_DARK, size: 16, height: 30, align: "center" });
@@ -613,7 +650,12 @@ function buildInsightsSheet(
 
   // ── KPI tiles ──────────────────────────────────────────────────────────────
   bandRow(ws, 4, COLS, "  Key Figures", { bg: SECTION_BLUE });
-  const totalFormula = subtotalCells.map((c) => `Summary!${c}`).join("+");
+  const totalFormula = refs.subtotalCells.map((c) => `Summary!${c}`).join("+");
+  // Everything derivable from cells IS derived — edit any amount on a
+  // category sheet and the whole dashboard re-foots. (Flagged counts app
+  // state that has no cell to reference, so it stays a snapshot.)
+  const ranges = [...refs.byCategory.values()].map((c) => `Summary!${c.range}`);
+  const countFormula = ranges.map((rg) => `COUNT(${rg})`).join("+");
   const stats: { label: string; value: ExcelJS.CellValue; color?: string; money?: boolean }[] = [
     {
       label: "Total Spend",
@@ -622,9 +664,27 @@ function buildInsightsSheet(
         : insights.total,
       money: true,
     },
-    { label: "Receipts", value: insights.count },
-    { label: "Avg / Receipt", value: insights.average, money: true },
-    { label: "Largest", value: insights.largest, money: true },
+    {
+      label: "Receipts",
+      value: countFormula
+        ? { formula: countFormula, result: insights.count }
+        : insights.count,
+    },
+    {
+      label: "Avg / Receipt",
+      // The Total Spend and Receipts tiles live at fixed addresses (A6/C6).
+      value: countFormula
+        ? { formula: "A6/C6", result: insights.average }
+        : insights.average,
+      money: true,
+    },
+    {
+      label: "Largest",
+      value: ranges.length
+        ? { formula: `MAX(${ranges.join(",")})`, result: insights.largest }
+        : insights.largest,
+      money: true,
+    },
     { label: "Categories", value: insights.byCategory.filter((c) => c.total > 0).length },
     { label: "Flagged", value: insights.flagged, color: "FFB91C1C" },
   ];
@@ -682,15 +742,21 @@ function buildInsightsSheet(
   }
 
   // ── Reference tables, side by side under the charts ───────────────────────
+  // Both tables derive from the Summary's cells: counts/totals per category
+  // reference its ranges and subtotal cells; vendor totals SUMIF the
+  // Summary's Store column against the name printed in this very table.
   const tableTop = r + 1;
   smallTable(
     ws, tableTop, 1, "By Category",
     ["Category", "Count", "Total"],
-    insights.byCategory.map((c) => [
-      c.category === "Other" ? "Miscellaneous" : c.category,
-      c.count,
-      c.total,
-    ]),
+    insights.byCategory.map((c) => {
+      const ref = refs.byCategory.get(c.category as Category);
+      return [
+        c.category === "Other" ? "Miscellaneous" : c.category,
+        ref ? { formula: `COUNT(Summary!${ref.range})`, result: c.count } : c.count,
+        ref ? { formula: `Summary!${ref.subtotal}`, result: c.total } : c.total,
+      ];
+    }),
     fmt,
     insights.byCategory.map(
       (c) => CATEGORY_META[c.category as Category]?.color,
@@ -699,7 +765,14 @@ function buildInsightsSheet(
   smallTable(
     ws, tableTop, 5, "Top Vendors",
     ["Vendor", "Count", "Total"],
-    insights.topVendors.map((v) => [v.vendor, v.count, v.total]),
+    insights.topVendors.map((v, i) => {
+      const nameCell = `E${tableTop + 2 + i}`;
+      return [
+        v.vendor,
+        { formula: `COUNTIF(Summary!$C:$C,${nameCell})`, result: v.count },
+        { formula: `SUMIF(Summary!$C:$C,${nameCell},Summary!$F:$F)`, result: v.total },
+      ];
+    }),
     fmt,
   );
 }
@@ -711,7 +784,7 @@ function smallTable(
   col: number,
   heading: string,
   headers: string[],
-  data: (string | number)[][],
+  data: ExcelJS.CellValue[][],
   moneyFmt: string,
   nameColors?: (string | undefined)[],
 ): void {
@@ -737,7 +810,7 @@ function smallTable(
       const cell = ws.getCell(r, col + j);
       cell.value = v;
       cell.alignment = { horizontal: j === 0 ? "left" : j === 1 ? "center" : "right" };
-      if (j === 2 && typeof v === "number") cell.numFmt = moneyFmt;
+      if (j === 2) cell.numFmt = moneyFmt;
     });
     const nameColor = nameColors?.[i];
     if (nameColor) {

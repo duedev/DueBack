@@ -232,3 +232,98 @@ test("columns autofit to content; notes wrap in a capped column", async () => {
   const store = summary.getColumn(3).width ?? 0;
   assert.ok(store > 30, `store col width ${store}`);
 });
+
+// ── Workbook-review round: single source of truth + polish ──────────────────
+
+test("Summary amounts are live references to the category sheets", async () => {
+  const result = await buildWorkbook(batch, receipts, async () => undefined);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  const summary = wb.getWorksheet("Summary")!;
+  let checked = 0;
+  summary.eachRow((row) => {
+    const link = row.getCell(1).value as { hyperlink?: string } | null;
+    if (!link || typeof link !== "object" || !link.hyperlink) return;
+    const amt = row.getCell(6).value as { formula?: string; result?: number };
+    assert.ok(
+      amt && typeof amt === "object" && /^'[^']+'!F\d+$/.test(amt.formula ?? ""),
+      `amount is a category-sheet ref (got ${JSON.stringify(amt)})`,
+    );
+    // Follow the reference: the target cell holds the same value statically.
+    const m = /^'([^']+)'!F(\d+)$/.exec(amt.formula!)!;
+    const target = wb.getWorksheet(m[1]!)!.getCell(Number(m[2]), 6).value;
+    assert.equal(target, amt.result, `ref target ${String(target)} = ${amt.result}`);
+    checked++;
+  });
+  assert.equal(checked, 4, "every receipt row checked");
+});
+
+test("Insights KPIs and tables derive from Summary cells", async () => {
+  const result = await buildWorkbook(batch, receipts, async () => undefined);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  const ins = wb.getWorksheet("Insights")!;
+  const fx: string[] = [];
+  ins.eachRow((row) =>
+    row.eachCell((cell) => {
+      const v = cell.value as { formula?: string } | null;
+      if (v && typeof v === "object" && v.formula) fx.push(v.formula);
+    }),
+  );
+  assert.ok(fx.some((f) => /COUNT\(Summary!/.test(f)), "Receipts KPI counts Summary ranges");
+  assert.ok(fx.some((f) => f === "A6/C6"), "Avg derives from the Total and Receipts tiles");
+  assert.ok(fx.some((f) => /^MAX\(Summary!/.test(f)), "Largest is a MAX over Summary ranges");
+  assert.ok(fx.some((f) => /SUMIF\(Summary!\$C:\$C,E\d+,Summary!\$F:\$F\)/.test(f)), "Top Vendors SUMIFs the Summary");
+  assert.ok(fx.some((f) => /COUNTIF\(Summary!\$C:\$C,E\d+\)/.test(f)), "vendor counts too");
+});
+
+test("no Default Job placeholders; blank batch fields read as an em-dash", async () => {
+  const blankBatch = { ...batch, jobName: "", jobNumber: "" };
+  const result = await buildWorkbook(blankBatch, receipts, async () => undefined);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  let dashes = 0;
+  wb.eachSheet((ws) =>
+    ws.eachRow((row) =>
+      row.eachCell((cell) => {
+        const v = String(cell.value ?? "");
+        assert.ok(!v.startsWith("Default Job"), `placeholder leaked: ${v}`);
+        if (v === "—") dashes++;
+      }),
+    ),
+  );
+  assert.ok(dashes > 0, "blank job fields render as em-dashes");
+});
+
+test("headers have six columns (no dead Summary column); dates are whole days", async () => {
+  const result = await buildWorkbook(batch, receipts, async () => undefined);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  const summary = wb.getWorksheet("Summary")!;
+  let sawHeaders = false;
+  summary.eachRow((row) => {
+    if (String(row.getCell(1).value ?? "") !== "#") return;
+    sawHeaders = true;
+    const headers = [1, 2, 3, 4, 5, 6, 7].map((c) => String(row.getCell(c).value ?? ""));
+    assert.deepEqual(headers.slice(0, 6), ["#", "Date", "Store", "Job Name", "Job Number", "Amount"]);
+    assert.equal(headers[6], "", "no seventh column");
+  });
+  assert.ok(sawHeaders);
+  // Date serials are UTC midnight — no spurious time-of-day.
+  summary.eachRow((row) => {
+    const v = row.getCell(2).value;
+    if (v instanceof Date) {
+      assert.equal(v.getUTCHours(), 0, `date carries time: ${v.toISOString()}`);
+      assert.equal(v.getUTCMinutes(), 0);
+    }
+  });
+});
+
+test("category sheets link back to the Summary", async () => {
+  const result = await buildWorkbook(batch, receipts, async () => undefined);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  const travel = wb.getWorksheet("Travel")!;
+  const back = travel.getCell(1, 6).value as { text?: string; hyperlink?: string };
+  assert.ok(back && typeof back === "object" && /Summary/.test(back.hyperlink ?? ""), JSON.stringify(back));
+});

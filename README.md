@@ -70,7 +70,8 @@ VITE_OCR_ENGINE=paddle npm run dev
 Static output (`dist/`) with a GitHub Pages workflow included
 (`.github/workflows/deploy.yml`). Optional build-time settings:
 `OPENROUTER_API_KEY` (free zero-click AI assist), `VITE_SUPABASE_URL` +
-`VITE_SUPABASE_ANON_KEY` (sync layer). The app is embeddable in an iframe
+`VITE_SUPABASE_ANON_KEY` (sync layer), `VITE_CF_ANALYTICS_TOKEN` (cookieless
+visit stats via Cloudflare Web Analytics; page views only). The app is embeddable in an iframe
 (e.g. a Carrd Embed block); it's a single relative-path static bundle.
 
 ## Stack

@@ -150,8 +150,13 @@
       try {
         const cleanBlob = r.cleanedKey ? await repo.getBlob(r.cleanedKey) : undefined;
         if (cleanBlob) {
-          const box = (field: "vendor" | "date" | "amount"): BBox | undefined =>
-            (patch[field] as Field<unknown> | undefined)?.bbox ?? r[field].bbox;
+          const box = (field: "vendor" | "date" | "amount"): BBox | undefined => {
+            const f = patch[field] as Field<unknown> | undefined;
+            // A field present in the patch OWNS its box: an intentionally
+            // removed box (a corrected value that can't be located) must not
+            // resurrect the stale mark from the old extraction.
+            return f ? f.bbox : r[field].bbox;
+          };
           const marks = [
             ...(box("vendor") ? [{ bbox: box("vendor")!, color: HIGHLIGHT_COLORS.vendor }] : []),
             ...(box("date") ? [{ bbox: box("date")!, color: HIGHLIGHT_COLORS.date }] : []),

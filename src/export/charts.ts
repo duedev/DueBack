@@ -23,7 +23,7 @@ export interface ChartImage {
 
 const INK_SOFT = "#55524d";
 const GRID = "rgba(85, 82, 77, 0.14)";
-const ACCENT = "#147246";
+const ACCENT = "#3b82f6"; // TABLE_BLUE — matches the workbook theme
 // Charts render at 900px and are embedded at ~0.62 scale, so on-sheet text is
 // ~62% of these sizes. 26px body / 34px titles ≈ 16px / 21px at 100% zoom —
 // comfortably larger than Excel's default cell text ("text too small" fix).
@@ -42,7 +42,7 @@ async function renderToPng(
 ): Promise<ChartImage | null> {
   if (typeof document === "undefined") return null;
   const canvas = document.createElement("canvas");
-  const dpr = 2; // crisp when scaled into the sheet
+  const dpr = 1.5; // crisp when scaled into the sheet without bloating the file
   canvas.width = width * dpr;
   canvas.height = height * dpr;
   canvas.style.width = `${width}px`;
@@ -131,20 +131,53 @@ export async function categoryChartImage(
   );
 }
 
-/** Daily spend — single-hue columns over time. */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Chart-ready buckets for the spend timeline. Same-year batches keep daily
+ *  granularity (mm-dd); multi-year spans aggregate by month with year labels
+ *  ("Sep '23") — day labels without years rendered 2023 receipts "after"
+ *  2024 ones and hid the gaps. */
+function timelineBuckets(rows: { date: string; total: number }[]): {
+  labels: string[];
+  totals: number[];
+  title: string;
+} {
+  const years = new Set(rows.map((d) => d.date.slice(0, 4)));
+  if (years.size <= 1) {
+    return {
+      labels: rows.map((d) => d.date.slice(5)),
+      totals: rows.map((d) => d.total),
+      title: "Daily spend",
+    };
+  }
+  const byMonth = new Map<string, number>();
+  for (const d of rows) {
+    const k = d.date.slice(0, 7);
+    byMonth.set(k, Math.round(((byMonth.get(k) ?? 0) + d.total) * 100) / 100);
+  }
+  const keys = [...byMonth.keys()].sort();
+  return {
+    labels: keys.map((k) => `${MONTHS[Number(k.slice(5)) - 1]} '${k.slice(2, 4)}`),
+    totals: keys.map((k) => byMonth.get(k)!),
+    title: "Monthly spend",
+  };
+}
+
+/** Spend over time — single-hue columns (daily, or monthly for multi-year). */
 export async function dailyChartImage(
   insights: Insights,
 ): Promise<ChartImage | null> {
   const rows = insights.timeline;
   if (rows.length < 2) return null;
+  const buckets = timelineBuckets(rows);
   return renderToPng(
     {
       type: "bar",
       data: {
-        labels: rows.map((d) => d.date.slice(5)), // mm-dd
+        labels: buckets.labels,
         datasets: [
           {
-            data: rows.map((d) => d.total),
+            data: buckets.totals,
             backgroundColor: ACCENT,
             borderRadius: { topLeft: 4, topRight: 4 },
             borderSkipped: "bottom",
@@ -158,7 +191,7 @@ export async function dailyChartImage(
           legend: { display: false },
           title: {
             display: true,
-            text: "Daily spend",
+            text: buckets.title,
             align: "start",
             color: "#1c1917",
             font: { ...FONT, size: TITLE_SIZE, weight: "bold" },
@@ -249,18 +282,21 @@ export async function cumulativeChartImage(
 ): Promise<ChartImage | null> {
   const rows = insights.timeline;
   if (rows.length < 3) return null;
+  const buckets = timelineBuckets(rows);
   let running = 0;
-  const cumulative = rows.map((d) => (running = Math.round((running + d.total) * 100) / 100));
+  const cumulative = buckets.totals.map(
+    (t) => (running = Math.round((running + t) * 100) / 100),
+  );
   return renderToPng(
     {
       type: "line",
       data: {
-        labels: rows.map((d) => d.date.slice(5)),
+        labels: buckets.labels,
         datasets: [
           {
             data: cumulative,
             borderColor: ACCENT,
-            backgroundColor: "rgba(20, 114, 70, 0.12)",
+            backgroundColor: "rgba(59, 130, 246, 0.12)",
             fill: true,
             pointRadius: 4,
             pointBackgroundColor: ACCENT,
