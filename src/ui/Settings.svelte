@@ -89,89 +89,17 @@
     app.toast("Improvement log cleared.", "ok");
   }
 
-  // One ZIP with everything a tuning session needs: the corrections log,
-  // every receipt's full extraction (fields, flags, OCR text + geometry),
-  // the report CSV, and both the original uploads and the highlighted
-  // copies — so failures can be reproduced from the exact inputs.
+  // One ZIP with everything a tuning session needs (shared with the
+  // contact form's attach checkbox) — see src/train/bundle.ts.
   let bundleBusy = $state(false);
   async function downloadTuningBundle(): Promise<void> {
     bundleBusy = true;
     try {
-      const { buildZip } = await import("../export/zip.ts");
-      const { toCsv } = await import("../export/csv.ts");
-      const enc = new TextEncoder();
-      const receipts = $state.snapshot(app.receipts) as Receipt[];
-      const corrections = await getCorrections();
-      const entries: { name: string; data: Uint8Array }[] = [
-        { name: "corrections.json", data: enc.encode(JSON.stringify(corrections, null, 2)) },
-        {
-          name: "extraction.json",
-          data: enc.encode(
-            JSON.stringify(
-              receipts.map((r) => ({
-                id: r.id,
-                fileName: r.fileName,
-                originalFileName: r.originalFileName,
-                status: r.status,
-                approved: r.approved,
-                reviewRequired: r.reviewRequired,
-                vendor: r.vendor,
-                date: r.date,
-                amount: r.amount,
-                tax: r.tax,
-                category: r.category,
-                currency: r.currency,
-                confidence: r.confidence,
-                flags: r.flags,
-                method: r.methodDetail ?? r.methodUsed,
-                ocrText: r.ocrText,
-                ocrLines: r.ocrLines,
-              })),
-              null,
-              2,
-            ),
-          ),
-        },
-        { name: "report.csv", data: enc.encode(toCsv(receipts)) },
-      ];
-      const used = new Set(entries.map((e) => e.name));
-      const uniq = (base: string): string => {
-        let n = base;
-        for (let i = 2; used.has(n); i++) {
-          const dot = base.lastIndexOf(".");
-          n = dot > 0 ? `${base.slice(0, dot)}_${i}${base.slice(dot)}` : `${base}_${i}`;
-        }
-        used.add(n);
-        return n;
-      };
-      for (const r of receipts) {
-        const orig = await repo.getBlob(r.fileKey);
-        if (orig) {
-          entries.push({
-            name: uniq(`images/original/${r.originalFileName ?? r.fileName}`),
-            data: new Uint8Array(await orig.arrayBuffer()),
-          });
-        }
-        const annKey = r.annotatedKey ?? r.cleanedKey;
-        const ann = annKey ? await repo.getBlob(annKey) : undefined;
-        if (ann) {
-          entries.push({
-            name: uniq(`images/annotated/${r.fileName}`),
-            data: new Uint8Array(await ann.arrayBuffer()),
-          });
-        }
-      }
-      const zip = await buildZip(entries);
-      const now = new Date();
-      const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
-      const url = URL.createObjectURL(zip);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `dueback_tuning_${stamp}.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const { buildTuningBundle, downloadBundle } = await import("../train/bundle.ts");
+      const bundle = await buildTuningBundle($state.snapshot(app.receipts) as Receipt[]);
+      downloadBundle(bundle);
       app.toast(
-        `Tuning bundle packaged: ${receipts.length} receipts, ${corrections.length} corrections.`,
+        `Tuning bundle packaged: ${bundle.receiptCount} receipts, ${bundle.correctionCount} corrections.`,
         "ok",
       );
     } catch (err) {

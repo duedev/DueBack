@@ -91,6 +91,11 @@ const FIELD_TINTS = {
 const IMG_DISPLAY_W = 380; // ≈ column A at width 55
 const IMG_ROW_PT = 14; // height of each image carrier row
 
+/** Excel column-width units → px (Calibri 11: px ≈ width·7 + 5 padding). */
+function colUnitsToPx(w: number): number {
+  return Math.round(w * 7 + 5);
+}
+
 // ── Column autofit (ExcelJS has none) ────────────────────────────────────────
 
 
@@ -576,11 +581,18 @@ function buildImageSheet(
     const img = images.get(rec.id);
     const imgRows = img ? Math.max(1, Math.ceil((img.h * 0.75) / IMG_ROW_PT)) : 1;
     if (img) {
+      // twoCellAnchor (tl + br): iOS Quick Look and Apple Numbers skip
+      // oneCellAnchor (tl + ext) images entirely. The bottom-right corner is
+      // derived from the same pixel math the carrier rows use, so desktop
+      // Excel renders identically.
       ws.addImage(img.id, {
         tl: { col: 0.05, row: r - 1 + 0.05 },
-        ext: { width: img.w, height: img.h },
+        br: {
+          col: 0.05 + img.w / colUnitsToPx(55),
+          row: r - 1 + 0.05 + (img.h * 0.75) / IMG_ROW_PT,
+        },
         editAs: "oneCell",
-      });
+      } as Parameters<typeof ws.addImage>[1]);
     } else {
       ws.getCell(r, 1).value = "(image unavailable)";
       ws.getCell(r, 1).font = { italic: true, size: 9, color: { argb: FOOT_GRAY } };
@@ -720,6 +732,19 @@ function buildInsightsSheet(
     [charts.daily, charts.cumulative],
     [charts.vendors, null],
   ];
+  // twoCellAnchor for the same iOS Quick Look / Numbers reason as the
+  // receipt images: the bottom-right corner walks the actual column widths.
+  const colAtPx = (startCol: number, px: number): number => {
+    let i = startCol;
+    let rem = px;
+    for (;;) {
+      const wpx = colUnitsToPx(widths[i] ?? 9);
+      if (rem <= wpx) return i + rem / wpx;
+      rem -= wpx;
+      i++;
+    }
+  };
+  const DEFAULT_ROW_PX = 20; // 15pt default row height
   let r = 8;
   for (const [left, right] of pairs) {
     let rowsUsed = 0;
@@ -733,9 +758,9 @@ function buildInsightsSheet(
       const h = Math.round(img.height * SCALE);
       ws.addImage(id, {
         tl: { col, row: r - 1 },
-        ext: { width: w, height: h },
+        br: { col: colAtPx(col, w), row: r - 1 + h / DEFAULT_ROW_PX },
         editAs: "oneCell",
-      });
+      } as Parameters<typeof ws.addImage>[1]);
       rowsUsed = Math.max(rowsUsed, Math.ceil(h / 19) + 2);
     }
     r += rowsUsed;
