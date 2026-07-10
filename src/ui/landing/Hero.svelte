@@ -168,6 +168,20 @@
       padding-top: 2.5rem;
     }
   }
+  @media (max-width: 560px) {
+    /* Three tiles must share one row even on small phones. */
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, auto));
+      gap: 1rem;
+    }
+    .stat-n {
+      font-size: 1.35rem;
+    }
+    .stat-l {
+      font-size: 0.75rem;
+    }
+  }
 
   /* ---- hero visual: receipt → approved card → workbook ---- */
   .hero-visual {

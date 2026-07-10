@@ -208,7 +208,9 @@
     .thead,
     .trow {
       grid-template-columns:
-        minmax(0, 1.5fr) minmax(0, 0.65fr) minmax(0, 1fr) minmax(0, 0.7fr);
+        minmax(0, 1.4fr) minmax(0, 0.6fr) minmax(0, 0.95fr) minmax(0, 0.8fr);
+      gap: 0.4rem;
+      font-size: 0.72rem;
     }
     .notes {
       display: none;
