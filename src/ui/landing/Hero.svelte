@@ -30,51 +30,88 @@
         <a class="btn btn-lg" href="#how">See how it works</a>
       {/if}
     </div>
-    <ul class="hero-trust" aria-label="Key facts">
-      <li><strong>$0</strong> per receipt</li>
-      <li>Runs on your device</li>
-      <li>No account needed</li>
+    <p class="hero-note">
+      <strong>Runs entirely in your browser — your receipts never leave your
+      device.</strong>
+    </p>
+    <ul class="hero-stats" aria-label="Key facts">
+      <li class="stat">
+        <span class="stat-n">$0</span>
+        <span class="stat-l">per receipt</span>
+      </li>
+      <li class="stat">
+        <span class="stat-n">~1 min</span>
+        <span class="stat-l">pile to finished report</span>
+      </li>
+      <li class="stat">
+        <span class="stat-n">On-device</span>
+        <span class="stat-l">receipts stay in your browser</span>
+      </li>
     </ul>
   </div>
 
-  <!-- Stylized before/after: receipt → workbook. Pure CSS, no images. -->
+  <!-- The product story as a strip: a receipt is scanned, the read fields
+       pop onto an approved card, and the workbook total re-foots. Pure CSS,
+       no images; one shared 8s clock sequences the stages. -->
   <div class="hero-visual" aria-hidden="true">
     <div class="paper receipt">
-      <div class="r-vendor"><mark class="hl hl-vendor">MAPLE ST. HARDWARE</mark></div>
-      <div class="r-line"><span>Wood screws #8</span><span>4.29</span></div>
-      <div class="r-line"><span>Paint roller kit</span><span>12.99</span></div>
-      <div class="r-line"><span>Drop cloth 9×12</span><span>8.49</span></div>
-      <div class="r-line faint"><span>Subtotal</span><span>25.77</span></div>
-      <div class="r-line faint"><span>Tax 6.5%</span><span>1.68</span></div>
-      <div class="r-total"><span>TOTAL</span><mark class="hl hl-amount">$27.45</mark></div>
-      <div class="r-date"><mark class="hl hl-date">06/24/2026</mark> · 14:07</div>
+      <div class="r-vendor"><mark class="hl">CITYGAS #214<span class="rv rv-vendor"></span></mark></div>
+      <div class="r-line"><span>Pump 04 · Regular</span><span></span></div>
+      <div class="r-line"><span>9.842 gal @ 4.169/gal</span><span>41.03</span></div>
+      <div class="r-line faint"><span>Sales tax</span><span>incl.</span></div>
+      <div class="r-total"><span>TOTAL</span><mark class="hl">$41.03<span class="rv rv-amount"></span></mark></div>
+      <div class="r-date"><mark class="hl">06/25/2026<span class="rv rv-date"></span></mark> · 07:41</div>
       <div class="r-scan"></div>
     </div>
 
-    <div class="flow-arrow">
-      <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <div class="mini-arrow arrow-1">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <path d="M4 12h14m0 0-5.5-5.5M18 12l-5.5 5.5" />
       </svg>
-      <span class="flow-note">read · checked · filed</span>
+      <span class="arrow-note">read · checked</span>
     </div>
 
-    <div class="paper sheet">
-      <div class="s-head">
-        <span>Vendor</span><span>Date</span><span>Category</span><span>Amount</span>
+    <div class="paper approved">
+      <div class="a-top">
+        <mark class="hl hl-vendor">CityGas #214</mark>
+        <span class="a-pill">Approved ✓</span>
       </div>
-      <div class="s-row">
-        <span><mark class="hl hl-vendor">Maple St. Hardware</mark></span><span><mark class="hl hl-date">06/24</mark></span><span><i class="dot d1"></i>Materials</span><span><mark class="hl hl-amount">27.45</mark></span>
+      <div class="a-fields">
+        <span class="a-key">Date</span>
+        <mark class="hl hl-date">06/25/2026</mark>
+        <span class="a-key">Total</span>
+        <mark class="hl hl-amount">$41.03</mark>
       </div>
-      <div class="s-row">
-        <span>Corner Bistro</span><span>06/24</span><span><i class="dot d2"></i>Meals</span><span>18.20</span>
+      <div class="a-filed"><i class="dot"></i>Fuel · filed automatically</div>
+    </div>
+
+    <div class="mini-arrow arrow-2">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 12h14m0 0-5.5-5.5M18 12l-5.5 5.5" />
+      </svg>
+      <span class="arrow-note">one click</span>
+    </div>
+
+    <div class="paper book">
+      <div class="b-tabs">
+        <span class="b-tab active">Summary</span>
+        <span class="b-tab">Insights</span>
+        <span class="b-tab">Fuel</span>
       </div>
-      <div class="s-row">
-        <span>CityGas #214</span><span>06/25</span><span><i class="dot d3"></i>Fuel</span><span>41.03</span>
+      <div class="b-body">
+        <div class="b-head">
+          <span>Vendor</span><span>Date</span><span>Amount</span>
+        </div>
+        <div class="b-row">
+          <span>CityGas #214</span><span>06/25</span><span>41.03</span>
+        </div>
+        <div class="b-row">
+          <span>Corner Bistro</span><span>06/24</span><span>18.20</span>
+        </div>
+        <div class="b-total">
+          <span>TOTAL</span><span class="b-sum">$59.23</span>
+        </div>
       </div>
-      <div class="s-total">
-        <span>TOTAL</span><span class="s-sum">$86.68</span>
-      </div>
-      <div class="s-foot">= SUM(D2:D4) · foots ✓</div>
     </div>
   </div>
 </header>
@@ -82,7 +119,7 @@
 <style>
   .hero {
     display: grid;
-    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
     align-items: center;
     gap: 3rem;
     padding: 4.5rem 0 5rem;
@@ -99,22 +136,31 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.8rem;
-    margin: 1.6rem 0 1.4rem;
+    margin: 1.6rem 0 1rem;
   }
-  .hero-trust {
+  .hero-note {
+    font-size: 0.95rem;
+    margin: 0 0 1.6rem;
+  }
+  .hero-stats {
     display: flex;
-    gap: 1.4rem;
+    gap: 2.2rem;
+    flex-wrap: wrap;
     list-style: none;
     padding: 0;
     margin: 0;
-    color: var(--ink-soft);
-    font-size: 0.92rem;
   }
-  .hero-trust li::before {
-    content: "✓";
-    color: var(--ok);
-    font-weight: 700;
-    margin-right: 0.4rem;
+  .stat {
+    display: grid;
+    gap: 0.15rem;
+  }
+  .stat-n {
+    font: 600 1.9rem/1.1 var(--font-display);
+    color: var(--ink);
+  }
+  .stat-l {
+    font: 500 0.85rem/1.3 var(--font-ui);
+    color: var(--ink-soft);
   }
   @media (max-width: 900px) {
     .hero {
@@ -123,36 +169,31 @@
     }
   }
 
-  /* ---- hero visual ---- */
+  /* ---- hero visual: receipt → approved card → workbook ---- */
   .hero-visual {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.25fr);
-    align-items: center;
-    gap: 0.9rem;
+    gap: 0.65rem;
+    justify-items: center;
   }
+
   .receipt {
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    padding: 0.9rem 0.85rem 1.1rem;
-    transform: rotate(-3deg);
     position: relative;
+    width: min(240px, 100%);
+    padding: 0.95rem 0.85rem;
+    font: 500 0.66rem/1.45 var(--font-mono);
     overflow: hidden;
   }
   .r-vendor {
-    font-weight: 700;
     text-align: center;
-    letter-spacing: 0.04em;
-    margin-bottom: 0.7rem;
-    border: 1.5px solid var(--accent);
-    border-radius: 6px;
-    padding: 0.3rem 0.2rem;
-    color: var(--accent);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.55rem;
   }
   .r-line {
     display: flex;
     justify-content: space-between;
     gap: 0.6rem;
-    padding: 0.14rem 0;
+    padding: 0.1rem 0;
   }
   .r-line.faint {
     color: var(--ink-faint);
@@ -160,14 +201,14 @@
   .r-total {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     font-weight: 700;
     border-top: 1.5px dashed var(--line-strong);
     margin-top: 0.4rem;
     padding-top: 0.4rem;
-    color: var(--gold);
   }
   .r-date {
-    margin-top: 0.55rem;
+    margin-top: 0.45rem;
     color: var(--ink-faint);
     text-align: center;
   }
@@ -183,135 +224,194 @@
   }
 
   /* Receipt-side highlights: hidden until the scanner passes their line.
-     The text itself stays visible; only the highlighter tint waits. */
+     The text stays visible; only the highlighter tint (.rv overlay) waits. */
   .receipt .hl {
     position: relative;
     background: transparent;
     box-shadow: none;
   }
-  .receipt .hl::after {
-    content: "";
+  .rv {
     position: absolute;
     inset: 0;
     border-radius: 3px;
     opacity: 0;
     pointer-events: none;
   }
-  .receipt .hl-vendor::after {
+  .rv-vendor {
     background: color-mix(in srgb, #1d4ed8 22%, transparent);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, #1d4ed8 45%, transparent);
     animation: db-reveal-vendor 8s ease-out infinite;
   }
-  .receipt .hl-amount::after {
+  .rv-amount {
     background: color-mix(in srgb, #147246 20%, transparent);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, #147246 45%, transparent);
     animation: db-reveal-amount 8s ease-out infinite;
   }
-  .receipt .hl-date::after {
+  .rv-date {
     background: color-mix(in srgb, #dc2626 18%, transparent);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, #dc2626 45%, transparent);
     animation: db-reveal-date 8s ease-out infinite;
   }
-  @media (prefers-reduced-motion: reduce) {
-    .r-scan {
-      animation: none;
-      opacity: 0;
-    }
-    .receipt .hl-vendor::after,
-    .receipt .hl-amount::after,
-    .receipt .hl-date::after {
-      animation: none;
-      opacity: 1;
-    }
-  }
 
-  .flow-arrow {
-    display: grid;
-    justify-items: center;
-    gap: 0.3rem;
+  .mini-arrow {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     color: var(--accent);
   }
-  .flow-note {
-    font: 600 0.62rem/1 var(--font-ui);
+  .mini-arrow svg {
+    transform: rotate(90deg);
+  }
+  .arrow-1 {
+    animation: db-nudge1 8s ease-in-out infinite;
+  }
+  .arrow-2 {
+    animation: db-nudge2 8s ease-in-out infinite;
+  }
+  .arrow-note {
+    font: 600 0.66rem/1 var(--font-ui);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--ink-faint);
-    white-space: nowrap;
   }
 
-  .sheet {
-    font: 500 0.66rem/1.25 var(--font-ui);
-    padding: 0.7rem;
-    transform: rotate(1.6deg);
+  .approved {
+    width: min(330px, 100%);
+    padding: 0.75rem 0.9rem;
+    font: 500 0.75rem/1.4 var(--font-ui);
   }
-  .s-head,
-  .s-row,
-  .s-total {
-    display: grid;
-    /* minmax(0,…) lets cells shrink; nothing may bleed out of the card. */
-    grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.7fr) minmax(0, 1.1fr) minmax(0, 0.75fr);
-    gap: 0.45rem;
-    padding: 0.32rem 0.45rem;
+  .a-top {
+    display: flex;
     align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
   }
-  .s-head span,
-  .s-row span {
-    min-width: 0;
+  .a-top .hl-vendor {
+    font-weight: 650;
+  }
+  .a-pill {
+    margin-left: auto;
+    font: 600 0.69rem/1 var(--font-ui);
+    padding: 0.22rem 0.6rem;
+    border-radius: var(--radius-pill);
+    background: var(--accent-soft);
+    color: var(--accent);
+    animation: db-pop 8s ease-out infinite;
+  }
+  .a-fields {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+  }
+  .a-key {
+    color: var(--ink-faint);
+  }
+  .a-fields .hl-amount {
+    font-weight: 650;
+  }
+  .a-filed {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+    color: var(--ink-soft);
+  }
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--cat-1);
+  }
+
+  .book {
+    width: min(330px, 100%);
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font: 500 0.72rem/1.4 var(--font-ui);
   }
-  .s-head {
+  .b-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 0.4rem 0.5rem 0;
+    background: var(--bg-sunken);
+    border-bottom: 1px solid var(--line);
+  }
+  .b-tab {
+    font: 500 0.63rem/1 var(--font-ui);
+    padding: 0.3rem 0.65rem;
+    color: var(--ink-soft);
+  }
+  .b-tab.active {
+    font-weight: 600;
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    color: var(--accent);
+  }
+  .b-body {
+    padding: 0.55rem 0.75rem 0.75rem;
+  }
+  .b-head,
+  .b-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.7fr) minmax(0, 0.75fr);
+    gap: 0.5rem;
+    padding: 0.3rem 0.5rem;
+  }
+  .b-head {
     background: var(--accent);
     color: var(--accent-ink);
     border-radius: 6px;
     font-weight: 700;
   }
-  .s-row {
+  .b-row {
     border-bottom: 1px solid var(--line);
   }
-  .s-row span:last-child,
-  .s-head span:last-child {
+  .b-head span:last-child,
+  .b-row span:last-child {
     text-align: right;
   }
-  .dot {
-    display: inline-block;
-    width: 0.45em;
-    height: 0.45em;
-    border-radius: 50%;
-    margin-right: 0.3em;
-    vertical-align: middle;
-  }
-  .d1 {
-    background: var(--cat-3);
-  }
-  .d2 {
-    background: var(--cat-2);
-  }
-  .d3 {
-    background: var(--cat-1);
-  }
-  .s-total {
+  .b-total {
+    display: grid;
     grid-template-columns: 1fr auto;
+    gap: 0.5rem;
+    padding: 0.45rem 0.5rem 0;
     font-weight: 700;
-    padding-top: 0.5rem;
   }
-  .s-sum {
+  .b-sum {
     color: var(--accent);
+    border-radius: 4px;
+    padding: 0 0.25rem;
+    margin: 0 -0.25rem;
+    animation: db-cell-flash 8s ease-out infinite;
   }
-  .s-foot {
-    color: var(--ink-faint);
-    font-family: var(--font-mono);
-    font-size: 0.58rem;
-    padding: 0.15rem 0.45rem 0.05rem;
-  }
-  @media (max-width: 480px) {
-    .flow-arrow svg {
-      width: 30px;
-      height: 30px;
+
+  /* Static end-states when motion is off: everything read, approved, footed. */
+  @media (prefers-reduced-motion: reduce) {
+    .r-scan {
+      animation: none;
+      opacity: 0;
     }
-    .flow-note {
-      display: none;
+    .rv-vendor,
+    .rv-amount,
+    .rv-date {
+      animation: none;
+      opacity: 1;
+    }
+    .arrow-1,
+    .arrow-2 {
+      animation: none;
+      opacity: 0.7;
+    }
+    .a-pill {
+      animation: none;
+      opacity: 1;
+      transform: none;
+    }
+    .b-sum {
+      animation: none;
+      background: transparent;
     }
   }
 </style>

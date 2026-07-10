@@ -2,6 +2,7 @@
   import { app } from "./state.svelte.ts";
   import ThemeToggle from "./ThemeToggle.svelte";
   import Hero from "./landing/Hero.svelte";
+  import HowSection from "./landing/HowSection.svelte";
   import ContactSection from "./landing/ContactSection.svelte";
   import { LIMITS } from "../config/constants.ts";
   import "./landing/landing.css";
@@ -82,38 +83,24 @@
   <!-- ======================= hero ======================= -->
   <Hero onAdd={pick} />
 
-  <!-- ======================= how it works ======================= -->
-  <section id="how" class="wrap how">
-    <p class="section-label">How it works</p>
-    <h2>Three steps. About a minute.</h2>
-    <ol class="steps">
-      <li class="card step">
-        <span class="step-n">1</span>
-        <h4>Snap or drop</h4>
-        <p>
-          Use your phone camera or drag files in: photos, scans or PDFs. Each
-          receipt is straightened, cleaned and read on your device.
-        </p>
-      </li>
-      <li class="card step">
-        <span class="step-n">2</span>
-        <h4>Review the flagged few</h4>
-        <p>
-          Most receipts file themselves. The uncertain ones are queued for a
-          keyboard-driven sweep with the amount, date and vendor highlighted
-          right on the image.
-        </p>
-      </li>
-      <li class="card step">
-        <span class="step-n">3</span>
-        <h4>Download the workbook</h4>
-        <p>
-          One click builds a themed Excel report with a summary that foots,
-          receipts embedded per category, and insights, ready to hand in.
-        </p>
-      </li>
-    </ol>
+  <!-- ======================= why ======================= -->
+  <section class="wrap why">
+    <p class="section-label">Why DueBack</p>
+    <h2>From receipt pile to finished report, without the busywork.</h2>
+    <p>
+      Retyping vendors, dates and totals is data entry no one should still be
+      doing by hand. Add your receipts and DueBack reads each one right in
+      your browser, checks the totals against the paper, and files it into a
+      report your office will accept.
+    </p>
+    <p>
+      No account and no per-receipt fee. <strong>Receipts stay on your
+      device</strong>, and your money gets back into your account faster.
+    </p>
   </section>
+
+  <!-- ======================= how it works ======================= -->
+  <HowSection />
 
   <!-- ======================= features ======================= -->
   <section id="features" class="wrap features">
@@ -290,33 +277,16 @@
   }
 
   /* ---- sections ---- */
-  .steps {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 1rem;
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    counter-reset: step;
+  .why {
+    padding-top: 1rem;
   }
-  .step {
-    padding: 1.4rem 1.4rem 1.2rem;
-  }
-  .step-n {
-    display: inline-grid;
-    place-items: center;
-    width: 2rem;
-    height: 2rem;
-    border-radius: 50%;
-    background: var(--accent-soft);
-    color: var(--accent);
-    font: 700 0.95rem/1 var(--font-display);
-    margin-bottom: 0.8rem;
-  }
-  .step p {
+  .why p {
     color: var(--ink-soft);
-    margin: 0;
-    font-size: 0.95rem;
+    max-width: 44rem;
+    font-size: 1.02rem;
+  }
+  .why strong {
+    color: var(--ink);
   }
 
   .feat-grid {

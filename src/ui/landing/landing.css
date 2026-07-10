@@ -19,12 +19,13 @@
   margin-bottom: 1.6rem;
 }
 
-/* -- "paper" mock surfaces (receipts, approved cards, mini sheets) --------- */
+/* -- "paper" mock surfaces (receipts, approved cards, mini sheets) ---------
+   Border-first elevation: hairline + the lightest shadow tier only. */
 .landing .paper {
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius-m);
-  box-shadow: var(--shadow-3);
+  box-shadow: var(--shadow-1);
 }
 
 /* -- highlighter marks ------------------------------------------------------
