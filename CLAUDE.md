@@ -36,7 +36,7 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + Fraunces).
 | `src/pipeline/ocr.ts` | `OcrEngine` seam; Tesseract default; `VITE_OCR_ENGINE=paddle` → `engines/paddle/*` (ONNX det+rec+CTC) |
 | `src/config/vendors.ts` | Brand matcher: curated table + `src/data/vendorDb.extra.json` (generated, 329 brands); passes: exact → glyph-normalized (`normalizeGlyphs`) → bounded fuzzy (`fuzzyMatchVendor`); slogans as long aliases |
 | `src/pipeline/extract.ts` | Rules: grand-total tiers + reconcile, **pump-math reconcile** (corroboration-gated; payment-line anchors correct, non-payment anchors keep), footing math with tip guard, US-first dates (stamp-glyph repair), tax, vendor line heuristic (greeting/address/pump-data rejects) + fuzzy hook, confidence, flags, `forcesManualReview()` (**`total_suspect`**/`vendor_unclear` warns force review — `total_mismatch` stays advisory), `locateValue()` (post-hoc field location for corrections) |
-| `src/train/corrections.ts` | The improvement loop: review edits diffed into `CorrectionRecord`s (with located bbox + OCR line), appended to kv `training.log` (cap 2000); Settings → Improvement log downloads/clears it |
+| `src/train/corrections.ts` | The improvement loop: review edits diffed into `CorrectionRecord`s (with located bbox + OCR line), appended to kv `training.log` (cap 2000); Settings → Improvement log downloads/clears it. `bundle.ts` builds the tuning ZIP (corrections + extraction.json + CSV + original/annotated images), shared by Settings and the landing contact form |
 | `src/pipeline/logo/` | Visual logo layer: `embedder.ts` (CLIP seam, lazy, test-fakeable), `index.ts` (bundled `logoIndex.json` + user brands, cosine NN, header-band crop, `addBrandFromImage`), `fuse.ts` (Layer-3 fusion; `LOGO_ACCEPT`) — inert (no model download) while the index is empty |
 | `src/pipeline/vision/` | Opt-in AI assist (OpenRouter/Gemini/Anthropic), spend cap, build-time free key; signed-in users route via `supabase/aiProxy.ts` → `ai-extract` Edge Function |
 | `src/store/` | `db.ts` (IndexedDB v1: batches/receipts/jobs/blobs/brands/kv), `repo.ts` (the one read/write + notify seam), `sync.ts` (Supabase mirror: LWW on `updatedAt`, storage blobs, realtime) |
@@ -114,6 +114,14 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   `vendor_unclear` — forces `needs_review` via `extract.forcesManualReview()`.
   Tips (TIP_RE) widen footing's expectations; per-gallon price lines are
   excluded from reconcile's `allMax`.
+- **Workbook images use twoCellAnchor (tl + br), never tl + ext** — iOS Quick
+  Look and Apple Numbers skip oneCellAnchor images entirely (the "images don't
+  render on iPhone" report). br is derived from the same px math as the
+  carrier rows (col px ≈ width·7+5). Quick Look also never activates internal
+  hyperlinks — that part is preview-inherent, not fixable in the file.
+- **Contact form (Landing #contact)** opens a prefilled mailto: draft to
+  contact@duanehamilton.net; mailto can't attach files, so the "attach tuning
+  bundle" checkbox downloads the ZIP and the draft asks the sender to attach it.
 - **Workbook columns autofit** (`autofitColumns` in workbook.ts — ExcelJS has
   none): merged band cells are skipped, notes wrap in a capped column
   (`NOTES_WRAP_CHARS` drives row heights). Insights keeps FIXED widths — the

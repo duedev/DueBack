@@ -166,6 +166,10 @@ async function main() {
     // 1. Landing hero renders.
     await page.getByRole("heading", { name: /Receipts in/ }).waitFor({ timeout: 15000 });
     check(true, "landing hero rendered");
+    check(
+      (await page.locator("#contact form").count()) === 1,
+      "contact form present on the landing page",
+    );
 
     // 2. Add three synthetic receipts in ONE multi-select — this also gates
     //    the picker FileList regression (clearing input.value used to drop
