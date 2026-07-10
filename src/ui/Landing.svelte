@@ -3,6 +3,10 @@
   import ThemeToggle from "./ThemeToggle.svelte";
   import Hero from "./landing/Hero.svelte";
   import HowSection from "./landing/HowSection.svelte";
+  import TimeSection from "./landing/TimeSection.svelte";
+  import LogoSection from "./landing/LogoSection.svelte";
+  import WorkbookSection from "./landing/WorkbookSection.svelte";
+  import AccountSection from "./landing/AccountSection.svelte";
   import ContactSection from "./landing/ContactSection.svelte";
   import { LIMITS } from "../config/constants.ts";
   import "./landing/landing.css";
@@ -46,6 +50,10 @@
       q: "How does logo recognition help?",
       a: "Many receipts show the merchant only as a stylized logo the text reader can't spell. Teach the app a brand once with one clear photo of the logo in Settings, and from then on it recognizes that logo visually, names the brand, and files it in the right category.",
     },
+    {
+      q: "Can it watch a Google Drive folder?",
+      a: "Not yet — it's planned. Today you can sign in to keep batches, receipts and taught brands in your own private cloud workspace and pick up on any device. Automatic Drive-folder scanning that keeps a workbook current is on the roadmap.",
+    },
   ];
 </script>
 
@@ -69,7 +77,7 @@
     </div>
     <div class="nav-links">
       <a href="#how">How it works</a>
-      <a href="#features">Features</a>
+      <a href="#workbook">The workbook</a>
       <a href="#privacy">Privacy</a>
       <a href="#faq">FAQ</a>
       <a href="#contact">Contact</a>
@@ -102,26 +110,20 @@
   <!-- ======================= how it works ======================= -->
   <HowSection />
 
+  <!-- ======================= time saved ======================= -->
+  <TimeSection />
+
+  <!-- ======================= logo teaching ======================= -->
+  <LogoSection />
+
+  <!-- ======================= the workbook ======================= -->
+  <WorkbookSection />
+
   <!-- ======================= features ======================= -->
   <section id="features" class="wrap features">
     <p class="section-label">What's inside</p>
     <h2>Small app. Serious pipeline.</h2>
     <div class="feat-grid">
-      <div class="card feat">
-        <h4>📖 On-device OCR</h4>
-        <p>
-          Open-source text recognition runs in your browser, with an optional
-          stronger on-device engine for tough photos. No servers, no upload.
-        </p>
-      </div>
-      <div class="card feat">
-        <h4>🔎 Visual logo recognition</h4>
-        <p>
-          When the merchant is a logo, not text, the app identifies the brand
-          visually and files it correctly. Teach it any new brand with one
-          image.
-        </p>
-      </div>
       <div class="card feat">
         <h4>🧮 Totals that reconcile</h4>
         <p>
@@ -137,17 +139,11 @@
         </p>
       </div>
       <div class="card feat">
-        <h4>📊 A report worth handing in</h4>
+        <h4>📖 Reads tough receipts</h4>
         <p>
-          Themed multi-sheet Excel with live formulas, embedded receipt images,
-          spending insights and charts, plus a one-click CSV.
-        </p>
-      </div>
-      <div class="card feat">
-        <h4>☁️ Optional sync</h4>
-        <p>
-          Sign in to keep batches on your own private cloud workspace and pick
-          up on another device. Entirely optional; local-first by design.
+          Open-source text recognition runs in your browser, with a second
+          cleanup pass for unevenly lit photos and an optional stronger
+          on-device engine. No servers, no upload.
         </p>
       </div>
     </div>
@@ -166,28 +162,32 @@
           <span class="chip chip-ok">your device</span>
         </p>
         <p>
-          Images stay in your browser's storage. OCR, logo recognition,
-          extraction and the Excel build all run on your hardware. Close the
-          tab and it's still there; clear it and it's gone. The hosted site
-          counts visits anonymously (Cloudflare Web Analytics, no cookies);
-          your receipts and their contents are never part of that.
+          <strong>Images stay in your browser's storage.</strong> OCR, logo
+          recognition, extraction and the Excel build all run on your
+          hardware. Close the tab and it's still there; clear it and it's
+          gone. The hosted site counts visits anonymously (Cloudflare Web
+          Analytics, no cookies); your receipts and their contents are never
+          part of that.
         </p>
       </div>
       <div class="card priv">
         <h4>Optional boosters</h4>
         <p class="priv-flow">
           <span class="chip">AI second opinion</span>
-          <span class="chip">cloud sync</span>
+          <a class="chip" href="#account">cloud sync</a>
         </p>
         <p>
           Turn on the AI assist and low-confidence receipts go to the model you
           configure. Sign in and your batches sync to your own Supabase
           workspace, protected by row-level security. Both are opt-in, clearly
-          labeled, and off by default.
+          labeled, and <strong>off by default</strong>.
         </p>
       </div>
     </div>
   </section>
+
+  <!-- ======================= account & storage ======================= -->
+  <AccountSection />
 
   <!-- ======================= faq ======================= -->
   <section id="faq" class="wrap faq">
@@ -220,7 +220,10 @@
     <span class="foot-sep">·</span>
     <span>MIT license</span>
     <span class="foot-sep">·</span>
-    <span>Built with on-device AI</span>
+    <span>
+      Built by one person, with on-device AI — feedback goes straight to the
+      developer.
+    </span>
   </footer>
 </div>
 
@@ -316,6 +319,12 @@
     align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;
+  }
+  .priv-flow a.chip {
+    text-decoration: none;
+  }
+  .priv-flow a.chip:hover {
+    color: var(--accent);
   }
   .priv-arrow {
     color: var(--ink-faint);

@@ -41,7 +41,7 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + Fraunces).
 | `src/pipeline/vision/` | Opt-in AI assist (OpenRouter/Gemini/Anthropic), spend cap, build-time free key; signed-in users route via `supabase/aiProxy.ts` → `ai-extract` Edge Function |
 | `src/store/` | `db.ts` (IndexedDB v1: batches/receipts/jobs/blobs/brands/kv), `repo.ts` (the one read/write + notify seam), `sync.ts` (Supabase mirror: LWW on `updatedAt`, storage blobs, realtime) |
 | `src/supabase/` | `client.ts` (null unless `VITE_SUPABASE_URL/ANON_KEY`), `auth.ts`, `aiProxy.ts` |
-| `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark), `state.svelte.ts` (the one reactive bridge), `App/Landing(hero+marketing)/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle` |
+| `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark — dark is a warm ladder anchored on `#12100e`, the PWA chrome color), `state.svelte.ts` (the one reactive bridge; `applyTheme` also syncs the theme-color meta pair), `App/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle`; `Landing.svelte` is the marketing orchestrator over `landing/` (Hero/How/Time/Logo/Workbook/Account/Contact partials + `landing.css` shared vocabulary) |
 | `src/export/` | `zip.ts` (dependency-free ZIP for the images download), `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells hyperlink to per-receipt anchors on the category image sheets; anchors precomputed via `blockRows` — keep in sync with the image-block layout; no flat "All Receipts" sheet — the Summary IS the receipt table; **single source of truth**: category-sheet amounts are the stored values, Summary amount cells reference them, Insights KPIs/tables are COUNT/MAX/SUMIF formulas over Summary — edit one amount and everything re-foots; Insights = executive dashboard of KPI tiles + 5 charts), `charts.ts` (Chart.js→PNG; native xlsx charts are NOT possible with ExcelJS — the PNGs are the deliberate trade), `insights.ts`, `csv.ts`, `images.ts` |
 | `supabase/` | `migrations/0001_core.sql` (tables+RLS+storage+realtime), `0002_pgvector.sql` (optional), `functions/ai-extract` (key-holding chat-completions proxy), `functions/logo-search` |
 | `scripts/` | `vendor-tesseract.mjs` (prebuild), `vendor-paddle.mjs` (opt-in), `export_vendor_db.py` (regenerates vendorDb.extra.json from `../Reimbursements/vendor_db.py`), `gen-icons.mjs` |
@@ -73,6 +73,23 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
 - **Copy a picker's FileList before clearing `input.value`**
   (Landing/Dropzone `onPicked`) — resetting the input empties the live
   FileList mid-await, silently dropping every file after the first.
+- **Landing's hidden file input lives in `Landing.svelte` (the orchestrator)
+  and must stay the page's only `input[type=file][multiple]`** — e2e and
+  screenshots drive it via `.first()`; Hero and the final CTA trigger it
+  through the `onAdd` prop / `pick()`. The hero h1 must keep matching
+  `/Receipts in/` (both test suites wait on it).
+- **Landing motion:** shared keyframes live in `landing/landing.css` (global,
+  `db-`prefixed) because Svelte can't share scoped keyframes across
+  components; section-local keyframes stay scoped (same `db-` names). Every
+  landing animation needs an explicit `prefers-reduced-motion` static
+  END-state in its component — the global kill-switch in theme.css freezes
+  animations at their 0% (hidden) frame.
+- **The dark palette is duplicated in theme.css** (`[data-theme="dark"]` block
+  + the `prefers-color-scheme` fallback) — edit both identically. The
+  theme-color hexes also live in `state.svelte.ts applyTheme` and index.html.
+- **#account's Drive-folder flow is marketing for a planned feature** — keep
+  the "Planned"/"coming soon" badges and future tense until it ships; the
+  sign-in/private-workspace/brand-sync claims are the shipped part.
 - **`npm run e2e` is the real-OCR accuracy gate** — three receipts (easy
   coffee, fuel with per-gallon pricing + FUEL TOTAL, split-label TOTAL) run
   through actual Tesseract in Chromium with per-receipt amount assertions. The

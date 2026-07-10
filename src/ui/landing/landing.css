@@ -28,6 +28,21 @@
   box-shadow: var(--shadow-1);
 }
 
+/* -- planned-feature badge --------------------------------------------------
+   Neutral on purpose: gold text fails AA at this size in light mode, and
+   green would read "available". */
+.landing .badge-soon {
+  display: inline-flex;
+  align-items: center;
+  font: 600 0.72rem/1 var(--font-ui);
+  padding: 0.28rem 0.6rem;
+  border-radius: var(--radius-pill);
+  background: var(--bg-sunken);
+  color: var(--ink-soft);
+  border: 1px solid var(--line-strong);
+  white-space: nowrap;
+}
+
 /* -- highlighter marks ------------------------------------------------------
    The triad mirrors the on-image annotation colors baked by
    pipeline/annotate.ts (blue vendor / green amount / red date); deliberately
