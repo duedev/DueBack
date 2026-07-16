@@ -111,3 +111,7 @@ export const PROCESSING = {
 };
 
 export const CURRENCY_DEFAULT = "USD";
+
+/** Phone-service reimbursement: a fixed monthly rate — the report option
+ *  multiplies it by the months the user selects (util/phone.ts). */
+export const PHONE_SERVICE_MONTHLY_USD = 63;

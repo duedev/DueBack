@@ -43,7 +43,7 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + Fraunces).
 | `src/supabase/` | `client.ts` (null unless `VITE_SUPABASE_URL/ANON_KEY`), `auth.ts`, `aiProxy.ts` |
 | `src/onedrive/` | Optional "Save to OneDrive" (no SDK, hidden unless `VITE_ONEDRIVE_CLIENT_ID`; ONEDRIVE_SETUP.md): `core.ts` (pure, Node-tested: PKCE, auth URL, token mapping, Graph upload w/ injectable fetch), `store.ts` (env + localStorage tokens), `popup.ts` (OAuth-popup relay, called by `main.ts` before mount), `index.ts` (connect popup / refresh / `uploadReport` → `Apps/DueBack`) |
 | `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark — dark is a warm ladder anchored on `#12100e`, the PWA chrome color), `state.svelte.ts` (the one reactive bridge; `applyTheme` also syncs the theme-color meta pair), `App/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle`; `Landing.svelte` is the marketing orchestrator over `landing/` (Hero/How/Time/Logo/Workbook/Account/Contact partials + `landing.css` shared vocabulary) |
-| `src/export/` | `zip.ts` (dependency-free ZIP for the images download), `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells hyperlink to per-receipt anchors on the category image sheets; anchors precomputed via `blockRows` — keep in sync with the image-block layout; no flat "All Receipts" sheet — the Summary IS the receipt table; **single source of truth**: category-sheet amounts are the stored values, Summary amount cells reference them, Insights KPIs/tables are COUNT/MAX/SUMIF formulas over Summary — edit one amount and everything re-foots; optional per-diem line (`Batch.perDiem`, `util/perdiem.ts`) sits between the sections and the TOTAL; Insights = executive dashboard of KPI tiles + 5 charts), `charts.ts` (Chart.js→PNG; native xlsx charts are NOT possible with ExcelJS — the PNGs are the deliberate trade), `insights.ts`, `csv.ts`, `images.ts` |
+| `src/export/` | `zip.ts` (dependency-free ZIP for the images download), `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells hyperlink to per-receipt anchors on the category image sheets; anchors precomputed via `blockRows` — keep in sync with the image-block layout; no flat "All Receipts" sheet — the Summary IS the receipt table; **single source of truth**: category-sheet amounts are the stored values, Summary amount cells reference them, Insights KPIs/tables are COUNT/MAX/SUMIF formulas over Summary — edit one amount and everything re-foots; optional allowance lines — per diem (`Batch.perDiem`, `util/perdiem.ts`) and phone service (`Batch.phoneService`, `util/phone.ts`) — sit between the sections and the TOTAL; Insights = executive dashboard of KPI tiles + 5 charts), `charts.ts` (Chart.js→PNG; native xlsx charts are NOT possible with ExcelJS — the PNGs are the deliberate trade), `insights.ts`, `csv.ts`, `images.ts` |
 | `supabase/` | `migrations/0001_core.sql` (tables+RLS+storage+realtime), `0002_pgvector.sql` (optional), `functions/ai-extract` (key-holding chat-completions proxy), `functions/logo-search` |
 | `scripts/` | `vendor-tesseract.mjs` (prebuild), `vendor-paddle.mjs` (opt-in), `export_vendor_db.py` (regenerates vendorDb.extra.json from `../Reimbursements/vendor_db.py`), `gen-icons.mjs` |
 | `tests/` | node:test via tsx; `testkit/` = the fixed 9-challenge accuracy gate (+ logo case); `e2e.mjs` + `screenshots.mjs` (Playwright vs `vite preview`) |
@@ -149,11 +149,15 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
 - **Receipts are renamed post-extraction** to `{cat}_{MM-DD-YY}_{vendor}.ext`
   (`util/rename.ts`, the original app's convention); the upload's name survives
   in `originalFileName` — the e2e keys receipts by it, not `fileName`.
-- **Per diem is report-side only**: `Batch.perDiem` (rides the sync `payload`
-  jsonb — no Supabase migration needed) → one labeled Summary line that feeds
-  the Summary TOTAL. Insights KPIs stay receipt analytics on purpose (adding
-  the allowance there would skew Avg/Receipt and Largest), and the CSV stays
-  raw receipt rows. A per-diem-only workbook (0 receipts) is legal.
+- **Allowances (per diem, phone service) are report-side only**:
+  `Batch.perDiem` + `Batch.phoneService` (ride the sync `payload` jsonb — no
+  Supabase migration needed) → labeled Summary lines between the category
+  sections and the TOTAL, which foots them. Insights KPIs stay receipt
+  analytics on purpose (allowances would skew Avg/Receipt and Largest), and
+  the CSV stays raw receipt rows. An allowances-only workbook (0 receipts) is
+  legal. Phone service is a fixed rate (`PHONE_SERVICE_MONTHLY_USD`,
+  constants.ts) × user-picked "YYYY-MM" months (`util/phone.ts` validates;
+  ExportBar's chip row = rolling 12 months ∪ receipt months ∪ saved picks).
 - **OneDrive is popup-order-sensitive**: `connectOneDrive` opens the (blank)
   popup synchronously inside the click, then navigates it — connect BEFORE
   building the workbook (ExportBar does), or popup blockers eat it. The OAuth

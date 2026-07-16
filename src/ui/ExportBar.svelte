@@ -3,20 +3,25 @@
   import { repo } from "../store/repo.ts";
   import { formatMoney, safeAmount } from "../util/money.ts";
   import { perDiemAmount, safePerDiemDays } from "../util/perdiem.ts";
+  import { monthLabel, normalizeMonths, phoneServiceAmount } from "../util/phone.ts";
+  import { PHONE_SERVICE_MONTHLY_USD } from "../config/constants.ts";
   import { oneDriveConfigured } from "../onedrive/store.ts";
   import { ensureConnected, uploadReport } from "../onedrive/index.ts";
-  import type { PerDiem } from "../types.ts";
+  import type { PerDiem, PhoneService } from "../types.ts";
 
   // The output is the point: batch meta + one-click themed workbook / CSV.
 
   let employee = $state("");
   let jobName = $state("");
   let jobNumber = $state("");
-  // Per-diem option: a flat daily allowance added to the report on top of
-  // the receipts. Values persist on the batch even while toggled off.
+  // Allowance options: flat amounts added to the report on top of the
+  // receipts. Values persist on the batch even while toggled off.
   let pdEnabled = $state(false);
   let pdRate = $state<number | undefined>(undefined);
   let pdDays = $state<number | undefined>(undefined);
+  // Phone service: fixed monthly rate × the months picked below.
+  let phEnabled = $state(false);
+  let phMonths = $state<string[]>([]);
   let seededBatch: string | null = null;
   let building = $state(false);
 
@@ -30,6 +35,8 @@
     pdEnabled = b.perDiem?.enabled ?? false;
     pdRate = b.perDiem?.rate || undefined;
     pdDays = b.perDiem?.days || undefined;
+    phEnabled = b.phoneService?.enabled ?? false;
+    phMonths = normalizeMonths(b.phoneService?.months);
   });
 
   /** Plain object (no $state proxies) — safe for the IndexedDB write. */
@@ -41,6 +48,11 @@
     };
   }
 
+  /** Same rule: fresh array of primitives, nothing reactive leaks through. */
+  function currentPhoneService(): PhoneService {
+    return { enabled: phEnabled, months: normalizeMonths(phMonths) };
+  }
+
   async function saveMeta(): Promise<void> {
     if (!app.batch) return;
     await repo.updateBatch(app.batch.id, {
@@ -48,7 +60,32 @@
       jobName,
       jobNumber,
       perDiem: currentPerDiem(),
+      phoneService: currentPhoneService(),
     });
+  }
+
+  /** Month chips on offer: a rolling last-12-months window, plus any month a
+   *  receipt falls in (reports often trail the expenses), plus anything
+   *  already selected — so a saved pick never disappears from the row. */
+  const monthChoices = $derived.by(() => {
+    const set = new Set<string>(phMonths);
+    const now = new Date();
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      set.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    }
+    for (const r of app.receipts) {
+      const m = r.date.value.slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(m)) set.add(m);
+    }
+    return [...set].sort();
+  });
+
+  function toggleMonth(m: string): void {
+    phMonths = phMonths.includes(m)
+      ? phMonths.filter((x) => x !== m)
+      : [...phMonths, m].sort();
+    void saveMeta();
   }
 
   const exportable = $derived(
@@ -63,8 +100,11 @@
     exportable.reduce((s, r) => s + safeAmount(r.amount.value), 0),
   );
   const pdAmount = $derived(perDiemAmount(currentPerDiem()));
-  /** A per-diem-only report (no receipts) is still a real reimbursement. */
-  const nothingToExport = $derived(exportable.length === 0 && pdAmount === 0);
+  const phAmount = $derived(phoneServiceAmount(currentPhoneService()));
+  /** An allowances-only report (no receipts) is still a real reimbursement. */
+  const nothingToExport = $derived(
+    exportable.length === 0 && pdAmount === 0 && phAmount === 0,
+  );
 
   let zipping = $state(false);
 
@@ -237,13 +277,45 @@
     {/if}
   </div>
 
+  <div class="perdiem">
+    <label class="check">
+      <input type="checkbox" bind:checked={phEnabled} onchange={saveMeta} />
+      <span>Phone service</span>
+    </label>
+    {#if phEnabled}
+      <div class="ph-months" role="group" aria-label="Months to reimburse">
+        {#each monthChoices as m (m)}
+          <button
+            type="button"
+            class="month-chip"
+            class:on={phMonths.includes(m)}
+            aria-pressed={phMonths.includes(m)}
+            onclick={() => toggleMonth(m)}
+          >
+            {monthLabel(m)}
+          </button>
+        {/each}
+      </div>
+      <span class="pd-total muted" aria-live="polite">
+        {phMonths.length === 0
+          ? `Pick the months to reimburse (${formatMoney(PHONE_SERVICE_MONTHLY_USD)}/month).`
+          : `= ${formatMoney(phAmount)} added to the report`}
+      </span>
+    {:else}
+      <span class="muted small">
+        Add the fixed {formatMoney(PHONE_SERVICE_MONTHLY_USD)}/month phone
+        reimbursement.
+      </span>
+    {/if}
+  </div>
+
   <div class="actions">
     <div class="sum">
-      <strong class="sum-total">{formatMoney(totalAmount + pdAmount)}</strong>
+      <strong class="sum-total">{formatMoney(totalAmount + pdAmount + phAmount)}</strong>
       <span class="muted">
         {exportable.length} of {app.receipts.length} receipts{pdAmount > 0
           ? " + per diem"
-          : ""}
+          : ""}{phAmount > 0 ? " + phone" : ""}
       </span>
     </div>
     {#if flagged.length > 0}
@@ -320,6 +392,25 @@
   }
   .pd-total {
     font-variant-numeric: tabular-nums;
+  }
+  .ph-months {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .month-chip {
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: var(--bg-raised);
+    color: var(--ink-soft);
+    font: 600 0.78rem/1 var(--font-ui);
+    padding: 0.35rem 0.65rem;
+    cursor: pointer;
+  }
+  .month-chip.on {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
   }
   .small {
     font-size: 0.84rem;

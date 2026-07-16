@@ -83,6 +83,14 @@ export interface PerDiem {
   days: number;
 }
 
+/** Phone-service reimbursement: a fixed monthly rate
+ *  (`PHONE_SERVICE_MONTHLY_USD` in config/constants.ts) × the months the
+ *  user picked. Months are "YYYY-MM"; non-contiguous selections are fine. */
+export interface PhoneService {
+  enabled: boolean;
+  months: string[];
+}
+
 export interface Batch {
   id: string;
   employee: string;
@@ -90,6 +98,8 @@ export interface Batch {
   jobNumber: string;
   /** Optional per-diem allowance; rides the sync payload like every field. */
   perDiem?: PerDiem;
+  /** Optional phone-service reimbursement; rides the sync payload too. */
+  phoneService?: PhoneService;
   createdAt: number;
   updatedAt: number;
 }

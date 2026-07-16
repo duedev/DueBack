@@ -28,10 +28,13 @@ for the web with two new pillars: **visual logo recognition** and an
    workbook straight to `OneDrive / Apps / DueBack`
    (see [`ONEDRIVE_SETUP.md`](./ONEDRIVE_SETUP.md)).
 
-Need a flat daily allowance on top of the receipts? Tick **Per diem** in the
-report bar, enter the dollar amount per day and the number of days, and the
-workbook's Summary gains a labeled `Per diem — 5 days × $75.00/day` line that
-feeds the grand TOTAL.
+Need flat allowances on top of the receipts? The report bar has two:
+**Per diem** (enter the dollar amount per day and the number of days) and
+**Phone service** (a fixed $63/month — tick the option and pick any set of
+months from the chips that appear). Each renders as a labeled line on the
+workbook's Summary — `Per diem — 5 days × $75.00/day`,
+`Phone service — 3 months × $63.00/month (Jan–Mar 2026)` — and feeds the
+grand TOTAL.
 
 ## The extraction pipeline
 
