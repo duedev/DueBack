@@ -319,6 +319,98 @@ test("headers have six columns (no dead Summary column); dates are whole days", 
   });
 });
 
+// ── Per diem ─────────────────────────────────────────────────────────────────
+
+const receiptsTotal = receipts.reduce((s, r) => s + r.amount.value, 0);
+
+function summaryScan(wb: ExcelJS.Workbook): {
+  perDiemLabel: string | null;
+  perDiemAmount: number | null;
+  total: number | null;
+  totalFormula: string;
+} {
+  const summary = wb.getWorksheet("Summary")!;
+  let perDiemLabel: string | null = null;
+  let perDiemAmount: number | null = null;
+  let total: number | null = null;
+  let totalFormula = "";
+  summary.eachRow((row) => {
+    const c2 = String(row.getCell(2).value ?? "");
+    if (c2.startsWith("Per diem")) {
+      perDiemLabel = c2;
+      perDiemAmount = Number(row.getCell(6).value);
+    }
+    if (String(row.getCell(5).value ?? "") === "TOTAL") {
+      const cell = row.getCell(6).value as { formula?: string; result?: number } | number;
+      total = typeof cell === "object" ? Number(cell?.result) : Number(cell);
+      totalFormula = typeof cell === "object" ? (cell?.formula ?? "") : "";
+    }
+  });
+  return { perDiemLabel, perDiemAmount, total, totalFormula };
+}
+
+test("per diem adds a labeled allowance line and feeds the TOTAL", async () => {
+  const pdBatch: Batch = {
+    ...batch,
+    perDiem: { enabled: true, rate: 75, days: 5 },
+  };
+  const result = await buildWorkbook(pdBatch, receipts, async () => undefined);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  const scan = summaryScan(wb);
+  assert.equal(scan.perDiemLabel, "Per diem — 5 days × $75.00/day");
+  assert.equal(scan.perDiemAmount, 375);
+  assert.ok(
+    Math.abs(scan.total! - (receiptsTotal + 375)) < 0.001,
+    `TOTAL ${String(scan.total)} includes the allowance`,
+  );
+  // The TOTAL foots the subtotal cells PLUS the per-diem cell.
+  assert.match(scan.totalFormula, /\+F\d+$/);
+
+  // Insights stays receipt analytics: Total Spend excludes the allowance.
+  const ins = wb.getWorksheet("Insights")!;
+  ins.eachRow((row) => {
+    row.eachCell((cell, col) => {
+      if (String(cell.value ?? "") === "Total Spend") {
+        const raw = ins.getCell(row.number + 1, col).value as
+          | number
+          | { result?: number };
+        const v = typeof raw === "object" ? raw?.result : raw;
+        assert.ok(Math.abs(Number(v) - receiptsTotal) < 0.001, `insights ${String(v)}`);
+      }
+    });
+  });
+});
+
+test("no per-diem line when disabled or zero", async () => {
+  for (const perDiem of [
+    undefined,
+    { enabled: false, rate: 75, days: 5 },
+    { enabled: true, rate: 0, days: 5 },
+  ]) {
+    const result = await buildWorkbook({ ...batch, perDiem }, receipts, async () => undefined);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await result.blob.arrayBuffer());
+    const scan = summaryScan(wb);
+    assert.equal(scan.perDiemLabel, null);
+    assert.ok(Math.abs(scan.total! - receiptsTotal) < 0.001);
+  }
+});
+
+test("a per-diem-only report (zero receipts) still builds and foots", async () => {
+  const pdBatch: Batch = {
+    ...batch,
+    perDiem: { enabled: true, rate: 120.5, days: 3 },
+  };
+  const result = await buildWorkbook(pdBatch, [], async () => undefined);
+  assert.equal(result.count, 0);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  const scan = summaryScan(wb);
+  assert.equal(scan.perDiemLabel, "Per diem — 3 days × $120.50/day");
+  assert.equal(scan.total, 361.5);
+});
+
 test("category sheets link back to the Summary", async () => {
   const result = await buildWorkbook(batch, receipts, async () => undefined);
   const wb = new ExcelJS.Workbook();

@@ -23,7 +23,15 @@ for the web with two new pillars: **visual logo recognition** and an
    highlighted right on the image (with zoomed callouts).
 3. **Download the workbook:** a themed `.xlsx` (Summary that foots with real
    formulas, an Insights dashboard with charts, per-category sheets with the
-   receipt images embedded) plus a one-click CSV and an images ZIP.
+   receipt images embedded) plus a one-click CSV and an images ZIP. Deployments
+   configured for it also get a **Save to OneDrive** button that uploads the
+   workbook straight to `OneDrive / Apps / DueBack`
+   (see [`ONEDRIVE_SETUP.md`](./ONEDRIVE_SETUP.md)).
+
+Need a flat daily allowance on top of the receipts? Tick **Per diem** in the
+report bar, enter the dollar amount per day and the number of days, and the
+workbook's Summary gains a labeled `Per diem — 5 days × $75.00/day` line that
+feeds the grand TOTAL.
 
 ## The extraction pipeline
 
@@ -46,6 +54,9 @@ Everything above the "Assist" row runs entirely in your browser.
 - **AI assist (opt-in):** low-confidence receipts go to the model you chose.
 - **Sync (opt-in):** signing in mirrors your data to *your own* Supabase
   workspace with row-level security. See [`SUPABASE_SETUP.md`](./SUPABASE_SETUP.md).
+- **OneDrive (opt-in):** only the workbooks you explicitly save are uploaded,
+  straight from your browser to your OneDrive — no server in between, tokens
+  stay local. See [`ONEDRIVE_SETUP.md`](./ONEDRIVE_SETUP.md).
 
 ## Develop
 
@@ -70,7 +81,9 @@ VITE_OCR_ENGINE=paddle npm run dev
 Static output (`dist/`) with a GitHub Pages workflow included
 (`.github/workflows/deploy.yml`). Optional build-time settings:
 `OPENROUTER_API_KEY` (free zero-click AI assist), `VITE_SUPABASE_URL` +
-`VITE_SUPABASE_ANON_KEY` (sync layer), `VITE_CF_ANALYTICS_TOKEN` (cookieless
+`VITE_SUPABASE_ANON_KEY` (sync layer), `VITE_ONEDRIVE_CLIENT_ID`
+("Save to OneDrive" — see [`ONEDRIVE_SETUP.md`](./ONEDRIVE_SETUP.md)),
+`VITE_CF_ANALYTICS_TOKEN` (cookieless
 visit stats via Cloudflare Web Analytics; page views only). The app is embeddable in an iframe
 (e.g. a Carrd Embed block); it's a single relative-path static bundle.
 

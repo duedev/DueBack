@@ -3,6 +3,7 @@ import type { Batch, Receipt, Category } from "../types.ts";
 import { APP_NAME } from "../config/constants.ts";
 import { CATEGORIES, CATEGORY_META } from "../config/categories.ts";
 import { safeAmount } from "../util/money.ts";
+import { perDiemAmount, perDiemLabel } from "../util/perdiem.ts";
 import { computeInsights, type Insights } from "./insights.ts";
 import { thumbnail } from "./images.ts";
 import {
@@ -497,15 +498,40 @@ function buildSummarySheet(
     r += 2; // spacer between sections
   }
 
-  // Grand TOTAL row footing the subtotals
+  // Per-diem line — a flat allowance with no receipts behind it, so it sits
+  // between the receipt sections and the TOTAL. It feeds the Summary TOTAL
+  // only; the Insights KPIs stay receipt analytics (adding it there would
+  // skew Avg/Receipt and Largest).
+  const perDiem = perDiemAmount(batch.perDiem);
+  let perDiemCell: string | null = null;
+  if (perDiem > 0) {
+    ws.mergeCells(r, 2, r, 5); // merged → skipped by autofit, long label safe
+    const label = ws.getCell(r, 2);
+    label.value = `Per diem — ${perDiemLabel(batch.perDiem!, currency)}`;
+    label.font = { bold: true, color: { argb: "FF1F2937" } };
+    label.alignment = { horizontal: "right", vertical: "middle" };
+    const amt = ws.getCell(r, 6);
+    amt.value = perDiem;
+    amt.font = { bold: true, color: { argb: "FF1F2937" } };
+    amt.numFmt = fmt;
+    amt.alignment = { horizontal: "right", vertical: "middle" };
+    for (let c = 2; c <= 6; c++) fill(ws.getCell(r, c), NOTE_YELLOW);
+    ws.getRow(r).height = 20;
+    perDiemCell = `F${r}`;
+    r += 2;
+  }
+
+  // Grand TOTAL row footing the subtotals (+ the per-diem line, when present)
   const totalRow = ws.getRow(r);
   totalRow.getCell(5).value = "TOTAL";
   totalRow.getCell(6).value = {
-    formula: subtotalCells.join("+") || "0",
-    result: perCategory.reduce(
-      (s, g) => s + g.rows.reduce((x, rec) => x + safeAmount(rec.amount.value), 0),
-      0,
-    ),
+    formula:
+      [...subtotalCells, ...(perDiemCell ? [perDiemCell] : [])].join("+") || "0",
+    result:
+      perCategory.reduce(
+        (s, g) => s + g.rows.reduce((x, rec) => x + safeAmount(rec.amount.value), 0),
+        0,
+      ) + perDiem,
   };
   for (const c of [5, 6]) {
     const cell = totalRow.getCell(c);

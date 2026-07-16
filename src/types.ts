@@ -72,11 +72,24 @@ export interface Field<T> {
   edited?: boolean;
 }
 
+/** Flat daily allowance added to the report on top of the receipts:
+ *  `rate` dollars per day × `days` days. `enabled` is kept separate so
+ *  toggling the option off in the UI preserves the entered values. */
+export interface PerDiem {
+  enabled: boolean;
+  /** Dollars reimbursed per day (the batch's dominant currency). */
+  rate: number;
+  /** Duration in days (fractions allowed for half days). */
+  days: number;
+}
+
 export interface Batch {
   id: string;
   employee: string;
   jobName: string;
   jobNumber: string;
+  /** Optional per-diem allowance; rides the sync payload like every field. */
+  perDiem?: PerDiem;
   createdAt: number;
   updatedAt: number;
 }

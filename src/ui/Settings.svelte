@@ -11,6 +11,12 @@
   import { testVisionConnection } from "../pipeline/vision/index.ts";
   import { addBrandFromImage } from "../pipeline/logo/index.ts";
   import { signInWithGoogle, signInWithEmail, signOut } from "../supabase/auth.ts";
+  import {
+    connectOneDrive,
+    disconnectOneDrive,
+    oneDriveAccount,
+    oneDriveConfigured,
+  } from "../onedrive/index.ts";
   import { formatMoney } from "../util/money.ts";
   import { getCorrections, clearCorrections } from "../train/corrections.ts";
   import type { Receipt } from "../types.ts";
@@ -140,6 +146,38 @@
     await loadBrands();
   }
 
+  // ---- OneDrive (save reports to Microsoft OneDrive) ----------------------
+  const odConfigured = oneDriveConfigured();
+  let odAccount = $state(oneDriveAccount());
+  let odBusy = $state(false);
+
+  // Re-read on every open: the report bar's "Save to OneDrive" can connect
+  // an account while this panel isn't looking.
+  $effect(() => {
+    if (app.settingsOpen) odAccount = oneDriveAccount();
+  });
+
+  async function connectOd(): Promise<void> {
+    odBusy = true;
+    try {
+      odAccount = await connectOneDrive();
+      app.toast("OneDrive connected.", "ok");
+    } catch (err) {
+      app.toast(
+        err instanceof Error ? err.message : "OneDrive sign-in failed.",
+        "err",
+      );
+    } finally {
+      odBusy = false;
+    }
+  }
+
+  function disconnectOd(): void {
+    disconnectOneDrive();
+    odAccount = null;
+    app.toast("OneDrive disconnected.", "info");
+  }
+
   // ---- Account & sync ------------------------------------------------------
   let email = $state("");
   let emailSent = $state(false);
@@ -234,6 +272,44 @@
                 <p class="ok small">Check your inbox; the link signs you in here.</p>
               {/if}
             {/if}
+          {/if}
+        </section>
+
+        <!-- ============== OneDrive ============== -->
+        <section>
+          <h4>OneDrive</h4>
+          {#if !odConfigured}
+            <p class="muted small">
+              Saving workbooks straight to OneDrive needs a (free) Microsoft
+              app registration configured at build time
+              (<code>VITE_ONEDRIVE_CLIENT_ID</code> — see
+              <code>ONEDRIVE_SETUP.md</code>). This deployment doesn't have
+              one, so the option stays hidden.
+            </p>
+          {:else if odAccount}
+            <p class="muted">
+              Connected as
+              <strong>{odAccount.name || odAccount.email || "Microsoft account"}</strong>
+              {#if odAccount.name && odAccount.email}
+                <span class="small">· {odAccount.email}</span>
+              {/if}
+            </p>
+            <p class="muted small">
+              "Save to OneDrive" in the report bar uploads the generated
+              workbook to <code>OneDrive / Apps / DueBack</code>. Sign-in
+              tokens stay in this browser; disconnecting forgets them.
+            </p>
+            <button class="btn btn-sm" onclick={disconnectOd}>Disconnect</button>
+          {:else}
+            <p class="muted small">
+              Connect a Microsoft account to save generated workbooks straight
+              to <code>OneDrive / Apps / DueBack</code>. Receipts are still
+              read on this device — only the reports you explicitly save are
+              uploaded.
+            </p>
+            <button class="btn" onclick={() => void connectOd()} disabled={odBusy}>
+              {odBusy ? "Connecting…" : "Connect OneDrive"}
+            </button>
           {/if}
         </section>
 

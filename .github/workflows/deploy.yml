@@ -7,6 +7,7 @@ name: Deploy to GitHub Pages
 # Optional build-time secrets:
 #   OPENROUTER_API_KEY      — bakes in the free vision-assist key (never in source)
 #   VITE_SUPABASE_URL/KEY   — enables the optional cloud-sync layer
+#   VITE_ONEDRIVE_CLIENT_ID — enables "Save to OneDrive" (see ONEDRIVE_SETUP.md)
 
 on:
   push:
@@ -32,6 +33,8 @@ jobs:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
       VITE_CF_ANALYTICS_TOKEN: ${{ vars.VITE_CF_ANALYTICS_TOKEN }}
+      VITE_ONEDRIVE_CLIENT_ID: ${{ vars.VITE_ONEDRIVE_CLIENT_ID }}
+      VITE_ONEDRIVE_TENANT: ${{ vars.VITE_ONEDRIVE_TENANT }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
