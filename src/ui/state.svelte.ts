@@ -4,7 +4,7 @@ import { sync } from "../store/sync.ts";
 import { syncConfigured } from "../supabase/client.ts";
 import { onAuthChange, currentUser } from "../supabase/auth.ts";
 import { saveVisionConfig } from "../pipeline/vision/config.ts";
-import { validateFile, safeBasename } from "../util/files.ts";
+import { validateFile, safeBasename, isPdf } from "../util/files.ts";
 import { uid } from "../util/id.ts";
 import { LIMITS, CURRENCY_DEFAULT } from "../config/constants.ts";
 import type { Batch, Receipt, ReceiptStatus } from "../types.ts";
@@ -190,34 +190,44 @@ class AppState {
     }, 4200);
   }
 
-  /** Validate, store, and enqueue a set of dropped/picked files. */
+  /** Validate, store, and enqueue a set of dropped/picked files. A multi-page
+   *  PDF (scanner output) is a *stack* of receipts — it is expanded here into
+   *  one receipt per page; processing only page 1 silently dropped the rest. */
   async addFiles(files: Iterable<File>): Promise<void> {
     if (!this.batch) return;
     this.entered = true;
     this.wentHome = false;
     const existing = this.receipts.length;
     let accepted = 0;
-    for (const file of files) {
-      if (existing + accepted >= LIMITS.maxReceiptsPerBatch) {
+    let capped = false;
+
+    const atCap = (): boolean => {
+      if (existing + accepted < LIMITS.maxReceiptsPerBatch) return false;
+      if (!capped) {
+        capped = true;
         this.toast(
           `Batch cap reached (${LIMITS.maxReceiptsPerBatch} receipts).`,
           "warn",
         );
-        break;
       }
-      const check = validateFile(file);
-      if (!check.ok) {
-        this.toast(`Skipped ${safeBasename(file.name)}: ${check.reason}`, "warn");
-        continue;
-      }
-      const fileKey = await repo.putBlob(file, "original");
+      return true;
+    };
+
+    const enqueueOne = async (
+      blob: Blob,
+      fileName: string,
+      mimeType: string,
+      originalFileName?: string,
+    ): Promise<void> => {
+      const fileKey = await repo.putBlob(blob, "original");
       const now = Date.now();
       const receipt: Receipt = {
         id: uid("rcpt"),
-        batchId: this.batch.id,
+        batchId: this.batch!.id,
         fileKey,
-        fileName: safeBasename(file.name),
-        mimeType: file.type || "application/octet-stream",
+        fileName,
+        originalFileName,
+        mimeType,
         status: "queued",
         vendor: { value: "", confidence: 0 },
         date: { value: "", confidence: 0 },
@@ -237,7 +247,51 @@ class AppState {
       await repo.putReceipt(receipt);
       await repo.enqueue(receipt.id);
       accepted++;
+    };
+
+    for (const file of files) {
+      if (atCap()) break;
+      const check = validateFile(file);
+      if (!check.ok) {
+        this.toast(`Skipped ${safeBasename(file.name)}: ${check.reason}`, "warn");
+        continue;
+      }
+
+      if (isPdf(file)) {
+        let pages: import("../pipeline/pdf.ts").PdfPageImage[] = [];
+        try {
+          const { expandPdf } = await import("../pipeline/pdf.ts");
+          pages = await expandPdf(file);
+        } catch {
+          // Unreadable/odd PDF: store it as-is — the pipeline still decodes
+          // the first page (the pre-expansion behavior).
+          pages = [];
+        }
+        if (pages.length > 0) {
+          const { pdfPageNames } = await import("../pipeline/pdf.ts");
+          const base = safeBasename(file.name);
+          for (const p of pages) {
+            if (atCap()) break;
+            const names = pdfPageNames(base, p.pageNumber, p.pageCount);
+            await enqueueOne(p.blob, names.fileName, "image/jpeg", names.originalFileName);
+          }
+          if (pages.length > 1) {
+            this.toast(
+              `${base}: ${pages.length} pages, one receipt each.`,
+              "info",
+            );
+          }
+          continue;
+        }
+      }
+
+      await enqueueOne(
+        file,
+        safeBasename(file.name),
+        file.type || "application/octet-stream",
+      );
     }
+
     if (accepted > 0) {
       this.toast(
         accepted === 1 ? "1 receipt queued." : `${accepted} receipts queued.`,

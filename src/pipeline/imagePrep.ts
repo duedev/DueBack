@@ -32,7 +32,9 @@ export interface CleanedImage {
   url: string;
 }
 
-/** Decode any supported input (image or first PDF page) into a bitmap. */
+/** Decode any supported input into a bitmap. PDFs are normally expanded into
+ *  per-page images at intake (pipeline/pdf.ts); the first-page path below
+ *  only serves PDF blobs stored by older versions of the app. */
 async function decode(file: File | Blob): Promise<ImageBitmap> {
   if (file instanceof File && isPdf(file)) {
     return decodePdfFirstPage(file);

@@ -17,24 +17,28 @@ for the web with two new pillars: **visual logo recognition** and an
 ## How it works
 
 1. **Snap or drop:** photos, scans, or PDFs; the phone camera works directly.
-   Each image is straightened, cleaned, and read on-device.
+   A multi-page PDF (scanner output) becomes one receipt per page. Each image
+   is straightened, cleaned, and read on-device.
 2. **Review the flagged few:** most receipts file themselves; the uncertain
    ones queue for an `Approve & Next` sweep with each extracted field
    highlighted right on the image (with zoomed callouts).
 3. **Download the workbook:** a themed `.xlsx` (Summary that foots with real
-   formulas, an Insights dashboard with charts, per-category sheets with the
-   receipt images embedded) plus a one-click CSV and an images ZIP. Deployments
+   formulas, per-category sheets with the receipt images embedded, and — when
+   you tick **Insights sheet** in the report bar — a charts + KPI dashboard
+   tab) plus a one-click CSV and an images ZIP. Deployments
    configured for it also get a **Save to OneDrive** button that uploads the
    workbook straight to `OneDrive / Apps / DueBack`
    (see [`ONEDRIVE_SETUP.md`](./ONEDRIVE_SETUP.md)).
 
-Need flat allowances on top of the receipts? The report bar has two:
-**Per diem** (enter the dollar amount per day and the number of days) and
-**Phone service** (a fixed $63/month — tick the option and pick any set of
-months from the chips that appear). Each renders as a labeled line on the
-workbook's Summary — `Per diem — 5 days × $75.00/day`,
-`Phone service — 3 months × $63.00/month (Jan–Mar 2026)` — and feeds the
-grand TOTAL.
+The report bar also remembers your **jobs**: save a job name + number pair
+once (☆ Save job) and typing either one autofills the other from then on
+(manage pairs in Settings). Need flat allowances on top of the receipts? Two
+options sit right there: **Per diem** (enter the dollar amount per day and
+the number of days) and **Phone service** (a fixed $63/month — pick any
+months, across any years, from the ‹ year › month grid). Each renders as a
+labeled line on the workbook's Summary — `Per diem — 5 days × $75.00/day`,
+`Phone service — 3 months × $63.00/month (Jan 2024, Jun–Jul 2026)` — and
+feeds the grand TOTAL.
 
 ## The extraction pipeline
 

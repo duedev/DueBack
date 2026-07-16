@@ -141,6 +141,61 @@ async function makeSplitTotalReceiptPng() {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
+// A hand-built two-page PDF (Helvetica text, correct xref) — the scanner-PDF
+// case: every page is its own receipt, and processing only page 1 silently
+// dropped the rest. pdf.js renders it; Tesseract reads the rendered pages.
+function makeTwoPagePdf() {
+  const esc = (s) => s.replace(/[\\()]/g, (c) => "\\" + c);
+  const content = (lines) => {
+    const ops = ["BT", "/F1 28 Tf", "72 708 Td"];
+    lines.forEach((line, i) => {
+      if (i > 0) ops.push("0 -44 Td");
+      ops.push(`(${esc(line)}) Tj`);
+    });
+    ops.push("ET");
+    return ops.join("\n");
+  };
+  const page1 = content([
+    "TARGET",
+    "123 RETAIL ROW",
+    "Date: 05/02/2026",
+    "Mop            12.00",
+    "Bucket          3.00",
+    "Subtotal       15.00",
+    "Tax             0.75",
+    "TOTAL         $15.75",
+  ]);
+  const page2 = content([
+    "STARBUCKS",
+    "456 COFFEE WAY",
+    "Date: 05/03/2026",
+    "Latte           4.25",
+    "TOTAL          $4.25",
+  ]);
+  const objs = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>",
+    `<< /Length ${page1.length} >>\nstream\n${page1}\nendstream`,
+    `<< /Length ${page2.length} >>\nstream\n${page2}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets = [0];
+  for (let i = 0; i < objs.length; i++) {
+    offsets.push(body.length);
+    body += `${i + 1} 0 obj\n${objs[i]}\nendobj\n`;
+  }
+  const xrefPos = body.length;
+  body += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= objs.length; i++) {
+    body += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  }
+  body += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
+  return Buffer.from(body, "latin1");
+}
+
 async function main() {
   log("starting preview server…");
   const server = spawn(
@@ -287,6 +342,9 @@ async function main() {
     // 7. Generate the spreadsheet and validate the downloaded workbook.
     await page.locator("#xb-emp").fill("Ada Lovelace");
     await page.locator("#xb-job").fill("Q1 Coffee Run");
+    // Insights is opt-in (default off) — tick it so the dashboard assertions
+    // below also gate the toggle itself.
+    await page.getByText("Insights sheet", { exact: true }).click();
     const dlDir = await mkdtemp(join(tmpdir(), "reimb-"));
     const [download] = await Promise.all([
       page.waitForEvent("download", { timeout: 60000 }),
@@ -331,11 +389,40 @@ async function main() {
       `images zip downloads (${zipDl.suggestedFilename()}, ${zipBytes.length} bytes)`,
     );
 
+    // 7c. Multi-page PDF: every page becomes its own receipt — the scanner
+    // workflow (processing only page 1 silently dropped the rest).
+    log("uploading a 2-page PDF…");
+    await page
+      .locator('input[type=file][multiple]')
+      .first()
+      .setInputFiles([
+        { name: "stack.pdf", mimeType: "application/pdf", buffer: makeTwoPagePdf() },
+      ]);
+    let pdfRows = [];
+    const pdfDeadline = Date.now() + 180000;
+    while (Date.now() < pdfDeadline) {
+      pdfRows = (await readRows()).filter((r) => /^stack\.pdf \(page /.test(r.file));
+      if (
+        pdfRows.length === 2 &&
+        pdfRows.every((r) => ["done", "needs_review", "failed"].includes(r.status))
+      )
+        break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    for (const r of pdfRows) log(`extracted → ${r.file}: vendor="${r.vendor}" amount=${r.amount} [${r.status}]`);
+    check(pdfRows.length === 2, `2-page PDF expanded into 2 receipts (got ${pdfRows.length})`);
+    const pdfP1 = pdfRows.find((r) => r.file.includes("(page 1 of 2)")) ?? {};
+    const pdfP2 = pdfRows.find((r) => r.file.includes("(page 2 of 2)")) ?? {};
+    check(pdfP1.amount === 15.75, `PDF page 1: total read (got ${pdfP1.amount})`);
+    check(/TARGET/i.test(pdfP1.vendor || ""), `PDF page 1: vendor (got ${pdfP1.vendor})`);
+    check(pdfP2.amount === 4.25, `PDF page 2: total read (got ${pdfP2.amount})`);
+    check(/STARBUCKS/i.test(pdfP2.vendor || ""), `PDF page 2: vendor (got ${pdfP2.vendor})`);
+
     // 8. Header brand navigates home; the hero offers the way back.
     await page.locator("header.ws-head .brand").click();
     await page.getByRole("heading", { name: /Receipts in/ }).waitFor({ timeout: 10000 });
     check(true, "brand click returns to the landing page");
-    await page.getByRole("button", { name: /Back to your receipts \(4\)/ }).click();
+    await page.getByRole("button", { name: /Back to your receipts \(6\)/ }).click();
     await page.getByText("Drop receipts here").waitFor({ timeout: 10000 });
     check(true, "landing offers the way back to the workspace");
 

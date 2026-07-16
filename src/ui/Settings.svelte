@@ -17,6 +17,7 @@
     oneDriveAccount,
     oneDriveConfigured,
   } from "../onedrive/index.ts";
+  import { listSavedJobs, forgetJob, type SavedJob } from "../store/jobs.ts";
   import { formatMoney } from "../util/money.ts";
   import { getCorrections, clearCorrections } from "../train/corrections.ts";
   import type { Receipt } from "../types.ts";
@@ -178,6 +179,18 @@
     app.toast("OneDrive disconnected.", "info");
   }
 
+  // ---- Saved jobs (name ⇄ number pairs for the report bar) -----------------
+  let savedJobs = $state<SavedJob[]>([]);
+  $effect(() => {
+    // Re-read on every open: the report bar's "Save job" adds pairs while
+    // this panel isn't looking.
+    if (app.settingsOpen) void listSavedJobs().then((j) => (savedJobs = j));
+  });
+
+  async function removeSavedJob(name: string): Promise<void> {
+    savedJobs = await forgetJob(name);
+  }
+
   // ---- Account & sync ------------------------------------------------------
   let email = $state("");
   let emailSent = $state(false);
@@ -310,6 +323,35 @@
             <button class="btn" onclick={() => void connectOd()} disabled={odBusy}>
               {odBusy ? "Connecting…" : "Connect OneDrive"}
             </button>
+          {/if}
+        </section>
+
+        <!-- ============== saved jobs ============== -->
+        <section>
+          <h4>Saved jobs</h4>
+          <p class="muted small">
+            Job names and numbers travel as a pair: in the report bar, typing
+            (or picking) a saved one autofills the other. Save a pair with the
+            "☆ Save job" button next to the fields; forget pairs here.
+          </p>
+          {#if savedJobs.length}
+            <ul class="brand-list">
+              {#each savedJobs as j (j.name)}
+                <li>
+                  <span class="chip">{j.name}</span>
+                  <span class="muted small">#{j.number}</span>
+                  <button
+                    class="btn btn-ghost btn-sm btn-danger"
+                    onclick={() => void removeSavedJob(j.name)}
+                    aria-label={`Forget job ${j.name}`}
+                  >
+                    forget
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {:else}
+            <p class="muted small">No saved jobs yet.</p>
           {/if}
         </section>
 

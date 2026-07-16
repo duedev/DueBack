@@ -54,7 +54,7 @@ const receipts: Receipt[] = [
 ];
 
 test("buildWorkbook produces a valid multi-sheet workbook with footing totals", async () => {
-  const result = await buildWorkbook(batch, receipts, async () => undefined);
+  const result = await buildWorkbook(batch, receipts, async () => undefined, { insights: true });
   assert.equal(result.count, 4);
   assert.equal(result.totalCost, 0);
   // The original app's convention: Reimbursements_{Employee}_{YYYYMMDD}.xlsx
@@ -137,7 +137,7 @@ test("buildWorkbook skips failed and zero-amount receipts", async () => {
 });
 
 test("sheet order: Summary, categories in taxonomy order, Insights rightmost", async () => {
-  const result = await buildWorkbook(batch, receipts, async () => undefined);
+  const result = await buildWorkbook(batch, receipts, async () => undefined, { insights: true });
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(await result.blob.arrayBuffer());
   const names = wb.worksheets.map((w) => w.name);
@@ -146,6 +146,25 @@ test("sheet order: Summary, categories in taxonomy order, Insights rightmost", a
   // The Summary IS the receipt table (linked); no redundant flat copy.
   assert.ok(!names.includes("All Receipts"));
   assert.deepEqual(names.slice(1, -1), ["Meals", "Travel", "Lodging", "Ground Transportation"]);
+});
+
+test("the Insights sheet is opt-in — absent by default", async () => {
+  const result = await buildWorkbook(batch, receipts, async () => undefined);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  const names = wb.worksheets.map((w) => w.name);
+  assert.ok(!names.includes("Insights"), names.join(", "));
+  // Without it, the rightmost tab is the last category sheet…
+  assert.equal(names[names.length - 1], "Ground Transportation");
+  // …and the Summary still knows the expense period (computed regardless).
+  const summary = wb.getWorksheet("Summary")!;
+  let period = "";
+  summary.eachRow((row) => {
+    if (String(row.getCell(2).value ?? "") === "Expense Period:") {
+      period = String(row.getCell(3).value ?? "");
+    }
+  });
+  assert.match(period, /Jan/, `expense period present (got "${period}")`);
 });
 
 test('"Other" receipts are labeled Miscellaneous in the report', async () => {
@@ -195,7 +214,7 @@ test("no app-generated notes reach the report; credits sit at the top", async ()
 });
 
 test("Insights Total Spend foots from the Summary's subtotal formulas", async () => {
-  const result = await buildWorkbook(batch, receipts, async () => undefined);
+  const result = await buildWorkbook(batch, receipts, async () => undefined, { insights: true });
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(await result.blob.arrayBuffer());
   const insights = wb.getWorksheet("Insights")!;
@@ -259,7 +278,7 @@ test("Summary amounts are live references to the category sheets", async () => {
 });
 
 test("Insights KPIs and tables derive from Summary cells", async () => {
-  const result = await buildWorkbook(batch, receipts, async () => undefined);
+  const result = await buildWorkbook(batch, receipts, async () => undefined, { insights: true });
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(await result.blob.arrayBuffer());
   const ins = wb.getWorksheet("Insights")!;
@@ -362,7 +381,7 @@ test("per diem adds a labeled allowance line and feeds the TOTAL", async () => {
     ...batch,
     perDiem: { enabled: true, rate: 75, days: 5 },
   };
-  const result = await buildWorkbook(pdBatch, receipts, async () => undefined);
+  const result = await buildWorkbook(pdBatch, receipts, async () => undefined, { insights: true });
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(await result.blob.arrayBuffer());
   const scan = summaryScan(wb);

@@ -166,11 +166,20 @@ function exportable(receipts: Receipt[]): Receipt[] {
     .sort((a, b) => (a.date.value < b.date.value ? -1 : 1));
 }
 
+export interface WorkbookOptions {
+  /** Add the Insights dashboard sheet (KPI tiles + charts). Off by default —
+   *  most offices want the form, and skipping it also skips the chart
+   *  rendering, the slowest part of a build. */
+  insights?: boolean;
+}
+
 export async function buildWorkbook(
   batch: Batch,
   receipts: Receipt[],
   getBlob: (key: string) => Promise<Blob | undefined>,
+  opts: WorkbookOptions = {},
 ): Promise<ExportResult> {
+  const withInsights = opts.insights === true;
   const rows = exportable(receipts);
   const wb = new ExcelJS.Workbook();
   wb.creator = APP_NAME;
@@ -200,14 +209,18 @@ export async function buildWorkbook(
 
   const totalCost = rows.reduce((s, r) => s + (r.cost || 0), 0);
   const currency = dominantCurrency(rows);
+  // Always computed — the Summary's info band uses insights.period — but the
+  // charts (the slow part) only render when the Insights sheet is wanted.
   const insights = computeInsights(rows);
-  const charts = {
-    category: await categoryChartImage(insights).catch(() => null),
-    daily: await dailyChartImage(insights).catch(() => null),
-    vendors: await vendorsChartImage(insights).catch(() => null),
-    cumulative: await cumulativeChartImage(insights).catch(() => null),
-    share: await shareChartImage(insights).catch(() => null),
-  };
+  const charts = withInsights
+    ? {
+        category: await categoryChartImage(insights).catch(() => null),
+        daily: await dailyChartImage(insights).catch(() => null),
+        vendors: await vendorsChartImage(insights).catch(() => null),
+        cumulative: await cumulativeChartImage(insights).catch(() => null),
+        share: await shareChartImage(insights).catch(() => null),
+      }
+    : { category: null, daily: null, vendors: null, cumulative: null, share: null };
 
   // Categories present, in taxonomy order; layout is computed up-front so the
   // Summary (built first, shown first) can hyperlink into the image sheets.
@@ -234,13 +247,15 @@ export async function buildWorkbook(
   }
 
   // Tab order: Summary first (it IS the per-category receipt table, linked),
-  // the category image sheets next (Fuel, Materials, … Miscellaneous), and
-  // Insights all the way to the right.
+  // the category image sheets next (Fuel, Materials, … Miscellaneous), and —
+  // when opted in — Insights all the way to the right.
   const refs = buildSummarySheet(wb, batch, perCategory, anchors, amountRefs, currency, insights);
   for (const g of perCategory) {
     buildImageSheet(wb, g.cat, g.rows, imageByReceipt, batch, currency);
   }
-  buildInsightsSheet(wb, batch, insights, currency, charts, refs);
+  if (withInsights) {
+    buildInsightsSheet(wb, batch, insights, currency, charts, refs);
+  }
 
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], {
