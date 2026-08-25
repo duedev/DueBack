@@ -4,7 +4,7 @@ import { sync } from "../store/sync.ts";
 import { syncConfigured } from "../supabase/client.ts";
 import { onAuthChange, currentUser } from "../supabase/auth.ts";
 import { saveVisionConfig } from "../pipeline/vision/config.ts";
-import { validateFile, safeBasename, isPdf } from "../util/files.ts";
+import { validateFile, safeBasename, isPdf, isZip } from "../util/files.ts";
 import { uid } from "../util/id.ts";
 import { LIMITS, CURRENCY_DEFAULT } from "../config/constants.ts";
 import type { Batch, Receipt, ReceiptStatus } from "../types.ts";
@@ -190,9 +190,12 @@ class AppState {
     }, 4200);
   }
 
-  /** Validate, store, and enqueue a set of dropped/picked files. A multi-page
-   *  PDF (scanner output) is a *stack* of receipts — it is expanded here into
-   *  one receipt per page; processing only page 1 silently dropped the rest. */
+  /** Validate, store, and enqueue a set of dropped/picked files. Two inputs
+   *  are *stacks* of receipts rather than single ones and are expanded here:
+   *  a multi-page PDF (scanner output) becomes one receipt per page, and a
+   *  ZIP becomes one receipt per usable entry, however deeply the archive
+   *  nests its folders. Processing only page 1 / ignoring the archive
+   *  silently dropped the rest. */
   async addFiles(files: Iterable<File>): Promise<void> {
     if (!this.batch) return;
     this.entered = true;
@@ -249,12 +252,25 @@ class AppState {
       accepted++;
     };
 
-    for (const file of files) {
-      if (atCap()) break;
+    // `label` is how this file should read on the card: for a file the user
+    // picked that is just its name, but for something unpacked from an
+    // archive it is the path inside it ("trip.zip › march/tesla_12.pdf"),
+    // which is often the only thing telling twelve "receipt.pdf" files apart.
+    const addOne = async (
+      file: File,
+      depth: number,
+      label?: string,
+    ): Promise<void> => {
+      const shown = label ?? safeBasename(file.name);
       const check = validateFile(file);
       if (!check.ok) {
-        this.toast(`Skipped ${safeBasename(file.name)}: ${check.reason}`, "warn");
-        continue;
+        this.toast(`Skipped ${shown}: ${check.reason}`, "warn");
+        return;
+      }
+
+      if (isZip(file)) {
+        await addArchive(file, depth, shown);
+        return;
       }
 
       if (isPdf(file)) {
@@ -272,16 +288,16 @@ class AppState {
           const base = safeBasename(file.name);
           for (const p of pages) {
             if (atCap()) break;
-            const names = pdfPageNames(base, p.pageNumber, p.pageCount);
+            const names = pdfPageNames(base, p.pageNumber, p.pageCount, shown);
             await enqueueOne(p.blob, names.fileName, "image/jpeg", names.originalFileName);
           }
           if (pages.length > 1) {
             this.toast(
-              `${base}: ${pages.length} pages, one receipt each.`,
+              `${shown}: ${pages.length} pages, one receipt each.`,
               "info",
             );
           }
-          continue;
+          return;
         }
       }
 
@@ -289,7 +305,78 @@ class AppState {
         file,
         safeBasename(file.name),
         file.type || "application/octet-stream",
+        label,
       );
+    };
+
+    /** Unpack a ZIP and feed every usable entry back through `addOne`, so an
+     *  archived PDF still expands per page and an archived ZIP still opens. */
+    const addArchive = async (
+      file: File,
+      depth: number,
+      label: string,
+    ): Promise<void> => {
+      if (depth >= LIMITS.maxArchiveDepth) {
+        this.toast(`Skipped ${label}: archives nested too deep.`, "warn");
+        return;
+      }
+      const unzip = await import("../pipeline/unzip.ts");
+      let result: import("../pipeline/unzip.ts").ZipReadResult;
+      try {
+        result = await unzip.readZip(await file.arrayBuffer(), {
+          extensions: LIMITS.acceptedExtensions,
+          maxEntryBytes: LIMITS.maxFileBytes,
+          maxEntries: LIMITS.maxArchiveEntries,
+        });
+      } catch {
+        this.toast(`Skipped ${label}: not a readable ZIP.`, "warn");
+        return;
+      }
+      if (result.entries.length === 0) {
+        this.toast(`${label}: no receipts inside.`, "warn");
+        return;
+      }
+      // Central-directory order is whatever the archiver used; folder order
+      // is what the user expects to see the receipts arrive in.
+      const entries = [...result.entries].sort((a, b) =>
+        a.path.localeCompare(b.path, undefined, { numeric: true }),
+      );
+      const before = accepted;
+      for (const entry of entries) {
+        if (atCap()) break;
+        const names = unzip.archiveEntryName(label, entry.path);
+        const mime = unzip.mimeForPath(entry.path);
+        const inner = new File([entry.data as BlobPart], names.fileName, {
+          type: mime,
+        });
+        await addOne(inner, depth + 1, names.originalFileName);
+      }
+      const found = accepted - before;
+      this.toast(
+        found === 1
+          ? `${label}: 1 receipt found.`
+          : `${label}: ${found} receipts found.`,
+        found > 0 ? "info" : "warn",
+      );
+      if (result.skipped.length > 0) {
+        this.toast(
+          `${label}: skipped ${result.skipped.length} non-receipt ${
+            result.skipped.length === 1 ? "file" : "files"
+          }.`,
+          "info",
+        );
+      }
+      if (result.truncated) {
+        this.toast(
+          `${label}: only the first ${LIMITS.maxArchiveEntries} files were read.`,
+          "warn",
+        );
+      }
+    };
+
+    for (const file of files) {
+      if (atCap()) break;
+      await addOne(file, 0);
     }
 
     if (accepted > 0) {

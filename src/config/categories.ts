@@ -66,7 +66,15 @@ const RULES: Rule[] = [
   },
   {
     category: "Fuel",
-    keywords: ["gas station", "gasoline", "unleaded", "diesel", "petrol", "fuel", "per gallon", "price/gal"],
+    // EV charging is the same expense as a tank of gas. "kwh" and "charging
+    // session" are the generic descriptors that survive when a charging
+    // receipt's brand line is a logo the OCR can't spell.
+    keywords: [
+      "gas station", "gasoline", "unleaded", "diesel", "petrol", "fuel",
+      "per gallon", "price/gal",
+      "kwh", "charging session", "ev charging", "charging station",
+      "supercharging", "supercharger",
+    ],
   },
   {
     category: "Travel",

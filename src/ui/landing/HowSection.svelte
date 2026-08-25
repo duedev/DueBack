@@ -9,8 +9,8 @@
           <span class="step-head">
             <span class="step-title">Snap or drop</span>
             <span class="step-deck">
-              Phone camera, photos, scans or PDFs. Each one is straightened,
-              cleaned and read on your device.
+              Phone camera, photos, scans, PDFs or a ZIP folder. Each one is
+              straightened, cleaned and read on your device.
             </span>
           </span>
         </summary>
@@ -18,7 +18,8 @@
           <p>
             <strong>What works:</strong> JPEG, PNG, WebP and PDFs (HEIC on
             Safari). Multi-select a whole pile at once; on a phone, the camera
-            opens directly.
+            opens directly. Drop in a ZIP and every receipt inside it is
+            unpacked, nested folders and all.
           </p>
           <p>
             Crumpled, faded and tilted receipts are auto-rotated, straightened

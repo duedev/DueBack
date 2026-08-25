@@ -66,17 +66,20 @@ export async function expandPdf(file: File | Blob): Promise<PdfPageImage[]> {
   }
 }
 
-/** "scan.pdf" + page 2/8 → the intake fileName + display originalFileName. */
+/** "scan.pdf" + page 2/8 → the intake fileName + display originalFileName.
+ *  `displayName` defaults to the file's own name but differs when the PDF
+ *  came out of an archive, where the card should show its path inside it. */
 export function pdfPageNames(
   baseName: string,
   pageNumber: number,
   pageCount: number,
+  displayName: string = baseName,
 ): { fileName: string; originalFileName: string } {
   const stem = baseName.replace(/\.pdf$/i, "") || "receipt";
   return pageCount > 1
     ? {
         fileName: `${stem}_p${pageNumber}.jpg`,
-        originalFileName: `${baseName} (page ${pageNumber} of ${pageCount})`,
+        originalFileName: `${displayName} (page ${pageNumber} of ${pageCount})`,
       }
-    : { fileName: `${stem}.jpg`, originalFileName: baseName };
+    : { fileName: `${stem}.jpg`, originalFileName: displayName };
 }

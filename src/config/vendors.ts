@@ -101,6 +101,32 @@ export const KNOWN_VENDORS: KnownVendor[] = [
     slogans: ["oh thank heaven for 7-eleven", "oh thank heaven"],
   },
 
+  // ── EV charging → Fuel ───────────────────────────────────────────────────
+  // A charging session is the EV's tank of gas, so it files under Fuel and
+  // lands in the workbook's fuel section with the rest of the mileage story.
+  // Tesla's own receipts are the reason this bucket exists: they arrive as a
+  // folder of PDFs whose only brand text may be "Supercharging" or
+  // "Tesla, Inc." above a kWh line — never a station name.
+  {
+    name: "Tesla",
+    category: "Fuel",
+    aliases: [
+      "tesla supercharger",
+      "tesla supercharging",
+      "tesla motors",
+      "tesla, inc",
+      "tesla inc",
+      "tesla energy",
+      "supercharger",
+      "supercharging",
+      "tesla",
+    ],
+  },
+  { name: "Electrify America", category: "Fuel", aliases: ["electrify america"] },
+  { name: "ChargePoint", category: "Fuel", aliases: ["chargepoint", "charge point"] },
+  { name: "EVgo", category: "Fuel", aliases: ["evgo", "ev go"] },
+  { name: "Blink Charging", category: "Fuel", aliases: ["blink charging"] },
+
   // ── Building materials / hardware → Materials ─────────────────────────────
   // The Home Depot's name is a logo; the only machine-readable brand text is
   // usually the slogan — and OCR often eats its first words ("A get more

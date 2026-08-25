@@ -55,7 +55,7 @@
   </svg>
   <div class="zone-text">
     <strong>Drop receipts here</strong>
-    <span class="muted">or click to browse (photos, scans, PDFs)</span>
+    <span class="muted">or click to browse (photos, scans, PDFs, ZIP folders)</span>
   </div>
 </div>
 

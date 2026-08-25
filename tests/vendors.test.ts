@@ -103,3 +103,47 @@ test("falls back to the business name when the vendor is unknown", () => {
 test("Trader Joe's files under Meals (correction-log tuning, 2026-07-08)", () => {
   assert.equal(matchVendor("TRADER JOE'S #123")?.category, "Meals");
 });
+
+// ── EV charging: a session is the electric tank of gas → Fuel ─────────────────
+
+test("Tesla charging receipts name Tesla and file under Fuel", () => {
+  for (const line of [
+    "TESLA, INC.",
+    "Tesla Supercharger",
+    "TESLA MOTORS",
+    "Supercharging session",
+  ]) {
+    const m = matchVendor(line);
+    assert.equal(m?.name, "Tesla", line);
+    assert.equal(m?.category, "Fuel", line);
+  }
+  // Other charging networks land in the same bucket.
+  assert.equal(matchVendor("ELECTRIFY AMERICA")?.category, "Fuel");
+  assert.equal(matchVendor("CHARGEPOINT INC")?.name, "ChargePoint");
+  assert.equal(matchVendor("EVGO FAST CHARGING")?.name, "EVgo");
+});
+
+test("a Tesla Supercharging receipt parses end to end", () => {
+  const r = parseReceipt(
+    ocr([
+      "Tesla, Inc.",
+      "3500 Deer Creek Road",
+      "Supercharging Session",
+      "04/12/2026",
+      "38.42 kWh @ $0.36",
+      "TOTAL $13.83",
+    ]),
+  );
+  assert.equal(r.vendor.value, "Tesla"); // not the Deer Creek Road address
+  assert.equal(r.category.value, "Fuel");
+  assert.equal(r.amount.value, 13.83); // not the 38.42 kWh line
+  assert.equal(r.date.value, "2026-04-12");
+});
+
+test("an unbranded charging receipt still classifies as Fuel", () => {
+  // The brand line is a logo the OCR can't spell; the kWh line carries it.
+  assert.deepEqual(categorize("", "charging session 42.1 kwh"), {
+    category: "Fuel",
+    matched: true,
+  });
+});

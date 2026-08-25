@@ -766,6 +766,43 @@ test("locateValue finds month-name and glyph-garbled dates via the parser", () =
   assert.ok(ch && /B2\/08/.test(ch.lineText), JSON.stringify(ch));
 });
 
+// ── EV charging: the kWh quantity is not a competing total ───────────────────
+
+test("a kWh quantity above the total doesn't flag the receipt", () => {
+  const r = parseReceipt(
+    ocr([
+      "TESLA",
+      "SUPERCHARGER BARSTOW CA",
+      "06/20/2026 09:14",
+      "ENERGY 42.31 kWh",
+      "RATE $0.36/kWh",
+      "TOTAL $15.23",
+    ]),
+  );
+  assert.equal(r.amount.value, 15.23);
+  assert.deepEqual(
+    r.flags.filter((f) => f.code === "total_mismatch"),
+    [],
+    "42.31 kWh must not read as a larger amount above the total",
+  );
+});
+
+test("the dollar amount on a kWh line still counts", () => {
+  // No TOTAL label at all: the charge shares the line with the quantity, so
+  // only the quantity may be dropped from the money scan.
+  const r = parseReceipt(
+    ocr(["TESLA SUPERCHARGER", "05/02/2026", "Energy 38.42 kWh   $12.60"]),
+  );
+  assert.equal(r.amount.value, 12.6);
+});
+
+test("a genuine larger amount above the total still flags", () => {
+  const r = parseReceipt(
+    ocr(["JOES DINER", "05/02/2026", "ITEM 99.00", "TOTAL $22.10"]),
+  );
+  assert.ok(r.flags.some((f) => f.code === "total_mismatch"));
+});
+
 function lines2(texts: string[]): OcrLine[] {
   return texts.map((text, i) => ({
     text,
