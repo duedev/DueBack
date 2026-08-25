@@ -201,7 +201,9 @@ function findAmount(lines: OcrLine[]): {
       !FUEL_UNIT_RE.test(line.text) &&
       !FUEL_RATE_RE.test(line.text)
     ) {
+      const energy = energyQuantities(line.text);
       for (const h of moneyHitsFromLine(line)) {
+        if (energy.some((q) => Math.abs(q - h.value) < 0.005)) continue;
         if (!allMax || h.value > allMax.value) allMax = h;
       }
     }
@@ -486,7 +488,9 @@ function looksLikeVendorLine(line: OcrLine): boolean {
     QTY_BEFORE_RE.test(t) ||
     FUEL_UNIT_RE.test(t) ||
     FUEL_RATE_RE.test(t) ||
-    /\b(?:pump|grade|octane|unleaded|diesel|gallons?|litres?|liters?)\b[\s#:=.]*\d/i.test(t)
+    /\b(?:pump|grade|octane|unleaded|diesel|gallons?|litres?|liters?)\b[\s#:=.]*\d/i.test(t) ||
+    // The charging equivalent: "ENERGY 42.31 kWh", "42.31 kWh @ $0.36".
+    ENERGY_QTY_RE.test(t)
   ) {
     return false;
   }
@@ -572,6 +576,26 @@ const QTY_BEFORE_RE = /(\d+\.\d{1,3})\s*(?:gallons?|gal|litres?|liters?)\b/i;
 // money-or-3-decimal token right before the (possibly glyph-garbled) /GAL.
 const FUEL_RATE_RE = /\d[.,]\d{2,3}\s*[\/z7l1\\]\s*g(?:al(?:lon)?)?\b/i;
 const PLAIN_NUM_RE = /\d+\.\d{1,3}/g;
+
+// EV charging is the electric pump, and its quantity line is the one that
+// misleads: a session prints its ENERGY in kWh ("42.31 kWh") right next to a
+// much smaller dollar total ($15.23). That quantity parses as strict money,
+// so left alone it becomes reconcile's "a larger amount appears above the
+// total" — a warn that forces *every* charging receipt into manual review.
+// Only the kWh QUANTITY is dropped, never the whole line: a session line can
+// carry the charge itself ("42.31 kWh    $15.23").
+const ENERGY_QTY_SRC = String.raw`(\d+(?:[.,]\d{1,3})?)\s*k\s*w\s*h\b`;
+const ENERGY_QTY_RE = new RegExp(ENERGY_QTY_SRC, "i");
+
+/** The kWh quantities printed on a line, for exclusion from the money scan. */
+function energyQuantities(text: string): number[] {
+  const out: number[] = [];
+  for (const m of text.matchAll(new RegExp(ENERGY_QTY_SRC, "gi"))) {
+    const v = parseAmount((m[1] ?? "").replace(",", "."));
+    if (v !== null) out.push(v);
+  }
+  return out;
+}
 
 /** gallons × price/gal from the printed pump lines, or null. */
 function pumpMathTotal(lines: OcrLine[]): number | null {

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtemp, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { deflateRawSync, crc32 } from "node:zlib";
 import sharp from "sharp";
 import ExcelJS from "exceljs";
 
@@ -194,6 +195,76 @@ function makeTwoPagePdf() {
   }
   body += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
   return Buffer.from(body, "latin1");
+}
+
+// A Tesla Supercharging receipt: the kWh quantity (42.31) is far LARGER than
+// the dollar total, and parses as money — the case that used to flag every
+// charging receipt for review.
+async function makeTeslaReceiptPng() {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="560" height="600">
+    <rect width="560" height="600" fill="#ffffff"/>
+    <g font-family="monospace" font-size="24" fill="#000000">
+      <text x="40" y="70" font-size="32" font-weight="bold">TESLA</text>
+      <text x="40" y="115">SUPERCHARGER BARSTOW CA</text>
+      <text x="40" y="160">Date: 06/20/2026</text>
+      <text x="40" y="215">SESSION 4B2C</text>
+      <text x="40" y="265">ENERGY</text><text x="520" y="265" text-anchor="end">42.31 kWh</text>
+      <text x="40" y="310">RATE</text><text x="520" y="310" text-anchor="end">$0.36/kWh</text>
+      <text x="40" y="360">IDLE FEE</text><text x="520" y="360" text-anchor="end">$0.00</text>
+      <text x="40" y="420" font-weight="bold">TOTAL</text><text x="520" y="420" text-anchor="end" font-weight="bold">$15.23</text>
+      <text x="40" y="490">THANK YOU FOR CHARGING</text>
+    </g>
+  </svg>`;
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+// A real ZIP (local headers + central directory), so the intake path is
+// exercised against bytes an archiver would actually produce — including the
+// __MACOSX/AppleDouble junk macOS adds, which shares the .png extension of
+// the receipt beside it.
+function makeZip(entries) {
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const e of entries) {
+    const name = Buffer.from(e.name, "utf8");
+    const crc = crc32(e.data);
+    const deflated = deflateRawSync(e.data);
+    const useDeflate = deflated.length < e.data.length;
+    const payload = useDeflate ? deflated : e.data;
+    const method = useDeflate ? 8 : 0;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt32LE(crc >>> 0, 14);
+    local.writeUInt32LE(payload.length, 18);
+    local.writeUInt32LE(e.data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    const cen = Buffer.alloc(46);
+    cen.writeUInt32LE(0x02014b50, 0);
+    cen.writeUInt16LE(20, 4);
+    cen.writeUInt16LE(20, 6);
+    cen.writeUInt16LE(0x0800, 8);
+    cen.writeUInt16LE(method, 10);
+    cen.writeUInt32LE(crc >>> 0, 16);
+    cen.writeUInt32LE(payload.length, 20);
+    cen.writeUInt32LE(e.data.length, 24);
+    cen.writeUInt16LE(name.length, 28);
+    cen.writeUInt32LE(offset, 42);
+    parts.push(local, name, payload);
+    central.push(cen, name);
+    offset += 30 + name.length + payload.length;
+  }
+  const centralBuf = Buffer.concat(central);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(centralBuf.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, centralBuf, eocd]);
 }
 
 async function main() {
@@ -418,11 +489,58 @@ async function main() {
     check(pdfP2.amount === 4.25, `PDF page 2: total read (got ${pdfP2.amount})`);
     check(/STARBUCKS/i.test(pdfP2.vendor || ""), `PDF page 2: vendor (got ${pdfP2.vendor})`);
 
+    // 7d. ZIP intake: an archive of nested folders (the "here's the folder of
+    // Tesla charging receipts" case) becomes one receipt per usable file, and
+    // the archiver junk beside them must not become receipts of its own.
+    log("uploading a ZIP of nested folders…");
+    const teslaPng = await makeTeslaReceiptPng();
+    const zipUpload = makeZip([
+      { name: "Charging/2026/03/", data: Buffer.alloc(0) },
+      { name: "Charging/2026/03/session_01.png", data: teslaPng },
+      { name: "__MACOSX/Charging/2026/03/._session_01.png", data: Buffer.from("applejunk") },
+      { name: "Charging/.DS_Store", data: Buffer.from("junk") },
+      { name: "Charging/notes.txt", data: Buffer.from("not a receipt") },
+    ]);
+    await page
+      .locator("input[type=file][multiple]")
+      .first()
+      .setInputFiles([
+        { name: "tesla_receipts.zip", mimeType: "application/zip", buffer: zipUpload },
+      ]);
+    let zipRows = [];
+    const zipDeadline = Date.now() + 180000;
+    while (Date.now() < zipDeadline) {
+      zipRows = (await readRows()).filter((r) => /^tesla_receipts\.zip/.test(r.file));
+      if (
+        zipRows.length >= 1 &&
+        zipRows.every((r) => ["done", "needs_review", "failed"].includes(r.status))
+      )
+        break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    for (const r of zipRows) log(`extracted → ${r.file}: vendor="${r.vendor}" amount=${r.amount} [${r.status}]`);
+    check(
+      zipRows.length === 1,
+      `ZIP expanded to the one real receipt inside it, junk skipped (got ${zipRows.length})`,
+    );
+    const tesla = zipRows[0] ?? {};
+    check(
+      tesla.file === "tesla_receipts.zip › Charging/2026/03/session_01.png",
+      `ZIP entry keeps its path inside the archive (got ${tesla.file})`,
+    );
+    check(/TESLA/i.test(tesla.vendor || ""), `Tesla: vendor recognized (got ${tesla.vendor})`);
+    check(tesla.cat === "Fuel", `Tesla: charging files under Fuel (got ${tesla.cat})`);
+    check(tesla.amount === 15.23, `Tesla: total read, not the 42.31 kWh (got ${tesla.amount})`);
+    check(
+      !/larger amount/i.test(tesla.flags || ""),
+      `Tesla: kWh quantity doesn't flag the total (got "${tesla.flags}")`,
+    );
+
     // 8. Header brand navigates home; the hero offers the way back.
     await page.locator("header.ws-head .brand").click();
     await page.getByRole("heading", { name: /Receipts in/ }).waitFor({ timeout: 10000 });
     check(true, "brand click returns to the landing page");
-    await page.getByRole("button", { name: /Back to your receipts \(6\)/ }).click();
+    await page.getByRole("button", { name: /Back to your receipts \(7\)/ }).click();
     await page.getByText("Drop receipts here").waitFor({ timeout: 10000 });
     check(true, "landing offers the way back to the workspace");
 

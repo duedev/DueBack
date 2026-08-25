@@ -12,6 +12,15 @@ export const LIMITS = {
   maxReceiptsPerBatch: 200,
   /** Max original upload size each. Larger photos are downscaled anyway. */
   maxFileBytes: 25 * 1024 * 1024,
+  /** Max size of an uploaded ZIP. An archive is a *stack* of receipts, so the
+   *  per-file cap would refuse an ordinary folder of 30 photos; each entry
+   *  inside is still held to `maxFileBytes`. */
+  maxArchiveBytes: 300 * 1024 * 1024,
+  /** Max entries read out of one archive (a cheap zip-bomb guard — the batch
+   *  cap still applies on top). */
+  maxArchiveEntries: 1000,
+  /** How deep nested archives are followed (a zip of zips). */
+  maxArchiveDepth: 3,
   /** Accepted input types. */
   acceptedMime: [
     "image/jpeg",
@@ -20,6 +29,10 @@ export const LIMITS = {
     "image/heic",
     "image/heif",
     "application/pdf",
+    "application/zip",
+    "application/x-zip-compressed",
+    "application/x-zip",
+    "multipart/x-zip",
   ] as const,
   acceptedExtensions: [
     ".jpg",
@@ -29,6 +42,7 @@ export const LIMITS = {
     ".heic",
     ".heif",
     ".pdf",
+    ".zip",
   ] as const,
 };
 

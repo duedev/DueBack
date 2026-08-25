@@ -16,9 +16,10 @@ for the web with two new pillars: **visual logo recognition** and an
 
 ## How it works
 
-1. **Snap or drop:** photos, scans, or PDFs; the phone camera works directly.
-   A multi-page PDF (scanner output) becomes one receipt per page. Each image
-   is straightened, cleaned, and read on-device.
+1. **Snap or drop:** photos, scans, PDFs, or a ZIP; the phone camera works
+   directly. A multi-page PDF (scanner output) becomes one receipt per page,
+   and a ZIP is unpacked into one receipt per file inside it, however deeply
+   its folders nest. Each image is straightened, cleaned, and read on-device.
 2. **Review the flagged few:** most receipts file themselves; the uncertain
    ones queue for an `Approve & Next` sweep with each extracted field
    highlighted right on the image (with zoomed callouts).

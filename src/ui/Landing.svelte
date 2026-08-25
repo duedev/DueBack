@@ -44,7 +44,7 @@
     },
     {
       q: "What kinds of files work?",
-      a: "JPEG, PNG and WebP photos plus PDFs (HEIC too on Safari). Snap receipts with your phone camera or drop in files; crumpled, faded and tilted receipts are straightened and cleaned up before reading.",
+      a: "JPEG, PNG and WebP photos plus PDFs (HEIC too on Safari). You can also drop in a ZIP — every receipt inside is unpacked, however deeply its folders nest, and a multi-page PDF becomes one receipt per page. Snap receipts with your phone camera or drop in files; crumpled, faded and tilted receipts are straightened and cleaned up before reading.",
     },
     {
       q: "How does logo recognition help?",

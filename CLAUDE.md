@@ -32,6 +32,7 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + Fraunces).
 | `src/pipeline/pipeline.ts` | Per-receipt flow: clean → hash/cache → OCR (+binarized weak-read rescue) → rules → **logo fusion** → vision assist → highlighter bake (`annotate.ts` → `annotatedKey`) → Python-convention rename (`util/rename.ts`) → dedup → status |
 | `src/pipeline/imagePrep.ts` | canvas prep: EXIF rotate → (opt) perspective → projection-profile deskew → grayscale → edge-energy autocrop → two renders (transient hi-res `ocrBlob` for OCR + stored 1600px blob); `binarizeBlob` for the weak-read rescue |
 | `src/pipeline/pdf.ts` | Multi-page PDF intake: `expandPdf` renders every page to a JPEG (long edge ≈ `ocrMaxEdge`) so `addFiles` makes one receipt per page; `pdfPageNames` names them (`… (page 2 of 8)` in `originalFileName`) |
+| `src/pipeline/unzip.ts` | ZIP intake: dependency-free central-directory reader (`readZip`, platform `DecompressionStream`) + archive-junk filter and entry naming; `addFiles` unpacks an archive into one receipt per usable file, nested folders and all |
 | `src/pipeline/binarize.ts` | pure image math (no DOM, Node-tested): luminance, Bradley adaptive threshold, projection-profile skew estimation |
 | `src/pipeline/perspective.ts` | opt-in OpenCV.js quad detect + warp (`VITE_PERSPECTIVE=1`, vendored lib) |
 | `src/pipeline/ocr.ts` | `OcrEngine` seam; Tesseract default; `VITE_OCR_ENGINE=paddle` → `engines/paddle/*` (ONNX det+rec+CTC) |
@@ -160,6 +161,27 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   constants.ts) × user-picked "YYYY-MM" months (`util/phone.ts` validates;
   ExportBar's picker is a ‹ year › pager with 12 chips — any month of any
   year, deliberately uncapped).
+- **ZIPs are expanded at intake too** (`addFiles` → `pipeline/unzip.ts`, lazily
+  imported — `looksLikeZip` lives in `util/files.ts` so asking the question
+  doesn't pull the reader into the main chunk). Entries run back through the
+  same per-file path, so an archived PDF still expands per page and a nested
+  archive still opens (depth-capped at `LIMITS.maxArchiveDepth`). The card
+  shows the path inside the archive (`trip.zip › 2026/03/session.pdf`) —
+  twelve month folders each holding "receipt.pdf" are otherwise
+  indistinguishable. `__MACOSX/._name.jpg` AppleDouble stubs are the trap:
+  they carry the *same extension* as the real receipt, so an extension-only
+  filter queues an unreadable duplicate for every image. A ZIP is measured
+  against `LIMITS.maxArchiveBytes` (300 MB), each entry against
+  `maxFileBytes`.
+- **EV charging files under Fuel, and its kWh line is not a total.** Tesla (+
+  Electrify America/ChargePoint/EVgo/Blink) are `Fuel` brands, and "kwh"/
+  "charging session" are Fuel keywords for logo-only charging receipts. The
+  session's energy figure is *larger* than the dollar total (42.31 kWh →
+  $15.23) and parses as strict money, so `findAmount` drops the kWh QUANTITY
+  from `allMax` (`ENERGY_QTY_SRC` in extract.ts) — otherwise reconcile's
+  "larger amount above the total" warn forced every charging receipt into
+  review. Only the quantity is dropped, never the line: "38.42 kWh $12.60"
+  must still donate its charge when there is no TOTAL label.
 - **PDFs are expanded at intake** (`addFiles` → `pipeline/pdf.ts`): one
   receipt per page — the pipeline's `decode()` first-page path only remains
   for PDF blobs stored by older versions. A scanner PDF used to become a
