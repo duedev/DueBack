@@ -9,6 +9,12 @@ import type {
   Category,
 } from "../types.ts";
 import { uid } from "../util/id.ts";
+import {
+  appendPendingDelete,
+  PENDING_DELETES_KEY,
+  type PendingDelete,
+  type SyncTable,
+} from "./syncMerge.ts";
 
 // Categories renamed since older data was stored (locally or in Supabase).
 // Normalized on every read so legacy receipts keep working untouched.
@@ -140,16 +146,16 @@ class Repo {
 
   async deleteReceipt(id: string): Promise<void> {
     const r = await this.getReceipt(id);
-    if (r) {
-      for (const key of [r.fileKey, r.cleanedKey, r.annotatedKey]) {
-        if (key) await this.deleteBlob(key).catch(() => {});
-      }
-    }
+    const blobKeys = r
+      ? [r.fileKey, r.cleanedKey, r.annotatedKey].filter((k): k is string => !!k)
+      : [];
+    for (const key of blobKeys) await this.deleteBlob(key).catch(() => {});
     const conn = await db();
     await conn.delete("receipts", id);
     // Drop any pending job too.
     const jobs = await conn.getAllFromIndex("jobs", "byReceipt", id);
     await Promise.all(jobs.map((j) => conn.delete("jobs", j.id)));
+    await this.recordPendingDelete("receipts", id, blobKeys);
     this.notify();
   }
 
@@ -240,7 +246,26 @@ class Repo {
 
   async deleteBrand(id: string): Promise<void> {
     await (await db()).delete("brands", id);
+    await this.recordPendingDelete("brand_logos", id, []);
     this.notify();
+  }
+
+  /** Record a deletion for the sync engine to tombstone remotely later — it
+   *  must be captured at delete time (blob keys included) because it cannot
+   *  be reconstructed afterwards. kv-only, so signed-out use stays sync-free;
+   *  a queued entry for a row that was never pushed no-ops remotely (the
+   *  tombstone is an UPDATE, not an upsert). */
+  private async recordPendingDelete(
+    table: SyncTable,
+    id: string,
+    blobKeys: string[],
+  ): Promise<void> {
+    const list =
+      (await this.getSetting<PendingDelete[]>(PENDING_DELETES_KEY)) ?? [];
+    await this.setSetting(
+      PENDING_DELETES_KEY,
+      appendPendingDelete(list, { table, id, blobKeys, at: Date.now() }),
+    );
   }
 
   // ---- Settings (small key/value) ---------------------------------------

@@ -5,6 +5,7 @@ import { syncConfigured } from "../supabase/client.ts";
 import { onAuthChange, currentUser } from "../supabase/auth.ts";
 import { saveVisionConfig } from "../pipeline/vision/config.ts";
 import { validateFile, safeBasename, isPdf, isZip } from "../util/files.ts";
+import { chooseAdoptionBatch, type AdoptionCandidate } from "../store/syncMerge.ts";
 import { uid } from "../util/id.ts";
 import { LIMITS, CURRENCY_DEFAULT } from "../config/constants.ts";
 import type { Batch, Receipt, ReceiptStatus } from "../types.ts";
@@ -140,6 +141,31 @@ class AppState {
       await repo.setSetting("ai.autoEnabledOnSignIn", true);
     }
     await sync.start(userId);
+    await this.maybeAdoptSyncedBatch();
+  }
+
+  /** A fresh device pins a brand-new empty batch before sync runs, so pulled
+   *  receipts would otherwise live in a batch the UI never shows. After the
+   *  initial pull, adopt the most recently updated batch that has receipts —
+   *  never stealing an active batch that already has its own. */
+  private async maybeAdoptSyncedBatch(): Promise<void> {
+    if (sync.status === "off" || sync.status === "error") return; // no pull ran
+    const candidates: AdoptionCandidate[] = [];
+    for (const b of await repo.listBatches()) {
+      candidates.push({
+        id: b.id,
+        updatedAt: b.updatedAt,
+        receiptCount: (await repo.listReceipts(b.id)).length,
+      });
+    }
+    const adoptId = chooseAdoptionBatch(this.batch?.id ?? null, candidates);
+    if (!adoptId) return;
+    const batch = await repo.getBatch(adoptId);
+    if (!batch) return;
+    await repo.setSetting(ACTIVE_BATCH_KEY, batch.id);
+    this.batch = batch;
+    await this.refresh();
+    if (this.receipts.length > 0) this.entered = true;
   }
 
   async refresh(): Promise<void> {
