@@ -4,6 +4,22 @@
   /** The orchestrator owns the page's single hidden file input; the hero
       triggers it through this callback. */
   let { onAdd }: { onAdd: () => void } = $props();
+
+  // The scroll cue at the hero's foot: visible while the visitor sits at the
+  // top of the page, gone the moment they start reading down.
+  let scrolled = $state(false);
+  $effect(() => {
+    const onScroll = (): void => {
+      scrolled = window.scrollY > 60;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener("scroll", onScroll);
+  });
+
+  function cueDown(): void {
+    document.querySelector(".why")?.scrollIntoView({ behavior: "smooth" });
+  }
 </script>
 
 <header class="wrap hero">
@@ -15,13 +31,9 @@
       flagged ones in seconds, and out comes a polished Excel workbook your
       office will actually accept.
     </p>
+    <!-- Primary action sits on the RIGHT: the reading eye lands there last,
+         where the "go" button belongs. -->
     <div class="hero-ctas">
-      <button class="btn btn-primary btn-lg" onclick={onAdd}>
-        Add receipts
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 16V4m0 0 4.5 4.5M12 4 7.5 8.5M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2" />
-        </svg>
-      </button>
       {#if app.receipts.length > 0}
         <button class="btn btn-lg" onclick={() => app.enter()}>
           Back to your receipts ({app.receipts.length})
@@ -29,6 +41,12 @@
       {:else}
         <a class="btn btn-lg" href="#how">See how it works</a>
       {/if}
+      <button class="btn btn-primary btn-lg" onclick={onAdd}>
+        Add receipts
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 16V4m0 0 4.5 4.5M12 4 7.5 8.5M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2" />
+        </svg>
+      </button>
     </div>
     <p class="hero-drop">…or just drag receipts anywhere onto this page.</p>
     <p class="hero-note">
@@ -115,15 +133,33 @@
       </div>
     </div>
   </div>
+
+  <!-- Scroll cue: the hero fills the first screen, so a soft accent arrow
+       says there's more; it fades away once scrolling starts. -->
+  <button
+    class="scroll-cue"
+    class:hide={scrolled}
+    onclick={cueDown}
+    aria-label="Scroll down to read more"
+    tabindex="-1"
+  >
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M5 9.5 12 16l7-6.5" />
+    </svg>
+  </button>
 </header>
 
 <style>
   .hero {
+    position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
     align-items: center;
     gap: 3rem;
-    padding: 4.5rem 0 5rem;
+    padding: 3rem 0 4rem;
+    /* Fill the first screen (minus the sticky nav) so the page opens on the
+       pitch alone; the next section arrives by scrolling, cued below. */
+    min-height: calc(100dvh - 4.8rem);
   }
   .hero-copy h1 {
     font-size: clamp(2.5rem, 5.4vw, 4rem);
@@ -275,8 +311,8 @@
     animation: db-reveal-amount 8s ease-out infinite;
   }
   .rv-date {
-    background: color-mix(in srgb, #dc2626 18%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, #dc2626 45%, transparent);
+    background: color-mix(in srgb, #7c3aed 18%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #7c3aed 45%, transparent);
     animation: db-reveal-date 8s ease-out infinite;
   }
 
@@ -412,6 +448,43 @@
     padding: 0 0.25rem;
     margin: 0 -0.25rem;
     animation: db-cell-flash 8s ease-out infinite;
+  }
+
+  .scroll-cue {
+    position: absolute;
+    left: 50%;
+    bottom: 0.9rem;
+    translate: -50% 0;
+    border: 0;
+    background: none;
+    padding: 0.4rem;
+    color: var(--accent);
+    opacity: 0.55;
+    cursor: pointer;
+    animation: db-cue-bob 2.4s ease-in-out infinite;
+    transition: opacity 0.35s ease;
+  }
+  .scroll-cue.hide {
+    opacity: 0;
+    pointer-events: none;
+  }
+  /* Rests at 0% so the reduced-motion kill-switch freezes it in place. */
+  @keyframes db-cue-bob {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(7px);
+    }
+  }
+  @media (max-width: 900px) {
+    .hero {
+      min-height: auto; /* stacked layout: let content set the height */
+    }
+    .scroll-cue {
+      display: none;
+    }
   }
 
   /* Static end-states when motion is off: everything read, approved, footed. */

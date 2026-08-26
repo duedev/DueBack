@@ -45,8 +45,9 @@
 
 /* -- highlighter marks ------------------------------------------------------
    The triad mirrors the on-image annotation colors baked by
-   pipeline/annotate.ts (blue vendor / green amount / red date); deliberately
-   hardcoded, not tokens — they are the product's own highlighter colors. */
+   pipeline/annotate.ts (blue vendor / green amount / purple date);
+   deliberately hardcoded, not tokens — they are the product's own
+   highlighter colors. */
 .landing .hl {
   background: transparent;
   color: inherit;
@@ -59,8 +60,8 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, #1d4ed8 45%, transparent);
 }
 .landing .hl-date {
-  background: color-mix(in srgb, #dc2626 18%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #dc2626 45%, transparent);
+  background: color-mix(in srgb, #7c3aed 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #7c3aed 45%, transparent);
 }
 .landing .hl-amount {
   background: color-mix(in srgb, #147246 20%, transparent);

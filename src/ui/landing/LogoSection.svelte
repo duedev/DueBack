@@ -20,7 +20,12 @@
         <div class="pair-label">You teach it once</div>
         <div class="mock">
           <div class="logo-mark framed">
-            ▚ logo, no text ▞
+            <svg class="bistro" viewBox="0 0 44 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 10.5 h13 v4.2 a6 6 0 0 1 -6 6 h-1 a6 6 0 0 1 -6 -6 z" />
+              <path d="M25 11.5 h2.2 a2.9 2.9 0 0 1 0 5.8 H24.6" />
+              <path d="M15.5 3.5 c0 1.5 1.6 1.9 1.6 3.4 M20 3.5 c0 1.5 1.6 1.9 1.6 3.4" />
+              <path d="M9.5 20.7 h18" />
+            </svg>
             <span class="frame"></span>
             <span class="handle tl"></span>
             <span class="handle tr"></span>
@@ -44,7 +49,14 @@
       <div class="card after">
         <div class="pair-label">Every receipt after</div>
         <div class="mock">
-          <div class="logo-mark">▚ logo, no text ▞</div>
+          <div class="logo-mark">
+            <svg class="bistro" viewBox="0 0 44 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 10.5 h13 v4.2 a6 6 0 0 1 -6 6 h-1 a6 6 0 0 1 -6 -6 z" />
+              <path d="M25 11.5 h2.2 a2.9 2.9 0 0 1 0 5.8 H24.6" />
+              <path d="M15.5 3.5 c0 1.5 1.6 1.9 1.6 3.4 M20 3.5 c0 1.5 1.6 1.9 1.6 3.4" />
+              <path d="M9.5 20.7 h18" />
+            </svg>
+          </div>
           <div class="m-line"><span>Cappuccino</span><span>4.75</span></div>
           <div class="m-line faint"><span>TOTAL</span><span>4.75</span></div>
         </div>
@@ -96,12 +108,17 @@
   }
   .logo-mark {
     position: relative;
-    text-align: center;
-    padding: 0.55rem 0.4rem;
+    display: grid;
+    place-items: center;
+    padding: 0.35rem 0.4rem;
     font-weight: 700;
     color: var(--cat-3);
     background: color-mix(in srgb, var(--cat-3) 8%, transparent);
     border-radius: 4px;
+  }
+  .bistro {
+    width: 74px;
+    height: 40px;
   }
   .frame {
     position: absolute;

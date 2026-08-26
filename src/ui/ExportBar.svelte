@@ -147,6 +147,37 @@
     void repo.setSetting(INSIGHTS_KEY, includeInsights);
   }
 
+  // ---- Print packet (on by default: offices staple paper copies) -----------
+  const PRINT_KEY = "report.printPacket";
+  let includePrint = $state(true);
+  void repo.getSetting<boolean>(PRINT_KEY).then((v) => (includePrint = v !== false));
+  function savePrintPref(): void {
+    void repo.setSetting(PRINT_KEY, includePrint);
+  }
+
+  /** Letter-size PDF of the receipt images, two per page with the
+   *  employee/job header — what actually goes to the office printer. */
+  async function buildPrintPacket(): Promise<Blob | null> {
+    const { buildPrintPdf } = await import("../export/printPdf.ts");
+    const { thumbnail } = await import("../export/images.ts");
+    const imgs: import("../export/printPdf.ts").PrintImage[] = [];
+    for (const r of exportable) {
+      const blob = await repo.getBlob(r.annotatedKey ?? r.cleanedKey ?? r.fileKey);
+      if (!blob) continue;
+      const t = await thumbnail(blob, 1400, 0.8);
+      imgs.push({
+        jpeg: new Uint8Array(t.buffer),
+        width: t.width,
+        height: t.height,
+        name: r.fileName,
+        amount: formatMoney(safeAmount(r.amount.value)),
+      });
+    }
+    if (imgs.length === 0) return null;
+    const bytes = buildPrintPdf(imgs, { employee, jobName, jobNumber });
+    return new Blob([bytes.buffer as ArrayBuffer], { type: "application/pdf" });
+  }
+
   const exportable = $derived(
     app.receipts.filter(
       (r) => r.status !== "failed" && safeAmount(r.amount.value) > 0,
@@ -234,6 +265,17 @@
     try {
       const result = await buildReport();
       download(result.blob, result.fileName);
+      if (includePrint) {
+        try {
+          const packet = await buildPrintPacket();
+          if (packet) {
+            const { printPdfFileName } = await import("../export/printPdf.ts");
+            download(packet, printPdfFileName(employee));
+          }
+        } catch {
+          app.toast("Couldn't build the print packet; the workbook is fine.", "warn");
+        }
+      }
       app.toast(`Workbook ready: ${result.count} receipts.`, "ok");
     } catch (err) {
       app.toast(
@@ -468,6 +510,17 @@
       </label>
       <span class="muted small">
         Adds a KPI + charts dashboard tab to the workbook.
+      </span>
+    </div>
+
+    <div class="opt" class:open={includePrint}>
+      <label class="check">
+        <input type="checkbox" bind:checked={includePrint} onchange={savePrintPref} />
+        <span>Print packet (PDF)</span>
+      </label>
+      <span class="muted small">
+        Downloads with the workbook: receipts two per letter page, labeled
+        with employee and job, sized for legible printing.
       </span>
     </div>
   </div>
