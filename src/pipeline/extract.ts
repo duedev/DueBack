@@ -160,6 +160,13 @@ const NON_GRAND_RE =
 const PAYMENT_RE =
   /\b(cash|change|tender(?:ed)?|tend|card|visa|master\s*card|mastercard|amex|american\s*express|debit|credit|approval|auth|points|rewards?)\b/i;
 const TAX_RE = /\b(sales\s*tax|tax|vat|gst|hst|tps|tvq)\b/i;
+// Registration/ID lines carry a tax KEYWORD but never a tax amount — "VAT No
+// 123 4567 89" donated 89 to footing math, which then "corrected" a correct
+// total. Tested against the label-folded text, like TAX_RE.
+const TAX_ID_RE =
+  /\b(?:sales\s*tax|tax|vat|gst|hst|tps|tvq)\b[\s:.#-]*(?:(?:id|no\.?|num(?:ber)?|reg(?:istration)?|invoice|exempt(?:ion)?|ein|abn|rn)\b|#)/i;
+// Rate lines quote a percentage ("TAX RATE 8.25%"), not the tax amount.
+const TAX_RATE_RE = /\brate\b/i;
 
 /** Fold digit-glyph OCR confusions for LABEL matching only ("T0TAL" → "total",
  *  "5UBTOTAL" → "subtotal"). Values are always parsed from the raw text. */
@@ -225,7 +232,14 @@ function findAmount(lines: OcrLine[]): {
       // "STORE 0442 REG 2", …) and a lenient grab there turned dates into
       // totals.
       let hit = rightmostAmount(line, true);
-      if (!hit && lines[i + 1]) hit = rightmostAmount(lines[i + 1]!, false);
+      if (!hit && lines[i + 1]) {
+        // …and never a tender/change/savings line — "TOTAL" ↵ "CASH 20.00"
+        // shipped the cash given as the total.
+        const next = labelFold(lines[i + 1]!.text);
+        if (!NON_GRAND_RE.test(next) && !PAYMENT_RE.test(next)) {
+          hit = rightmostAmount(lines[i + 1]!, false);
+        }
+      }
       if (hit && hit.value > 0) {
         const conf = label.weight * (line.confidence / 100 || 0.7);
         // Within the same tier the LARGEST value wins (e.g. FUEL TOTAL vs the
@@ -261,12 +275,29 @@ function findAmount(lines: OcrLine[]): {
   return { amount: null, subtotal, allMax };
 }
 
+/** Percent-suffixed numbers on a line ("8.25%") — rates, never amounts. */
+function percentValues(text: string): number[] {
+  const out: number[] = [];
+  for (const m of text.matchAll(/(\d[\d.,]*)\s?%/g)) {
+    const v = parseAmount(m[1]!);
+    if (v !== null) out.push(v);
+  }
+  return out;
+}
+
 function findTax(lines: OcrLine[]): Field<number> | null {
   for (const line of lines) {
     const folded = labelFold(line.text);
     if (TAX_RE.test(folded) && !SUBTOTAL_RE.test(folded)) {
+      // ID/registration and rate lines carry the keyword but not the amount —
+      // keep scanning; the real tax line may still follow.
+      if (TAX_ID_RE.test(folded) || TAX_RATE_RE.test(folded)) continue;
       const hit = rightmostAmount(line, true);
       if (hit && hit.value >= 0) {
+        // The chosen value is a percentage — a rate, not the amount.
+        if (percentValues(line.text).some((v) => Math.abs(v - hit.value) < 0.005)) {
+          continue;
+        }
         const field: Field<number> = {
           value: hit.value,
           confidence: 0.8 * (line.confidence / 100 || 0.7),
@@ -982,7 +1013,10 @@ export function parseReceipt(
 
   const found = findAmount(lines);
   const { subtotal, allMax } = found;
-  const tax = findTax(lines);
+  let tax = findTax(lines);
+  // A tax larger than the goods is a garble (id digits, misread cents) —
+  // drop it so footing math never "corrects" the total with it.
+  if (tax && subtotal !== null && tax.value > subtotal) tax = null;
   // Fuel receipts carry their own ground truth: gallons × price/gal; other
   // receipts often carry SUBTOTAL + TAX, which must foot to the total.
   const pump = applyPumpMath(lines, found.amount);
