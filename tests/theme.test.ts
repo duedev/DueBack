@@ -108,7 +108,7 @@ test("dark --gold-text meets AA everywhere the warn chips render", () => {
 test("marker ink partners exist in all three palettes", () => {
   // The identity test above only walks tokens present in the fallback block,
   // so presence in every block is asserted explicitly.
-  for (const t of ["--cat-3-ink", "--err-ink"]) {
+  for (const t of ["--cat-3-ink", "--cat-4-ink", "--err-ink"]) {
     assert.ok(root.has(t), `${t} in :root`);
     assert.ok(dark.has(t), `${t} in [data-theme=dark]`);
     assert.ok(darkAuto.has(t), `${t} in the prefers-color-scheme fallback`);
@@ -121,8 +121,12 @@ test("light marker inks meet AA on their fills (review VENDOR/DATE tags)", () =>
     "vendor tag",
   );
   assert.ok(
-    contrast(hex(root.get("--err-ink")!), hex(root.get("--err")!)) >= 4.5,
+    contrast(hex(root.get("--cat-4-ink")!), hex(root.get("--cat-4")!)) >= 4.5,
     "date tag",
+  );
+  assert.ok(
+    contrast(hex(root.get("--err-ink")!), hex(root.get("--err")!)) >= 4.5,
+    "error marker",
   );
 });
 
@@ -132,8 +136,12 @@ test("dark marker inks meet AA on their fills (review VENDOR/DATE tags)", () => 
     "vendor tag",
   );
   assert.ok(
-    contrast(hex(dark.get("--err-ink")!), hex(dark.get("--err")!)) >= 4.5,
+    contrast(hex(dark.get("--cat-4-ink")!), hex(dark.get("--cat-4")!)) >= 4.5,
     "date tag",
+  );
+  assert.ok(
+    contrast(hex(dark.get("--err-ink")!), hex(dark.get("--err")!)) >= 4.5,
+    "error marker",
   );
 });
 

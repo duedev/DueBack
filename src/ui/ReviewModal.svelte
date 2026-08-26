@@ -318,6 +318,29 @@
     return { update: draw };
   }
 
+  // Each flag renders beside the field it questions, so the reason and the
+  // fix share one glance (and one scroll position on a phone). Codes with no
+  // home field stay in the general list under the form.
+  const FLAG_FIELD: Record<string, "vendor" | "date" | "amount" | "category"> = {
+    no_vendor: "vendor",
+    vendor_unclear: "vendor",
+    logo_mismatch: "vendor",
+    no_date: "date",
+    future_date: "date",
+    stale_date: "date",
+    no_amount: "amount",
+    total_mismatch: "amount",
+    total_suspect: "amount",
+    large_amount: "amount",
+    uncategorized: "category",
+  };
+  function flagsFor(field: "vendor" | "date" | "amount" | "category") {
+    return (current?.flags ?? []).filter((f) => FLAG_FIELD[f.code] === field);
+  }
+  const generalFlags = $derived(
+    (current?.flags ?? []).filter((f) => !FLAG_FIELD[f.code]),
+  );
+
   const markers = $derived.by(() => {
     const r = current;
     if (!r) return [];
@@ -354,9 +377,7 @@
       <header class="m-head">
         <strong>Review receipt</strong>
         <span class="muted">{index + 1} of {list.length}</span>
-        {#if current.reviewRequired && !current.approved}
-          <span class="chip chip-warn">needs review</span>
-        {:else if current.approved}
+        {#if current.approved}
           <span class="chip chip-ok">approved</span>
         {/if}
         <span class="spacer"></span>
@@ -392,9 +413,19 @@
         </div>
 
         <div class="m-form">
+          {#snippet fieldFlags(field: "vendor" | "date" | "amount" | "category")}
+            {#each flagsFor(field) as f (f.code + f.message)}
+              <div class="flag inline {f.severity}">
+                <span>{f.severity === "error" ? "⛔" : f.severity === "warn" ? "⚠️" : "ℹ️"}</span>
+                <span>{f.message}</span>
+              </div>
+            {/each}
+          {/snippet}
+
           <div class="frow f-vendor">
             <label for="rv-vendor">Vendor</label>
             <input id="rv-vendor" type="text" bind:value={vendor} onchange={save} />
+            {@render fieldFlags("vendor")}
             {#if imgLoaded && current.vendor.bbox}
               {#key current.id}
                 <canvas class="callout" use:callout={current.vendor.bbox}></canvas>
@@ -405,6 +436,7 @@
           <div class="frow f-date">
             <label for="rv-date">Date</label>
             <input id="rv-date" type="date" bind:value={date} onchange={save} />
+            {@render fieldFlags("date")}
             {#if imgLoaded && current.date.bbox}
               {#key current.id}
                 <canvas class="callout" use:callout={current.date.bbox}></canvas>
@@ -422,6 +454,7 @@
               bind:value={amount}
               onchange={save}
             />
+            {@render fieldFlags("amount")}
             {#if imgLoaded && current.amount.bbox}
               {#key current.id}
                 <canvas class="callout" use:callout={current.amount.bbox}></canvas>
@@ -436,11 +469,12 @@
                 <option value={c}>{c}</option>
               {/each}
             </select>
+            {@render fieldFlags("category")}
           </div>
 
-          {#if current.flags.length}
+          {#if generalFlags.length}
             <div class="flags">
-              {#each current.flags as f (f.code + f.message)}
+              {#each generalFlags as f (f.code + f.message)}
                 <div class="flag {f.severity}">
                   <span>{f.severity === "error" ? "⛔" : f.severity === "warn" ? "⚠️" : "ℹ️"}</span>
                   <span>{f.message}</span>
@@ -487,7 +521,7 @@
   }
   .modal {
     width: min(1040px, 100%);
-    max-height: min(92dvh, 100%);
+    max-height: min(94dvh, 100%);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -564,12 +598,14 @@
     background: var(--cat-3);
     color: var(--cat-3-ink);
   }
+  /* Date reads purple, not red: red stayed too close to the orange "review"
+     accents, and errors keep red to themselves. */
   .m-date {
-    border-color: var(--err);
+    border-color: var(--cat-4);
   }
   .m-date span {
-    background: var(--err);
-    color: var(--err-ink);
+    background: var(--cat-4);
+    color: var(--cat-4-ink);
   }
   .m-amount {
     border-color: var(--ok);
@@ -593,7 +629,7 @@
     border-left: 3px solid var(--cat-3);
   }
   .f-date input {
-    border-left: 3px solid var(--err);
+    border-left: 3px solid var(--cat-4);
   }
   .f-amount input {
     border-left: 3px solid var(--ok);
@@ -627,8 +663,43 @@
     background: var(--err-soft);
     color: var(--err);
   }
+  /* Field-adjacent flags: same vocabulary, tighter fit under an input. */
+  .flag.inline {
+    font-size: 0.82rem;
+    padding: 0.35rem 0.55rem;
+  }
   .provenance {
     font-size: 0.8rem;
     margin: 0;
+  }
+
+  /* Phone fit, any orientation: the dialog must never push its own header,
+     footer or close button off-screen. The body is the only scroll region;
+     the footer wraps instead of overflowing, and the keyboard hint (useless
+     on touch) gives way first. */
+  .m-foot {
+    flex-wrap: wrap;
+  }
+  @media (max-width: 640px), (max-height: 500px) {
+    .scrim {
+      padding: 0.5rem;
+    }
+    .m-head,
+    .m-foot {
+      padding: 0.6rem 0.8rem;
+      gap: 0.5rem;
+    }
+    .m-body {
+      padding: 0.8rem;
+      gap: 0.8rem;
+    }
+    .m-foot .kbd {
+      display: none;
+    }
+  }
+  @media (max-height: 500px) {
+    .modal {
+      max-height: 100%;
+    }
   }
 </style>

@@ -71,12 +71,24 @@
         </strong>
       </div>
       {#if receipt.flags.length}
-        <div class="flags muted">
-          {receipt.flags[0]?.message}
-          {#if receipt.flags.length > 1}
-            <span>+{receipt.flags.length - 1} more</span>
-          {/if}
-        </div>
+        {#if receipt.status === "needs_review"}
+          <!-- The review reason is the card's headline fact: it tells the
+               user what to check before they even open the modal. -->
+          <div class="why">
+            <span aria-hidden="true">⚠</span>
+            <span class="why-msg">{receipt.flags[0]?.message}</span>
+            {#if receipt.flags.length > 1}
+              <span class="why-more">+{receipt.flags.length - 1} more</span>
+            {/if}
+          </div>
+        {:else}
+          <div class="flags muted">
+            {receipt.flags[0]?.message}
+            {#if receipt.flags.length > 1}
+              <span>+{receipt.flags.length - 1} more</span>
+            {/if}
+          </div>
+        {/if}
       {/if}
     {:else if receipt.status === "failed"}
       <div class="flags err">{receipt.error ?? "Processing failed."}</div>
@@ -154,6 +166,25 @@
   }
   .flags {
     font-size: 0.82rem;
+  }
+  .why {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    font: 600 0.84rem/1.35 var(--font-ui);
+    color: var(--gold-text);
+    background: var(--gold-soft);
+    border-left: 3px solid var(--gold);
+    border-radius: 6px;
+    padding: 0.4rem 0.55rem;
+  }
+  .why-msg {
+    min-width: 0;
+  }
+  .why-more {
+    margin-left: auto;
+    font-weight: 500;
+    white-space: nowrap;
   }
   .err {
     color: var(--err);

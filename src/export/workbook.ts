@@ -89,7 +89,7 @@ interface ReceiptAnchor {
 // scheme as the on-image highlighter — vendor blue, date red, amount green.
 const FIELD_TINTS = {
   vendor: { fill: "FFDBEAFE", ink: "FF1D4ED8" },
-  date: { fill: "FFFEE2E2", ink: "FFB91C1C" },
+  date: { fill: "FFEDE9FE", ink: "FF6D28D9" }, // purple, matching the app's date color
   amount: { fill: "FFD8F0E3", ink: "FF116A43" },
 } as const;
 

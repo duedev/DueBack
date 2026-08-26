@@ -32,7 +32,7 @@
     </div>
     <p class="hero-drop">…or just drag receipts anywhere onto this page.</p>
     <p class="hero-note">
-      <strong>Runs entirely in your browser — your receipts never leave your
+      <strong>Runs entirely in your browser. Your receipts never leave your
       device.</strong>
     </p>
     <ul class="hero-stats" aria-label="Key facts">

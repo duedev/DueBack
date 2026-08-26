@@ -2,7 +2,7 @@
   <p class="section-label">Google account &amp; storage</p>
   <div class="head-row">
     <h2>Drop receipts in Drive. A workbook shows up.</h2>
-    <span class="badge-soon">Drive sync — coming soon</span>
+    <span class="badge-soon">Drive sync coming soon</span>
   </div>
   <p class="lede">
     Sign in with your Google account (one tap, no new password; email magic

@@ -182,6 +182,12 @@ class AppState {
 
   /** Navigate back to the landing page (receipts stay put). */
   goHome(): void {
+    // The workspace owns #process; hand the URL back to the landing BEFORE
+    // the surface swap renders, so the landing's hash router can't read the
+    // stale workspace hash and bounce straight back in.
+    if (location.hash.replace(/^#\/?/, "") === "process") {
+      history.replaceState(null, "", location.pathname + location.search + "#home");
+    }
     this.wentHome = true;
   }
 
