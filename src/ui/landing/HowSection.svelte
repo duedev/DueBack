@@ -85,14 +85,14 @@
     <p>
       Every image is straightened before it's read: EXIF rotation, a
       projection-profile deskew, and an edge-energy autocrop, then OCR runs
-      over a transient ~2600px render — <strong>on your hardware</strong>, no
+      over a transient ~2600px render, <strong>on your hardware</strong>, no
       server round-trip. Weak reads get a second pass over an adaptively
       binarized copy (rescue-only: binarization helps uneven phone photos and
       hurts clean scans, so it never runs first).
     </p>
     <p>
       The money grammar is deliberately strict: "3.499/gal" and "11.204 GAL"
-      are decimals, never $3,499 — and the line under a bare TOTAL label must
+      are decimals, never $3,499; the line under a bare TOTAL label must
       parse as strict money and must not be a tender line, so "CASH 20.00"
       never ships as the total. Subtotal + tax must foot, gallons ×
       price-per-gallon is cross-checked on fuel receipts, and anything that

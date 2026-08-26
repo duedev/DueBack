@@ -20,7 +20,9 @@
   const storedSort = localStorage.getItem("board.sort");
   let sortKey = $state<SortKey>(
     // "status" was a sort option before the kanban lanes made it redundant.
-    storedSort && storedSort !== "status" ? (storedSort as SortKey) : "added",
+    // Default: category, then date — receipts group the way the workbook
+    // files them, so the board previews the report.
+    storedSort && storedSort !== "status" ? (storedSort as SortKey) : "category",
   );
   $effect(() => localStorage.setItem("board.view", view));
   $effect(() => localStorage.setItem("board.sort", sortKey));
@@ -34,7 +36,10 @@
       case "vendor":
         return (a.vendor.value || "\uffff").localeCompare(b.vendor.value || "\uffff");
       case "category":
-        return a.category.value.localeCompare(b.category.value);
+        return (
+          a.category.value.localeCompare(b.category.value) ||
+          (a.date.value || "￿").localeCompare(b.date.value || "￿")
+        );
       default:
         return b.createdAt - a.createdAt; // newest first
     }
@@ -133,17 +138,17 @@
       <ExportBar />
       <div class="board-bar">
         <div class="seg" role="group" aria-label="Board view">
-          <button class="seg-btn" class:active={view === "grid"} aria-pressed={view === "grid"} onclick={() => (view = "grid")}>Grid</button>
-          <button class="seg-btn" class:active={view === "kanban"} aria-pressed={view === "kanban"} onclick={() => (view = "kanban")}>Kanban</button>
+          <button class="seg-btn" class:active={view === "grid"} aria-pressed={view === "grid"} title="One flat grid of every receipt" onclick={() => (view = "grid")}>Grid</button>
+          <button class="seg-btn" class:active={view === "kanban"} aria-pressed={view === "kanban"} title="Lanes by status: processing, needs review, done" onclick={() => (view = "kanban")}>Kanban</button>
         </div>
         <label class="sort">
           <span class="muted small">Sort</span>
-          <select bind:value={sortKey} aria-label="Sort receipts">
+          <select bind:value={sortKey} aria-label="Sort receipts" title="Order the receipts in every view">
             <option value="added">Newest added</option>
             <option value="date">Receipt date</option>
             <option value="amount">Amount (high first)</option>
             <option value="vendor">Vendor A–Z</option>
-            <option value="category">Category</option>
+            <option value="category">Category, then date</option>
           </select>
         </label>
       </div>
@@ -191,7 +196,7 @@
   aria-hidden="true"
   tabindex="-1"
 />
-<button class="camera-fab" onclick={() => cameraInput?.click()} aria-label="Snap a receipt">
+<button class="camera-fab" onclick={() => cameraInput?.click()} aria-label="Snap a receipt" title="Open the camera and snap a receipt">
   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d="M14.5 4h-5L7.9 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.9L14.5 4Z" />
     <circle cx="12" cy="13" r="3.6" />

@@ -107,6 +107,7 @@
     faq: "help",
     contact: "help",
     help: "help",
+    roadmap: "help",
   };
 
   let page = $state<PageId>("home");
@@ -114,6 +115,11 @@
 
   async function applyHash(): Promise<void> {
     const raw = location.hash.replace(/^#\/?/, "");
+    // #process belongs to the workspace: entering unmounts this component.
+    if (raw === "process") {
+      app.enter();
+      return;
+    }
     const target = PAGE_FOR_HASH[raw] ?? "home";
     const anchor = raw && raw !== target ? raw : null;
     page = target;
@@ -138,27 +144,31 @@
   const faqs = [
     {
       q: "Is it really free?",
-      a: "Yes. Receipts are read on your device with open-source OCR, so there is no per-receipt charge, no trial, no account. Optional boosters (an AI second opinion, cloud sync) are off by default.",
+      a: "Yes. Receipts are read on your device with open-source OCR, so there is no per-receipt charge, no trial and no account. Optional boosters like an AI second opinion and cloud sync are rolling out separately and will always be off by default.",
     },
     {
       q: "Where do my receipts go?",
-      a: "Nowhere, by default. Images are stored in your browser and processed on your device. If you sign in (optional), your data syncs to your own private cloud workspace; if you enable the AI booster, low-confidence receipts are sent to the model you choose.",
+      a: "Nowhere, by default. Images are stored in your browser and processed on your device. Once the sign-in booster reaches you, syncing to your own private cloud workspace will be an explicit choice, and the AI booster only ever sends the receipts you allow to the model you pick.",
     },
     {
       q: "What do I hand to my office?",
-      a: "A polished multi-sheet Excel workbook: a summary that foots with real formulas, per-category sheets with the receipt images embedded, an insights sheet, plus a CSV if your system prefers imports.",
+      a: "A polished multi-sheet Excel workbook: a summary that foots with real formulas, per-category sheets with the receipt images embedded and an insights dashboard. There is also a CSV if your system prefers imports.",
     },
     {
       q: "What kinds of files work?",
-      a: "JPEG, PNG and WebP photos plus PDFs (HEIC too on Safari). You can also drop in a ZIP — every receipt inside is unpacked, however deeply its folders nest, and a multi-page PDF becomes one receipt per page. Snap receipts with your phone camera or drop in files; crumpled, faded and tilted receipts are straightened and cleaned up before reading.",
+      a: "JPEG, PNG and WebP photos plus PDFs (HEIC too on Safari). You can also drop in a ZIP: every receipt inside is unpacked no matter how deeply its folders nest, and a multi-page PDF becomes one receipt per page. Crumpled, faded and tilted receipts are straightened and cleaned up before reading.",
     },
     {
       q: "How does logo recognition help?",
-      a: "Many receipts show the merchant only as a stylized logo the text reader can't spell. Teach the app a brand once with one clear photo of the logo in Settings, and from then on it recognizes that logo visually, names the brand, and files it in the right category.",
+      a: "Many receipts show the merchant only as a stylized logo the text reader can't spell. Teach the app a brand once with one clear photo of the logo in Settings. From then on it recognizes that logo visually, names the brand and files it in the right category.",
     },
     {
-      q: "Can it watch a Google Drive folder?",
-      a: "Not yet — it's planned. Today you can sign in to keep batches, receipts and taught brands in your own private cloud workspace and pick up on any device. Automatic Drive-folder scanning that keeps a workbook current is on the roadmap.",
+      q: "Can it watch a Google Drive or OneDrive folder?",
+      a: "Not yet. Both are on the roadmap: automatic Drive-folder scanning that keeps a workbook current, and saving reports straight to OneDrive. Flip on Nerd mode in the top bar to see the full roadmap on this page.",
+    },
+    {
+      q: "What is Nerd mode?",
+      a: "The { } toggle in the top bar. It reveals engineering margin notes across the site (how the pipeline, sync and workbook actually work) plus the project roadmap here on the Help page. Purely informational, and it changes nothing about how the app runs.",
     },
   ];
 </script>
@@ -182,7 +192,7 @@
           <path d="M12 16V4m0 0 4.5 4.5M12 4 7.5 8.5M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2" />
         </svg>
         <strong>Drop your receipts</strong>
-        <span>Photos, scans, PDFs or ZIP folders — read right on this device.</span>
+        <span>Photos, scans, PDFs or ZIP folders, read right on this device.</span>
       </div>
     </div>
   {/if}
@@ -261,7 +271,7 @@
           <span class="g-title">Review the flagged few</span>
           <span class="g-deck">
             Most receipts file themselves. The uncertain ones queue for a quick
-            check against the image — approve or fix in a couple of clicks.
+            check against the image. Approve or fix in a couple of clicks.
           </span>
           <span class="g-more">See the review →</span>
         </a>
@@ -270,13 +280,13 @@
           <span class="g-title">Download the workbook</span>
           <span class="g-deck">
             One click builds a themed Excel report with live totals and the
-            receipt images embedded — plus a CSV if you need one.
+            receipt images embedded, plus a CSV if you need one.
           </span>
           <span class="g-more">See the workbook →</span>
         </a>
       </div>
       <p class="trust-line">
-        Local-first by design — receipts stay in your browser.
+        Local-first by design: receipts stay in your browser.
         <a href="#privacy">Exactly what leaves your device, and when →</a>
       </p>
       <aside class="db-nerd" aria-label="Technical details">
@@ -308,7 +318,7 @@
       <p class="page-no">02 · How it works</p>
       <h2 class="page-title">From glovebox pile to filed and checked.</h2>
       <p class="page-deck">
-        The three steps in detail — what you can throw at it, how the review
+        The three steps in detail: what you can throw at it, how the review
         keeps you honest, and how merchants that only sign with a logo still
         get named.
       </p>
@@ -361,7 +371,7 @@
       <p class="page-no">03 · The workbook</p>
       <h2 class="page-title">The deliverable, in detail.</h2>
       <p class="page-deck">
-        What lands in your download folder — and why your office will take it
+        What lands in your download folder, and why your office will take it
         without a second look.
       </p>
     </header>
@@ -392,18 +402,13 @@
       <h2>Local first. Cloud only when you say so.</h2>
       <div class="priv-cols">
         <div class="card priv">
-          <h4>The default path</h4>
-          <p class="priv-flow">
-            <span class="chip chip-ok">your device</span>
-            <span class="priv-arrow">→</span>
-            <span class="chip chip-ok">your device</span>
-          </p>
+          <h4>The default path: nothing ever leaves this device</h4>
           <p>
             <strong>Images stay in your browser's storage.</strong> OCR, logo
             recognition, extraction and the Excel build all run on your
             hardware. Close the tab and it's still there; clear it and it's
             gone. The hosted site counts visits anonymously (Cloudflare Web
-            Analytics, no cookies); your receipts and their contents are never
+            Analytics, no cookies). Your receipts and their contents are never
             part of that.
           </p>
         </div>
@@ -414,10 +419,11 @@
             <a class="chip" href="#account">cloud sync</a>
           </p>
           <p>
-            Turn on the AI assist and low-confidence receipts go to the model you
-            configure. Sign in and your batches sync to your own Supabase
-            workspace, protected by row-level security. Both are opt-in, clearly
-            labeled, and <strong>off by default</strong>.
+            These are rolling out now; see the roadmap under Help with Nerd
+            mode on. Once enabled, the AI assist sends low-confidence receipts
+            to the model you configure, and signing in syncs your batches to
+            your own private workspace behind row-level security. Both will
+            always be opt-in and <strong>off by default</strong>.
           </p>
         </div>
       </div>
@@ -428,7 +434,7 @@
           Sign in and rows mirror to your own Supabase workspace behind
           row-level security (<strong>user_id = auth.uid()</strong>),
           reconciled last-write-wins on <strong>updatedAt</strong> in both
-          directions — a stale device can't clobber a newer edit, and deletes
+          directions: a stale device can't clobber a newer edit, and deletes
           propagate as tombstones so nothing you removed ever resurrects.
         </p>
         <p>
@@ -453,7 +459,7 @@
   <div class="lpage" hidden={page !== "help"}>
     <header class="wrap page-head">
       <p class="page-no">05 · Help</p>
-      <h2 class="page-title">Questions, answered — and a direct line.</h2>
+      <h2 class="page-title">Questions, answered. And a direct line.</h2>
       <p class="page-deck">
         The short answers first; if yours isn't here, the form below goes
         straight to the developer.
@@ -469,6 +475,43 @@
           <p>{f.a}</p>
         </details>
       {/each}
+    </section>
+
+    <!-- Roadmap: nerd-mode only (the { } toggle), like the margin notes. -->
+    <section id="roadmap" class="wrap roadmap db-nerd-only" aria-label="Project roadmap">
+      <p class="section-label">Roadmap</p>
+      <h2>Where this is going.</h2>
+      <div class="road-cols">
+        <div class="card road">
+          <span class="chip chip-ok">Shipped</span>
+          <ul>
+            <li>On-device reading: OCR, cleanup passes and total reconciliation</li>
+            <li>Teach-a-brand visual logo recognition</li>
+            <li>Themed Excel workbook, insights dashboard, CSV and image archive</li>
+            <li>Installable app (PWA) that works offline</li>
+          </ul>
+        </div>
+        <div class="card road">
+          <span class="chip chip-warn">In progress</span>
+          <ul>
+            <li>Cloud sync: sign in and pick up your batches on any device</li>
+            <li>AI second opinion for low-confidence receipts, behind a policed proxy</li>
+            <li>Save the workbook straight to OneDrive</li>
+          </ul>
+        </div>
+        <div class="card road">
+          <span class="chip">Planned</span>
+          <ul>
+            <li>Google Drive folder watch: drop receipts in Drive, download a current workbook</li>
+            <li>Stronger on-device OCR engine as a one-click booster</li>
+            <li>Shared team workspaces</li>
+          </ul>
+        </div>
+      </div>
+      <p class="muted road-note">
+        Dates on purpose absent: one developer, real job. Want something
+        sooner? Say so below.
+      </p>
     </section>
 
     <ContactSection />
@@ -487,8 +530,7 @@
     <span>MIT license</span>
     <span class="foot-sep">·</span>
     <span>
-      Built by one person, with on-device AI — feedback goes straight to the
-      developer.
+      Built by one person. Feedback goes straight to the developer.
     </span>
   </footer>
 </div>
@@ -855,9 +897,6 @@
   .priv-flow a.chip:hover {
     color: var(--accent);
   }
-  .priv-arrow {
-    color: var(--ink-faint);
-  }
   .priv p:last-of-type {
     color: var(--ink-soft);
     margin: 0.6rem 0 0;
@@ -896,6 +935,38 @@
   .qa[open] summary::after {
     content: "–";
   }
+  /* ---- roadmap (nerd-mode only) ---- */
+  .roadmap {
+    padding-block: 1.8rem 0.4rem;
+  }
+  .road-cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 0.9rem;
+    align-items: stretch;
+  }
+  .road {
+    padding: 1.1rem 1.2rem;
+    display: grid;
+    gap: 0.7rem;
+    align-content: start;
+  }
+  .road .chip {
+    justify-self: start;
+  }
+  .road ul {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: grid;
+    gap: 0.45rem;
+    font-size: 0.92rem;
+    color: var(--ink-soft);
+  }
+  .road-note {
+    font-size: 0.85rem;
+    margin-top: 0.9rem;
+  }
+
   .qa p {
     padding: 0 1.2rem 1.1rem;
     margin: 0;

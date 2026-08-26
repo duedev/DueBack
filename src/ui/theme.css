@@ -55,9 +55,12 @@
   --cat-5: #0e7490;
   --cat-6: #be185d;
 
-  /* Ink partners for small text ON --cat-3 / --err fills (review markers):
-     the fills turn pastel in dark mode, where white text fails AA. */
+  /* Ink partners for small text ON --cat-3 / --cat-4 / --err fills (review
+     markers): the fills turn pastel in dark mode, where white text fails AA.
+     --cat-4 doubles as the DATE color everywhere (markers, highlights, the
+     workbook) — red stayed too close to the orange review accents. */
   --cat-3-ink: #ffffff; /* 6.70:1 on --cat-3 */
+  --cat-4-ink: #ffffff; /* 5.70:1 on --cat-4 */
   --err-ink: #ffffff; /* 6.55:1 on --err */
 
   --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
@@ -99,6 +102,7 @@
   --cat-6: #ff8fb8;
 
   --cat-3-ink: #0e1b3d; /* 6.8:1 on --cat-3 */
+  --cat-4-ink: #2a1454; /* 7.1:1 on --cat-4 */
   --err-ink: #3b0a0a; /* 6.0:1 on --err */
 
   --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 6px rgb(0 0 0 / 0.35);
@@ -144,6 +148,7 @@
     --cat-6: #ff8fb8;
 
     --cat-3-ink: #0e1b3d; /* 6.8:1 on --cat-3 */
+    --cat-4-ink: #2a1454; /* 7.1:1 on --cat-4 */
     --err-ink: #3b0a0a; /* 6.0:1 on --err */
 
     --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 6px rgb(0 0 0 / 0.35);
@@ -201,6 +206,10 @@ h3 {
   letter-spacing: -0.01em;
   margin: 0 0 0.5em;
   text-wrap: balance;
+  /* Pin Fraunces at a mid optical size with the quirky forms off: at the
+     display end the lowercase f overhangs its neighbors and read as a
+     glitch ("filed"). Requires the full-axis build (see main.ts). */
+  font-variation-settings: "opsz" 40, "SOFT" 0, "WONK" 0;
 }
 
 h4,

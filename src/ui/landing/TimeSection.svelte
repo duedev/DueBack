@@ -76,7 +76,7 @@
     <p>
       The extraction rules run against a fixed nine-challenge accuracy gate on
       every change, and CI drives real OCR in a real browser over sample
-      receipts — fuel math, split total labels, skewed scans, multi-page PDFs —
+      receipts (fuel math, split total labels, skewed scans, multi-page PDFs)
       with per-receipt amount assertions. A regression fails the build,
       <strong>not your report</strong>.
     </p>

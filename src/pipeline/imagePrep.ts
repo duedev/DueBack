@@ -8,6 +8,7 @@ import {
   maskToRgba,
   borderColor,
   darkBorderInsets,
+  paperRegionBox,
 } from "./binarize.ts";
 
 // Image pre-pass (§5 step 1, §14). Runs entirely client-side on a <canvas>:
@@ -234,25 +235,58 @@ export async function cleanImage(file: File | Blob): Promise<CleanedImage> {
     };
   }
   if (IMAGE_PREP.autoCrop && a) {
-    const box = detectContentBox(a.data, a.w, a.h);
-    // Keep the content box inside the border-trimmed region.
-    const x1 = Math.max(box.x, inset.left);
-    const y1 = Math.max(box.y, inset.top);
-    const x2 = Math.min(box.x + box.w, a.w - inset.right);
-    const y2 = Math.min(box.y + box.h, a.h - inset.bottom);
-    const nbox = { x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
-    const area = (nbox.w * nbox.h) / (a.w * a.h);
-    // Only accept a crop that keeps a sensible region (guards over-cropping).
-    if (area > 0.45 && nbox.w > a.w * 0.4 && nbox.h > a.h * 0.4) {
-      const pad = 0.02;
-      const px = nbox.w * pad;
-      const py = nbox.h * pad;
-      crop = {
-        x: Math.max(0, (nbox.x - px) / a.scale),
-        y: Math.max(0, (nbox.y - py) / a.scale),
-        w: Math.min(srcW, (nbox.w + 2 * px) / a.scale),
-        h: Math.min(srcH, (nbox.h + 2 * py) / a.scale),
+    const inner = {
+      x1: inset.left,
+      y1: inset.top,
+      x2: a.w - inset.right,
+      y2: a.h - inset.bottom,
+    };
+    const clampInner = (b: { x: number; y: number; w: number; h: number }) => {
+      const x1 = Math.max(b.x, inner.x1);
+      const y1 = Math.max(b.y, inner.y1);
+      const x2 = Math.min(b.x + b.w, inner.x2);
+      const y2 = Math.min(b.y + b.h, inner.y2);
+      return { x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
+    };
+    const toCrop = (
+      b: { x: number; y: number; w: number; h: number },
+      pad: number,
+    ) => {
+      const px = b.w * pad;
+      const py = b.h * pad;
+      return {
+        x: Math.max(0, (b.x - px) / a.scale),
+        y: Math.max(0, (b.y - py) / a.scale),
+        w: Math.min(srcW, (b.w + 2 * px) / a.scale),
+        h: Math.min(srcH, (b.h + 2 * py) / a.scale),
       };
+    };
+
+    // First choice: the paper slab (largest bright, desaturated connected
+    // region). The edge-energy box keeps every textured thing in frame — a
+    // salad beside the receipt, a patterned table — so busy photos barely
+    // cropped; the slab detector goes after the receipt itself and is
+    // allowed to crop far tighter. Its own guards make null the answer for
+    // dark scenes and full-frame scans, which fall through to edge energy.
+    const paper = paperRegionBox(a.data, a.w, a.h);
+    let paperCropped = false;
+    if (paper) {
+      const pbox = clampInner(paper);
+      const area = (pbox.w * pbox.h) / (a.w * a.h);
+      if (area >= 0.05 && area <= 0.92) {
+        crop = toCrop(pbox, 0.03);
+        paperCropped = true;
+      }
+    }
+    if (!paperCropped) {
+      const box = detectContentBox(a.data, a.w, a.h);
+      // Keep the content box inside the border-trimmed region.
+      const nbox = clampInner(box);
+      const area = (nbox.w * nbox.h) / (a.w * a.h);
+      // Only accept a crop that keeps a sensible region (guards over-cropping).
+      if (area > 0.45 && nbox.w > a.w * 0.4 && nbox.h > a.h * 0.4) {
+        crop = toCrop(nbox, 0.02);
+      }
     }
   }
 

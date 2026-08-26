@@ -87,6 +87,15 @@
   display: block;
   animation: db-nerd-in 0.35s ease-out both;
 }
+/* Whole sections that exist only for Nerd mode (the roadmap): same gate,
+   same reveal, but they keep their own section layout. */
+.landing .db-nerd-only {
+  display: none;
+}
+.landing.nerd-on .db-nerd-only {
+  display: block;
+  animation: db-nerd-in 0.35s ease-out both;
+}
 .landing .db-nerd-tag {
   display: inline-flex;
   align-items: center;

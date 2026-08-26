@@ -14,7 +14,7 @@ export interface HighlightMark {
 
 export const HIGHLIGHT_COLORS = {
   vendor: "#1d4ed8", // blue
-  date: "#dc2626", // red
+  date: "#7c3aed", // purple (red sat too close to the orange review accents)
   amount: "#147246", // green — money reads green everywhere in the app
 } as const;
 

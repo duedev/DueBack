@@ -463,13 +463,21 @@ async function main() {
     // 7. Generate the spreadsheet and validate the downloaded workbook.
     await page.locator("#xb-emp").fill("Ada Lovelace");
     await page.locator("#xb-job").fill("Q1 Coffee Run");
-    // Insights is opt-in (default off) — tick it so the dashboard assertions
-    // below also gate the toggle itself.
-    await page.getByText("Insights sheet", { exact: true }).click();
+    // Insights is on by default — the dashboard assertions below gate that.
+    check(
+      await page.locator(".opt", { hasText: "Insights sheet" }).locator("input").isChecked(),
+      "Insights toggle defaults to on",
+    );
     const dlDir = await mkdtemp(join(tmpdir(), "reimb-"));
+    // Job number was left blank on purpose: generating must first raise the
+    // blank-details prompt, and "Generate anyway" proceeds.
+    await page.getByRole("button", { name: /Generate workbook/ }).click();
+    const blankDialog = page.getByRole("dialog", { name: "Missing report details" });
+    await blankDialog.waitFor({ timeout: 5000 });
+    check(true, "blank job number raises the missing-details prompt");
     const [download] = await Promise.all([
       page.waitForEvent("download", { timeout: 60000 }),
-      page.getByRole("button", { name: /Generate workbook/ }).click(),
+      page.getByRole("button", { name: "Generate anyway" }).click(),
     ]);
     const xlsxPath = join(dlDir, download.suggestedFilename());
     await download.saveAs(xlsxPath);

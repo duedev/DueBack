@@ -5,8 +5,36 @@
   import Workspace from "./Workspace.svelte";
   import Toasts from "./Toasts.svelte";
 
+  const hashName = (): string => location.hash.replace(/^#\/?/, "");
+
   onMount(() => {
+    // #process deep-links straight into the workspace (handy for walking
+    // someone through the app remotely: "what does your #process page show?").
+    if (hashName() === "process") app.enter();
     void app.init();
+    // Back/forward across surfaces: leaving #process returns to the landing,
+    // arriving at it enters the workspace. Landing handles its own hashes.
+    const onHash = (): void => {
+      if (hashName() === "process") app.enter();
+      else if (app.showWorkspace) app.goHome();
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  });
+
+  // Keep the URL honest about which surface is showing: the workspace is
+  // #process, the landing owns every other hash. replaceState fires no
+  // hashchange and adds no history entry, so this cannot loop with the
+  // listener above or with the landing's own router — it runs BEFORE the
+  // surface swap renders, and the landing then mounts reading the already
+  // corrected hash.
+  $effect(() => {
+    if (app.booting) return;
+    if (app.showWorkspace) {
+      if (hashName() !== "process") history.replaceState(null, "", "#process");
+    } else if (hashName() === "process") {
+      history.replaceState(null, "", location.pathname + location.search + "#home");
+    }
   });
 </script>
 

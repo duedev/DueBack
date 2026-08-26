@@ -21,7 +21,7 @@ Rebuilt from scratch from the Python app in `../Reimbursements` (see its
 Vite 7 · TypeScript · Svelte 5 (runes) · Tesseract.js (default OCR, vendored) ·
 PaddleOCR on onnxruntime-web (opt-in tier) · transformers.js CLIP (logo layer,
 lazy) · ExcelJS + Chart.js (export) · idb · @supabase/supabase-js (optional) ·
-vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + Fraunces).
+vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + Fraunces **full-axis build** — theme.css pins headings at `opsz 40, WONK 0`; the wght-only build's display `f` looked broken).
 
 ## Map
 
@@ -29,10 +29,10 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + Fraunces).
 |---|---|
 | `src/types.ts` | Domain model: Receipt/Batch/Job/Field/Flag/LogoMatch/StoredBrand |
 | `src/pipeline/pipeline.ts` | Per-receipt flow: clean → hash/cache → OCR (+binarized weak-read rescue) → rules → **logo fusion** → vision assist → highlighter bake (`annotate.ts` → `annotatedKey`) → Python-convention rename (`util/rename.ts`) → dedup → status |
-| `src/pipeline/imagePrep.ts` | canvas prep: EXIF rotate → (opt) perspective → projection-profile deskew → grayscale → edge-energy autocrop → two renders (transient hi-res `ocrBlob` for OCR + stored 1600px blob); `binarizeBlob` for the weak-read rescue |
+| `src/pipeline/imagePrep.ts` | canvas prep: EXIF rotate → (opt) perspective → projection-profile deskew → grayscale → autocrop (paper-slab first via `paperRegionBox`, edge-energy fallback) → two renders (transient hi-res `ocrBlob` for OCR + stored 1600px blob); `binarizeBlob` for the weak-read rescue |
 | `src/pipeline/pdf.ts` | Multi-page PDF intake: `expandPdf` renders pages to JPEG (long edge ≈ `ocrMaxEdge`) so `addFiles` makes one receipt per page, capped by the remaining batch capacity (+ `LIMITS.maxPdfPages` backstop) so an unbounded PDF can't rasterize past the cap; `pdfPageNames` names them (`… (page 2 of 8)` in `originalFileName`) |
 | `src/pipeline/unzip.ts` | ZIP intake: dependency-free central-directory reader (`readZip`, platform `DecompressionStream`) + archive-junk filter and entry naming; inflation is STREAMED with a running byte count that aborts past `maxEntryBytes` (the forgeable directory size is only a fast path) plus a per-archive `maxTotalBytes`; `addFiles` unpacks an archive into one receipt per usable file, nested folders and all |
-| `src/pipeline/binarize.ts` | pure image math (no DOM, Node-tested): luminance, Bradley adaptive threshold, projection-profile skew estimation |
+| `src/pipeline/binarize.ts` | pure image math (no DOM, Node-tested): luminance, Bradley adaptive threshold, projection-profile skew estimation, `paperRegionBox` (Otsu + saturation gate + largest connected component — the tight-crop pass that ignores food/clutter next to the receipt) |
 | `src/pipeline/perspective.ts` | opt-in OpenCV.js quad detect + warp (`VITE_PERSPECTIVE=1`, vendored lib) |
 | `src/pipeline/ocr.ts` | `OcrEngine` seam; Tesseract default; `VITE_OCR_ENGINE=paddle` → `engines/paddle/*` (ONNX det+rec+CTC) |
 | `src/config/vendors.ts` | Brand matcher: curated table + `src/data/vendorDb.extra.json` (generated, 329 brands); passes: exact → glyph-normalized (`normalizeGlyphs`) → bounded fuzzy (`fuzzyMatchVendor`); slogans as long aliases |
@@ -44,7 +44,7 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + Fraunces).
 | `src/supabase/` | `client.ts` (null unless `VITE_SUPABASE_URL/ANON_KEY`), `auth.ts`, `aiProxy.ts` |
 | `src/onedrive/` | Optional "Save to OneDrive" (no SDK, hidden unless `VITE_ONEDRIVE_CLIENT_ID`; ONEDRIVE_SETUP.md): `core.ts` (pure, Node-tested: PKCE, auth URL, token mapping, Graph upload w/ injectable fetch), `store.ts` (env + localStorage tokens), `popup.ts` (OAuth-popup relay, called by `main.ts` before mount), `index.ts` (connect popup / refresh / `uploadReport` → `Apps/DueBack`) |
 | `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark — dark is a warm ladder anchored on `#12100e`, the PWA chrome color), `state.svelte.ts` (the one reactive bridge; `applyTheme` also syncs the theme-color meta pair), `App/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle`; `Landing.svelte` is the marketing orchestrator over `landing/` (Hero/How/Time/Logo/Workbook/Account/Contact partials + `landing.css` shared vocabulary) — hash-routed into five "pages" (Home/How/Workbook/Your data/Help) with a Nerd-mode toggle (`landing/prefs.svelte.ts`, kv-free localStorage) revealing `.db-nerd` engineering notes |
-| `src/export/` | `zip.ts` (dependency-free ZIP for the images download), `anchor.ts` (px→EMU drawing anchors — the one place image geometry is computed), `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells hyperlink to per-receipt anchors on the category image sheets; anchors precomputed via `blockRows` — keep in sync with the image-block layout; no flat "All Receipts" sheet — the Summary IS the receipt table; **single source of truth**: category-sheet amounts are the stored values, Summary amount cells reference them, Insights KPIs/tables are COUNT/MAX/SUMIF formulas over Summary — edit one amount and everything re-foots; optional allowance lines — per diem (`Batch.perDiem`, `util/perdiem.ts`) and phone service (`Batch.phoneService`, `util/phone.ts`) — sit between the sections and the TOTAL; Insights = executive dashboard of KPI tiles + 5 charts, **opt-in via `WorkbookOptions.insights`, default off**), `charts.ts` (Chart.js→PNG; native xlsx charts are NOT possible with ExcelJS — the PNGs are the deliberate trade), `insights.ts`, `csv.ts`, `images.ts` |
+| `src/export/` | `zip.ts` (dependency-free ZIP for the images download), `anchor.ts` (px→EMU drawing anchors — the one place image geometry is computed), `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells hyperlink to per-receipt anchors on the category image sheets; anchors precomputed via `blockRows` — keep in sync with the image-block layout; no flat "All Receipts" sheet — the Summary IS the receipt table; **single source of truth**: category-sheet amounts are the stored values, Summary amount cells reference them, Insights KPIs/tables are COUNT/MAX/SUMIF formulas over Summary — edit one amount and everything re-foots; optional allowance lines — per diem (`Batch.perDiem`, `util/perdiem.ts`) and phone service (`Batch.phoneService`, `util/phone.ts`) — sit between the sections and the TOTAL; Insights = executive dashboard of KPI tiles + 5 charts, **`WorkbookOptions.insights` defaults off at the API; the ExportBar toggle defaults ON (kv `report.insights`)**), `charts.ts` (Chart.js→PNG; native xlsx charts are NOT possible with ExcelJS — the PNGs are the deliberate trade), `insights.ts`, `csv.ts`, `images.ts` |
 | `supabase/` | `migrations/0001_core.sql` (tables+RLS+storage+realtime), `0002_pgvector.sql` (optional), `0003_ai_limits.sql` (`ai_usage` per-user daily AI counts, service-role only), `0004_sync_integrity.sql` (`deleted_at` tombstones, `lww_guard` trigger, composite `(user_id, id)` PKs, realtime for batches/brand_logos), `functions/ai-extract` (POLICED key-holding proxy: model allowlist `AI_ALLOWED_MODELS`, max_tokens cap, per-user daily limit `AI_DAILY_LIMIT`; pure policy in `policy.ts`, Node-tested), `functions/logo-search` |
 | `scripts/` | `vendor-tesseract.mjs` (prebuild), `vendor-paddle.mjs` (opt-in), `export_vendor_db.py` (regenerates vendorDb.extra.json from `../Reimbursements/vendor_db.py`), `gen-icons.mjs` |
 | `tests/` | node:test via tsx; `testkit/` = the fixed 9-challenge accuracy gate (+ logo case); `e2e.mjs` + `screenshots.mjs` (Playwright vs `vite preview`) |
@@ -102,8 +102,16 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   through the `onAdd` prop / `pick()`. The hero h1 must keep matching
   `/Receipts in/` (both test suites wait on it).
 - **The landing is one document routed into five "pages" by the hash**
-  (`#how`, `#workbook`, `#privacy`→Your data, `#faq`/`#contact`→Help; old
-  section anchors map to their host page and still scroll to the section).
+  (`#how`, `#workbook`, `#privacy`→Your data, `#faq`/`#contact`/`#roadmap`→Help;
+  old section anchors map to their host page and still scroll to the section).
+  **`#process` belongs to the WORKSPACE**: App.svelte stamps it while
+  `showWorkspace` (replaceState, no history spam), deep-links into the app,
+  and `goHome()` clears it synchronously BEFORE the surface swap so the
+  landing router can't read the stale hash and bounce back in. The roadmap
+  section is Nerd-mode-only (`.db-nerd-only` in landing.css, same gate as
+  the margin notes); the contact form defaults the tuning-bundle checkbox ON
+  and its button reads "Send email" with the mail-app explainer in a title
+  tooltip.
   All pages STAY MOUNTED — inactive ones get the `hidden` attribute, never
   unmount — because the e2e asserts `#contact form` and the hero h1 at first
   render, and `getByRole` cannot see hidden elements, so Home must be the
@@ -172,6 +180,13 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   `applyPatch` re-bakes the annotated copy), and logged for training.
 - **Board views:** Workspace has a Grid/Kanban toggle + sort select
   (localStorage `board.view`/`board.sort`); kanban lanes are status groups.
+  Default sort is **category, then date**. A needs-review card shows its
+  first flag as a prominent warn banner (`.why` in Card.svelte). The report
+  bar breathes a ring around ONE next-action button (Review flagged, else
+  Generate workbook); the pulse keyframes rest at 0% so reduced-motion
+  freezes to a plain button. Generating with a blank employee/job name/job
+  number raises a confirm dialog first ("Generate anyway" proceeds —
+  e2e-pinned).
 - **Dark scan borders** (CamScanner sawtooth strips) are trimmed by
   `darkBorderInsets` (binarize.ts, Node-tested) before the edge-energy crop —
   pre-scanned uploads otherwise look "uncropped" (nothing else to trim).
@@ -263,11 +278,13 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   receipt per page — the pipeline's `decode()` first-page path only remains
   for PDF blobs stored by older versions. A scanner PDF used to become a
   single receipt of page 1, silently dropping the rest.
-- **The Insights sheet is opt-in and default OFF** (`WorkbookOptions.insights`;
-  the report-bar toggle persists in kv `report.insights`). Tests/e2e that
-  assert the dashboard must opt in (`{ insights: true }` / click the toggle);
-  chart rendering is skipped entirely when off, but `computeInsights` still
-  runs — the Summary's Expense Period comes from it.
+- **The Insights sheet defaults ON in the UI, OFF at the API.** The report-bar
+  toggle defaults to checked (kv `report.insights`; only an explicit false
+  turns it off) and the e2e pins that. `buildWorkbook`'s own
+  `WorkbookOptions.insights` still defaults false so headless/Node callers
+  must opt in (`{ insights: true }`). Chart rendering is skipped entirely
+  when off, but `computeInsights` still runs — the Summary's Expense Period
+  comes from it.
 - **Saved jobs autofill both ways** (report bar): an exact, case-insensitive
   match on a saved name fills the number and vice versa (`store/jobs.ts`);
   pairs are saved explicitly (☆ Save job) and managed in Settings. Local kv
@@ -304,6 +321,13 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   first-use model downloads), so completing siblings re-claimed in-flight jobs
   and double-processed (and double-billed the paid vision assist).
   `releaseJob` only re-puts a job that still exists.
+- **The DATE color is purple (`--cat-4`), not red**, everywhere a date is
+  marked: ReviewModal markers/field tint, `annotate.ts HIGHLIGHT_COLORS`,
+  and the workbook's `FIELD_TINTS` — red sat too close to the orange review
+  accents, and errors keep red. `--cat-4-ink` is its AA-pinned ink partner
+  (tests/theme.test.ts). ReviewModal renders each flag NEXT TO the field it
+  questions (`FLAG_FIELD` map); only unmapped codes (duplicate,
+  low_confidence) stay in the general list.
 - **Both dialogs manage focus** (ReviewModal, Settings): container
   `tabindex="-1"` focused on open, a local Tab trap, focus restored on close;
   ReviewModal's window-level Enter shortcut ignores BUTTON/A/SUMMARY/SELECT

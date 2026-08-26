@@ -75,7 +75,7 @@
     <p>
       The category sheets hold the stored amounts; the Summary references them
       with live formulas and the Insights tiles are COUNT/SUMIF over the
-      Summary — <strong>edit one cell in Excel and everything re-foots</strong>.
+      Summary: <strong>edit one cell in Excel and everything re-foots</strong>.
       There's no duplicated data to drift.
     </p>
     <p>
