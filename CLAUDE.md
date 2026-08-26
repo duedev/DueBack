@@ -31,22 +31,22 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + Fraunces).
 | `src/types.ts` | Domain model: Receipt/Batch/Job/Field/Flag/LogoMatch/StoredBrand |
 | `src/pipeline/pipeline.ts` | Per-receipt flow: clean → hash/cache → OCR (+binarized weak-read rescue) → rules → **logo fusion** → vision assist → highlighter bake (`annotate.ts` → `annotatedKey`) → Python-convention rename (`util/rename.ts`) → dedup → status |
 | `src/pipeline/imagePrep.ts` | canvas prep: EXIF rotate → (opt) perspective → projection-profile deskew → grayscale → edge-energy autocrop → two renders (transient hi-res `ocrBlob` for OCR + stored 1600px blob); `binarizeBlob` for the weak-read rescue |
-| `src/pipeline/pdf.ts` | Multi-page PDF intake: `expandPdf` renders every page to a JPEG (long edge ≈ `ocrMaxEdge`) so `addFiles` makes one receipt per page; `pdfPageNames` names them (`… (page 2 of 8)` in `originalFileName`) |
-| `src/pipeline/unzip.ts` | ZIP intake: dependency-free central-directory reader (`readZip`, platform `DecompressionStream`) + archive-junk filter and entry naming; `addFiles` unpacks an archive into one receipt per usable file, nested folders and all |
+| `src/pipeline/pdf.ts` | Multi-page PDF intake: `expandPdf` renders pages to JPEG (long edge ≈ `ocrMaxEdge`) so `addFiles` makes one receipt per page, capped by the remaining batch capacity (+ `LIMITS.maxPdfPages` backstop) so an unbounded PDF can't rasterize past the cap; `pdfPageNames` names them (`… (page 2 of 8)` in `originalFileName`) |
+| `src/pipeline/unzip.ts` | ZIP intake: dependency-free central-directory reader (`readZip`, platform `DecompressionStream`) + archive-junk filter and entry naming; inflation is STREAMED with a running byte count that aborts past `maxEntryBytes` (the forgeable directory size is only a fast path) plus a per-archive `maxTotalBytes`; `addFiles` unpacks an archive into one receipt per usable file, nested folders and all |
 | `src/pipeline/binarize.ts` | pure image math (no DOM, Node-tested): luminance, Bradley adaptive threshold, projection-profile skew estimation |
 | `src/pipeline/perspective.ts` | opt-in OpenCV.js quad detect + warp (`VITE_PERSPECTIVE=1`, vendored lib) |
 | `src/pipeline/ocr.ts` | `OcrEngine` seam; Tesseract default; `VITE_OCR_ENGINE=paddle` → `engines/paddle/*` (ONNX det+rec+CTC) |
 | `src/config/vendors.ts` | Brand matcher: curated table + `src/data/vendorDb.extra.json` (generated, 329 brands); passes: exact → glyph-normalized (`normalizeGlyphs`) → bounded fuzzy (`fuzzyMatchVendor`); slogans as long aliases |
-| `src/pipeline/extract.ts` | Rules: grand-total tiers + reconcile, **pump-math reconcile** (corroboration-gated; payment-line anchors correct, non-payment anchors keep), footing math with tip guard, US-first dates (stamp-glyph repair), tax, vendor line heuristic (greeting/address/pump-data rejects) + fuzzy hook, confidence, flags, `forcesManualReview()` (**`total_suspect`**/`vendor_unclear` warns force review — `total_mismatch` stays advisory), `locateValue()` (post-hoc field location for corrections) |
+| `src/pipeline/extract.ts` | Rules: grand-total tiers + reconcile, **pump-math reconcile** (corroboration-gated; payment-line anchors correct, non-payment anchors keep), footing math with tip guard, US-first dates (stamp-glyph repair), tax (`TAX_ID_RE`/`TAX_RATE_RE` reject registration/rate lines; a tax larger than the printed subtotal is dropped as a garble so footing math can never replace the total with subtotal + garbled tax), vendor line heuristic (greeting/address/pump-data rejects) + fuzzy hook, confidence, flags, `forcesManualReview()` (**`total_suspect`**/`vendor_unclear` warns force review — `total_mismatch` stays advisory), `locateValue()` (post-hoc field location for corrections) |
 | `src/train/corrections.ts` | The improvement loop: review edits diffed into `CorrectionRecord`s (with located bbox + OCR line), appended to kv `training.log` (cap 2000); Settings → Improvement log downloads/clears it. `bundle.ts` builds the tuning ZIP (corrections + extraction.json + CSV + original/annotated images), shared by Settings and the landing contact form |
 | `src/pipeline/logo/` | Visual logo layer: `embedder.ts` (CLIP seam, lazy, test-fakeable), `index.ts` (bundled `logoIndex.json` + user brands, cosine NN, header-band crop, `addBrandFromImage`), `fuse.ts` (Layer-3 fusion; `LOGO_ACCEPT`) — inert (no model download) while the index is empty |
 | `src/pipeline/vision/` | Opt-in AI assist (OpenRouter/Gemini/Anthropic), spend cap, build-time free key; signed-in users route via `supabase/aiProxy.ts` → `ai-extract` Edge Function |
-| `src/store/` | `db.ts` (IndexedDB v1: batches/receipts/jobs/blobs/brands/kv), `repo.ts` (the one read/write + notify seam), `sync.ts` (Supabase mirror: LWW on `updatedAt`, storage blobs, realtime), `jobs.ts` (saved job name⇄number pairs in kv `jobs.saved`, local-only; pure list helpers are Node-tested) |
+| `src/store/` | `db.ts` (IndexedDB v1: batches/receipts/jobs/blobs/brands/kv), `repo.ts` (the one read/write + notify seam; deletes record kv pending-delete entries for sync), `sync.ts` (Supabase mirror: LWW on `updatedAt` BOTH ways — pull via `syncMerge.remoteAction`, push via migration 0004's `lww_guard` trigger; deletes propagate as `deleted_at` tombstones consumed from kv `sync.pendingDeletes` and pushed before upserts and before the first pull; realtime on receipts+batches+brand_logos; uploaded-blob memory is per-account kv `sync.uploadedBlobs.<uid>`), `syncMerge.ts` (pure Node-tested sync decisions: LWW/tombstone action, pending-delete log, batch adoption), `jobs.ts` (saved job name⇄number pairs in kv `jobs.saved`, local-only; pure list helpers are Node-tested) |
 | `src/supabase/` | `client.ts` (null unless `VITE_SUPABASE_URL/ANON_KEY`), `auth.ts`, `aiProxy.ts` |
 | `src/onedrive/` | Optional "Save to OneDrive" (no SDK, hidden unless `VITE_ONEDRIVE_CLIENT_ID`; ONEDRIVE_SETUP.md): `core.ts` (pure, Node-tested: PKCE, auth URL, token mapping, Graph upload w/ injectable fetch), `store.ts` (env + localStorage tokens), `popup.ts` (OAuth-popup relay, called by `main.ts` before mount), `index.ts` (connect popup / refresh / `uploadReport` → `Apps/DueBack`) |
 | `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark — dark is a warm ladder anchored on `#12100e`, the PWA chrome color), `state.svelte.ts` (the one reactive bridge; `applyTheme` also syncs the theme-color meta pair), `App/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle`; `Landing.svelte` is the marketing orchestrator over `landing/` (Hero/How/Time/Logo/Workbook/Account/Contact partials + `landing.css` shared vocabulary) |
 | `src/export/` | `zip.ts` (dependency-free ZIP for the images download), `anchor.ts` (px→EMU drawing anchors — the one place image geometry is computed), `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells hyperlink to per-receipt anchors on the category image sheets; anchors precomputed via `blockRows` — keep in sync with the image-block layout; no flat "All Receipts" sheet — the Summary IS the receipt table; **single source of truth**: category-sheet amounts are the stored values, Summary amount cells reference them, Insights KPIs/tables are COUNT/MAX/SUMIF formulas over Summary — edit one amount and everything re-foots; optional allowance lines — per diem (`Batch.perDiem`, `util/perdiem.ts`) and phone service (`Batch.phoneService`, `util/phone.ts`) — sit between the sections and the TOTAL; Insights = executive dashboard of KPI tiles + 5 charts, **opt-in via `WorkbookOptions.insights`, default off**), `charts.ts` (Chart.js→PNG; native xlsx charts are NOT possible with ExcelJS — the PNGs are the deliberate trade), `insights.ts`, `csv.ts`, `images.ts` |
-| `supabase/` | `migrations/0001_core.sql` (tables+RLS+storage+realtime), `0002_pgvector.sql` (optional), `functions/ai-extract` (key-holding chat-completions proxy), `functions/logo-search` |
+| `supabase/` | `migrations/0001_core.sql` (tables+RLS+storage+realtime), `0002_pgvector.sql` (optional), `0003_ai_limits.sql` (`ai_usage` per-user daily AI counts, service-role only), `0004_sync_integrity.sql` (`deleted_at` tombstones, `lww_guard` trigger, composite `(user_id, id)` PKs, realtime for batches/brand_logos), `functions/ai-extract` (POLICED key-holding proxy: model allowlist `AI_ALLOWED_MODELS`, max_tokens cap, per-user daily limit `AI_DAILY_LIMIT`; pure policy in `policy.ts`, Node-tested), `functions/logo-search` |
 | `scripts/` | `vendor-tesseract.mjs` (prebuild), `vendor-paddle.mjs` (opt-in), `export_vendor_db.py` (regenerates vendorDb.extra.json from `../Reimbursements/vendor_db.py`), `gen-icons.mjs` |
 | `tests/` | node:test via tsx; `testkit/` = the fixed 9-challenge accuracy gate (+ logo case); `e2e.mjs` + `screenshots.mjs` (Playwright vs `vite preview`) |
 
@@ -67,7 +67,9 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   counts as money with a comma-cents tail. Within a total tier the **largest**
   value wins (FUEL TOTAL vs combined TOTAL, as in the original app), and the
   line *below* a label-only TOTAL must match strict money (a lenient grab
-  there turned "Date: 05/10/2026" into a $2,026 total).
+  there turned "Date: 05/10/2026" into a $2,026 total) — and must not be a
+  payment/non-grand line (`NON_GRAND_RE`/`PAYMENT_RE`): "TOTAL" ↵ "CASH 20.00"
+  shipped the cash tendered as the total.
 - **OCR reads a transient higher-res render (`ocrMaxEdge` 2600px), not the
   stored 1600px blob** — both come from the same cleaned frame, so normalized
   boxes land on either; never persist `ocrBlob`. Binarization is retry-only
@@ -88,16 +90,31 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   END-state in its component — the global kill-switch in theme.css freezes
   animations at their 0% (hidden) frame.
 - **The dark palette is duplicated in theme.css** (`[data-theme="dark"]` block
-  + the `prefers-color-scheme` fallback) — edit both identically. The
-  theme-color hexes also live in `state.svelte.ts applyTheme` and index.html.
+  + the `prefers-color-scheme` fallback) — edit both identically
+  (`tests/theme.test.ts` pins the blocks stay token-identical). The
+  theme-color hexes also live in `state.svelte.ts applyTheme` and index.html,
+  and index.html carries a pre-paint inline script stamping `data-theme` from
+  the same localStorage `"theme"` key `state.svelte.ts` uses — keep the key in
+  sync (also test-pinned).
+- **Small-copy ink tokens have AA-checked partners** (pinned with computed
+  contrast in `tests/theme.test.ts`): `--gold-text` is the small-copy partner
+  of `--gold` (chips, flag text, lane heads — `--gold` itself stays fills/
+  borders/large text only), and `--cat-3-ink`/`--err-ink` are the ink partners
+  for the ReviewModal markers on `--cat-3`/`--err` fills (white in light, dark
+  inks in dark). The global `:focus-visible` no longer forces a border-radius;
+  controls inside `overflow:hidden` containers (Workspace `.seg-btn`, FAQ/How
+  `summary`) draw INSET focus rings locally because the outside halo clips.
 - **#account's Drive-folder flow is marketing for a planned feature** — keep
   the "Planned"/"coming soon" badges and future tense until it ships; the
   sign-in/private-workspace/brand-sync claims are the shipped part.
-- **`npm run e2e` is the real-OCR accuracy gate** — three receipts (easy
-  coffee, fuel with per-gallon pricing + FUEL TOTAL, split-label TOTAL) run
-  through actual Tesseract in Chromium with per-receipt amount assertions. The
-  testkit exercises the rules on synthetic text only; regressions in the real
-  path show up here.
+- **`npm run e2e` is the real-OCR accuracy gate** — four image receipts (easy
+  coffee, fuel with per-gallon pricing + FUEL TOTAL, split-label TOTAL, a
+  skewed scan) plus a 2-page PDF run through actual Tesseract in Chromium with
+  per-receipt amount assertions, then the review-modal sweep and workbook
+  export are exercised. The testkit exercises the rules on synthetic text
+  only; regressions in the real path show up here. CI runs it (own job in
+  ci.yml) along with a production build; deploy runs `npm test` before
+  building.
 - **Digit-only brand aliases ("76") are excluded from the glyph pass** — its
   punctuation stripping would turn a price ending `.76` into a brand hit; the
   exact pass (with the numeric boundary guard) is where they match.
@@ -167,8 +184,7 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   contact@duanehamilton.net; mailto can't attach files, so the "attach tuning
   bundle" checkbox downloads the ZIP and the draft asks the sender to attach it.
 - **Workbook columns autofit** (`autofitColumns` in workbook.ts — ExcelJS has
-  none): merged band cells are skipped, notes wrap in a capped column
-  (`NOTES_WRAP_CHARS` drives row heights). Insights keeps FIXED widths — the
+  none): merged band cells are skipped. Insights keeps FIXED widths — the
   two-up chart grid anchors images at column offsets 0/6, so autofitting there
   would overlap the charts; the trailing column is widened (15, not 13) so
   columns 6–11 actually contain a 558px chart. Chart text renders ~26px (titles 34px) because the
@@ -200,7 +216,9 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   they carry the *same extension* as the real receipt, so an extension-only
   filter queues an unreadable duplicate for every image. A ZIP is measured
   against `LIMITS.maxArchiveBytes` (300 MB), each entry against
-  `maxFileBytes`.
+  `maxFileBytes`, and the archive's total INFLATED output against
+  `LIMITS.maxArchiveInflatedBytes` (400 MB) — the directory's declared sizes
+  are forgeable, so only the streamed byte count is trusted.
 - **EV charging files under Fuel, and its kWh line is not a total.** Tesla (+
   Electrify America/ChargePoint/EVgo/Blink) are `Fuel` brands, and "kwh"/
   "charging session" are Fuel keywords for logo-only charging receipts. The
@@ -231,5 +249,42 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   `onedrive/popup.ts` must keep running before `mount`). Azure registration
   must use the **Single-page application** platform or the browser token
   exchange 403s; SPA refresh tokens die after 24 h, so re-prompting is normal.
+- **Extraction never overwrites a human** (`pipeline.ts completionWriteMode`,
+  Node-tested): the completion write re-reads the receipt — deleted mid-flight
+  skips the write and deletes this run's blobs; approved/`done`/any write
+  newer than the claim's `updatedAt` lands only technical plumbing
+  (cleaned/annotated keys, hash, OCR lines — plus un-stranding a
+  still-"processing" status to `needs_review`). The failure path obeys the
+  same rule: `fail()` is skipped for a receipt approved mid-flight.
+- **Deletes must go through `repo.deleteReceipt`/`deleteBrand`** — they record
+  the kv pending-delete (with blob keys) that the sync engine tombstones
+  remotely (`deleted_at` + storage cleanup); the sync engine itself removes
+  local rows via raw conn so a pulled tombstone never echoes back with a newer
+  timestamp. Supabase PKs are `(user_id, id)` — upserts use
+  `onConflict: "user_id,id"`; live upserts set `deleted_at: null` so a
+  genuinely newer edit revives a tombstone (LWW both ways).
+- **A second device adopts a synced batch** — after sign-in,
+  `state.maybeAdoptSyncedBatch` repoints the device-local `activeBatchId` at
+  the most recently updated non-empty pulled batch, never one that already
+  has receipts (`syncMerge.chooseAdoptionBatch`, Node-tested).
+- **The job lock heartbeats** — `queue.ts` touches `lockedAt` every 20 s while
+  a job runs and `claimNextJob`'s stale threshold is 5 min; processing
+  routinely exceeded the old 60 s (serialized Tesseract, binarize rescue,
+  first-use model downloads), so completing siblings re-claimed in-flight jobs
+  and double-processed (and double-billed the paid vision assist).
+  `releaseJob` only re-puts a job that still exists.
+- **Both dialogs manage focus** (ReviewModal, Settings): container
+  `tabindex="-1"` focused on open, a local Tab trap, focus restored on close;
+  ReviewModal's window-level Enter shortcut ignores BUTTON/A/SUMMARY/SELECT
+  targets so Enter activates the focused control instead of approving.
+- **`vendor-tesseract.mjs` FAILS the build** (exit 1) when language data can't
+  be vendored, unless `VITE_TESSDATA_LOCAL=0` — there is no runtime CDN
+  fallback (`langPath` is picked once at build time), so the old
+  warn-and-continue shipped 404ing OCR. `ai-extract`'s
+  `policy.ts DEFAULT_ALLOWED_MODEL` must stay in sync with
+  `PROVIDERS.openrouter.defaultModel` (vision/config.ts): a signed-in user who
+  picks a non-default model gets 403 from the proxy unless the deployer widens
+  `AI_ALLOWED_MODELS`; the function fails closed (503) until migration 0003 is
+  applied.
 - `.env.example` lists every knob; all optional. Deploy secrets/vars are wired
   in `.github/workflows/deploy.yml`.
