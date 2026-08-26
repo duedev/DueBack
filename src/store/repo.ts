@@ -174,8 +174,11 @@ class Repo {
     return job;
   }
 
-  /** Atomically claim the oldest unlocked job, if any. */
-  async claimNextJob(staleLockMs = 60_000): Promise<Job | null> {
+  /** Atomically claim the oldest unlocked job, if any. The stale window is
+   *  generous because a healthy run routinely exceeds a minute (serialized
+   *  OCR, binarize rescue, first-use model downloads); the queue heartbeats
+   *  `touchJob` while a job runs, so only a genuinely dead run goes stale. */
+  async claimNextJob(staleLockMs = 300_000): Promise<Job | null> {
     const conn = await db();
     const tx = conn.transaction("jobs", "readwrite");
     let claimed: Job | null = null;
@@ -195,12 +198,28 @@ class Repo {
     return claimed;
   }
 
+  /** Refresh a running job's lock so it never looks stale. No-op once the
+   *  row is gone — a blind put would resurrect a completed job. */
+  async touchJob(jobId: string): Promise<void> {
+    const conn = await db();
+    const tx = conn.transaction("jobs", "readwrite");
+    const job = await tx.store.get(jobId);
+    if (job) await tx.store.put({ ...job, lockedAt: Date.now() });
+    await tx.done;
+  }
+
   async completeJob(jobId: string): Promise<void> {
     await (await db()).delete("jobs", jobId);
   }
 
+  /** Unlock a job for retry — only if it still exists (read-then-put in one
+   *  transaction), so a job a successful run already deleted stays deleted. */
   async releaseJob(job: Job): Promise<void> {
-    await (await db()).put("jobs", { ...job, lockedAt: null });
+    const conn = await db();
+    const tx = conn.transaction("jobs", "readwrite");
+    const cur = await tx.store.get(job.id);
+    if (cur) await tx.store.put({ ...job, lockedAt: null });
+    await tx.done;
   }
 
   async pendingJobCount(): Promise<number> {

@@ -19,6 +19,14 @@ export const LIMITS = {
   /** Max entries read out of one archive (a cheap zip-bomb guard — the batch
    *  cap still applies on top). */
   maxArchiveEntries: 1000,
+  /** Max total *inflated* bytes extracted from one archive. The per-entry cap
+   *  checks the (forgeable) declared size and the honest streamed count; this
+   *  bounds the aggregate so 1000 honest 25 MB entries can't fill memory. */
+  maxArchiveInflatedBytes: 400 * 1024 * 1024,
+  /** Absolute cap on PDF pages rendered per file — a 1000-page statement
+   *  would rasterize for minutes and OOM the tab. The batch cap usually bites
+   *  first; this is the backstop. */
+  maxPdfPages: 300,
   /** How deep nested archives are followed (a zip of zips). */
   maxArchiveDepth: 3,
   /** Accepted input types. */

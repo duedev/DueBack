@@ -118,6 +118,52 @@ test("refuses an oversized entry", async () => {
   assert.deepEqual(skipped, [{ path: "big.jpg", reason: "too large" }]);
 });
 
+test("a lying directory size can't smuggle a zip bomb past the entry cap", async () => {
+  // 512 KB of zeros deflates to well under 1 KB; the central directory is
+  // then edited to *declare* the entry tiny, the way a crafted bomb would.
+  // The streamed inflate must count honestly and abort, not buffer it all.
+  const blob = await buildZip([
+    { name: "bomb.jpg", data: new Uint8Array(512 * 1024) },
+  ]);
+  const zip = new Uint8Array(await blob.arrayBuffer());
+  const view = new DataView(zip.buffer);
+  const cen = view.getUint32(zip.length - 22 + 16, true); // EOCD → central dir
+  assert.equal(view.getUint32(cen, true), 0x02014b50, "found the central header");
+  view.setUint32(cen + 24, 10, true); // declared uncompressed size: 10 bytes
+  const { entries, skipped } = await readZip(zip, { maxEntryBytes: 4096 });
+  assert.equal(entries.length, 0);
+  assert.deepEqual(skipped, [{ path: "bomb.jpg", reason: "too large" }]);
+});
+
+test("the aggregate inflated cap stops extraction across entries", async () => {
+  const blob = await buildZip(
+    Array.from({ length: 4 }, (_, i) => ({
+      name: `r${i}.jpg`,
+      data: jpegish(`r${i}`),
+    })),
+  );
+  const each = jpegish("r0").length;
+
+  // Room for two entries plus change: the third aborts mid-inflate against
+  // the remaining budget, the fourth likewise.
+  let result = await readZip(await blob.arrayBuffer(), {
+    maxTotalBytes: each * 2 + 100,
+  });
+  assert.deepEqual(result.entries.map((e) => e.path), ["r0.jpg", "r1.jpg"]);
+  assert.deepEqual(result.skipped, [
+    { path: "r2.jpg", reason: "archive limit reached" },
+    { path: "r3.jpg", reason: "archive limit reached" },
+  ]);
+
+  // Budget consumed exactly: later entries are skipped before any inflate.
+  result = await readZip(await blob.arrayBuffer(), { maxTotalBytes: each * 2 });
+  assert.deepEqual(result.entries.map((e) => e.path), ["r0.jpg", "r1.jpg"]);
+  assert.deepEqual(result.skipped.map((s) => s.reason), [
+    "archive limit reached",
+    "archive limit reached",
+  ]);
+});
+
 // ── malformed input ──────────────────────────────────────────────────────────
 
 test("throws on something that is not a ZIP", async () => {

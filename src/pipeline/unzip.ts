@@ -36,6 +36,9 @@ export interface ZipReadOptions {
   maxEntryBytes?: number;
   /** Stop after this many kept entries. */
   maxEntries?: number;
+  /** Stop extracting once the kept entries total this many inflated bytes —
+   *  the aggregate zip-bomb guard on top of the per-entry cap. */
+  maxTotalBytes?: number;
 }
 
 const SIG_EOCD = 0x06054b50;
@@ -70,15 +73,41 @@ function extensionOf(path: string): string {
   return m ? m[0] : "";
 }
 
-async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
+/** Inflate with a hard output cap. The directory's uncompressed sizes are
+ *  forgeable, so the honest count happens here, while streaming: the read is
+ *  cancelled — and null returned — the moment the output passes `maxBytes`,
+ *  before a lying entry (a zip bomb) can allocate its full expansion. */
+async function inflateRaw(
+  data: Uint8Array,
+  maxBytes: number,
+): Promise<Uint8Array | null> {
   const DS = (
     globalThis as { DecompressionStream?: typeof DecompressionStream }
   ).DecompressionStream;
   if (!DS) throw new Error("DEFLATE unsupported in this browser");
-  const stream = new Blob([data as BlobPart])
+  const reader = new Blob([data as BlobPart])
     .stream()
-    .pipeThrough(new DS("deflate-raw"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+    .pipeThrough(new DS("deflate-raw"))
+    .getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let p = 0;
+  for (const c of chunks) {
+    out.set(c, p);
+    p += c.length;
+  }
+  return out;
 }
 
 /** Locate the End Of Central Directory record, scanning back over any ZIP
@@ -176,9 +205,11 @@ export async function readZip(
   const extensions = options.extensions?.map((e) => e.toLowerCase());
   const maxEntries = options.maxEntries ?? Infinity;
   const maxEntryBytes = options.maxEntryBytes ?? Infinity;
+  const maxTotalBytes = options.maxTotalBytes ?? Infinity;
 
   const entries: ZipReadEntry[] = [];
   const skipped: ZipSkip[] = [];
+  let totalBytes = 0;
   let truncated = false;
   const decoder = new TextDecoder("utf-8");
 
@@ -205,8 +236,14 @@ export async function readZip(
       skipped.push({ path, reason: "unsupported type" });
       continue;
     }
+    // The declared size is forgeable — this is only the cheap fast path; the
+    // honest check is the streamed count during inflation below.
     if (sizes.uncompressed > maxEntryBytes) {
       skipped.push({ path, reason: "too large" });
+      continue;
+    }
+    if (totalBytes >= maxTotalBytes) {
+      skipped.push({ path, reason: "archive limit reached" });
       continue;
     }
     if (entries.length >= maxEntries) {
@@ -238,15 +275,22 @@ export async function readZip(
       continue;
     }
     try {
-      const data = method === 8 ? await inflateRaw(raw) : raw.slice();
+      // The entry's real budget is whichever cap is nearer: its own, or what
+      // remains of the archive's aggregate allowance.
+      const budget = Math.min(maxEntryBytes, maxTotalBytes - totalBytes);
+      const data = method === 8 ? await inflateRaw(raw, budget) : raw.slice();
+      if (data === null || data.length > budget) {
+        skipped.push({
+          path,
+          reason: budget < maxEntryBytes ? "archive limit reached" : "too large",
+        });
+        continue;
+      }
       if (data.length === 0) {
         skipped.push({ path, reason: "empty file" });
         continue;
       }
-      if (data.length > maxEntryBytes) {
-        skipped.push({ path, reason: "too large" });
-        continue;
-      }
+      totalBytes += data.length;
       entries.push({ path, data });
     } catch {
       skipped.push({ path, reason: "unreadable entry" });
