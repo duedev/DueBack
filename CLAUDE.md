@@ -90,7 +90,11 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   render, and `getByRole` cannot see hidden elements, so Home must be the
   default page. Nerd mode stamps `.nerd-on` on `.landing`; the `.db-nerd`
   notes and their reduced-motion end-state live in `landing.css` (global
-  vocabulary, partials contribute plain markup).
+  vocabulary, partials contribute plain markup). The WHOLE landing is a drop
+  target: window-level drag listeners in `Landing.svelte` (guarded on the
+  drag carrying Files) raise a pointer-events-none `.drop-veil` and route the
+  drop through the same `addFiles` path as the pickers — the e2e pins veil,
+  ingest, and clear.
 - **Landing motion:** shared keyframes live in `landing/landing.css` (global,
   `db-`prefixed) because Svelte can't share scoped keyframes across
   components; section-local keyframes stay scoped (same `db-` names). Every

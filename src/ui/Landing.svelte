@@ -31,6 +31,55 @@
 
   const accept = LIMITS.acceptedExtensions.join(",");
 
+  /* ---- page-wide drop ----------------------------------------------------
+     Testers dragged receipts straight onto the landing, so the whole
+     document is the drop target — not a box you have to aim at. A window
+     drag carrying files raises a full-page veil (pointer-events: none, so
+     the drop still lands on window), and dropping anywhere ingests via the
+     same addFiles path as the pickers (which auto-enters the workspace).
+     Depth-counted because dragenter/dragleave fire per element crossed;
+     listeners live here so they vanish with the landing on unmount. */
+  let dragDepth = $state(0);
+  const dragging = $derived(dragDepth > 0);
+
+  function dragHasFiles(e: DragEvent): boolean {
+    return !!e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files");
+  }
+
+  $effect(() => {
+    const enter = (e: DragEvent): void => {
+      if (dragHasFiles(e)) dragDepth += 1;
+    };
+    const leave = (e: DragEvent): void => {
+      if (dragHasFiles(e)) dragDepth = Math.max(0, dragDepth - 1);
+    };
+    const over = (e: DragEvent): void => {
+      if (dragHasFiles(e)) e.preventDefault(); // required to allow the drop
+    };
+    const drop = (e: DragEvent): void => {
+      if (!dragHasFiles(e)) return;
+      e.preventDefault();
+      dragDepth = 0;
+      const files = e.dataTransfer?.files;
+      if (files?.length) void app.addFiles(files);
+    };
+    const end = (): void => {
+      dragDepth = 0; // cancelled drags (Esc) don't always pair leave events
+    };
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("dragover", over);
+    window.addEventListener("drop", drop);
+    window.addEventListener("dragend", end);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("drop", drop);
+      window.removeEventListener("dragend", end);
+    };
+  });
+
   /* ---- the "pages" -------------------------------------------------------
      One document, five pages: the hash is the router, so every page is a
      real URL and back/forward work. All pages STAY MOUNTED (hidden, not
@@ -126,6 +175,18 @@
 />
 
 <div class="landing" class:nerd-on={prefs.nerd}>
+  {#if dragging}
+    <div class="drop-veil" aria-hidden="true">
+      <div class="drop-box">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 16V4m0 0 4.5 4.5M12 4 7.5 8.5M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2" />
+        </svg>
+        <strong>Drop your receipts</strong>
+        <span>Photos, scans, PDFs or ZIP folders — read right on this device.</span>
+      </div>
+    </div>
+  {/if}
+
   <!-- ======================= nav / page tabs ======================= -->
   <div class="nav-bar">
     <nav class="wrap nav" aria-label="Site">
@@ -434,6 +495,56 @@
 <style>
   .landing {
     min-height: 100dvh;
+  }
+
+  /* ---- page-wide drop veil ---- */
+  .drop-veil {
+    position: fixed;
+    inset: 0;
+    z-index: 60; /* above the sticky nav (40) */
+    display: grid;
+    place-items: center;
+    padding: 1.5rem;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    pointer-events: none; /* visual only — the drop lands on window */
+    animation: db-veil-in 0.18s ease-out both;
+  }
+  .drop-box {
+    display: grid;
+    justify-items: center;
+    gap: 0.55rem;
+    max-width: 26rem;
+    text-align: center;
+    padding: 2.4rem 2.6rem;
+    border: 2px dashed var(--accent);
+    border-radius: var(--radius-l);
+    background: var(--bg-raised);
+    color: var(--accent);
+    box-shadow: var(--shadow-2);
+  }
+  .drop-box strong {
+    font: 650 1.35rem/1.2 var(--font-display);
+    color: var(--ink);
+  }
+  .drop-box span {
+    font: 500 0.92rem/1.5 var(--font-ui);
+    color: var(--ink-soft);
+  }
+  @keyframes db-veil-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* Static end-state: the veil simply shows. */
+    .drop-veil {
+      animation: none;
+    }
   }
 
   /* ---- nav / page tabs ---- */

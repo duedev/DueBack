@@ -635,6 +635,35 @@ async function main() {
     );
     const left = (await readRows()).length;
     check(left === 0, `delete-all clears the board and the store (left ${left})`);
+
+    // 10. Page-wide drag & drop on the landing: a file drag raises the veil,
+    // and dropping anywhere ingests (the window listeners in Landing.svelte).
+    await page.goto(BASE, { waitUntil: "load" });
+    await page.getByRole("heading", { name: /Receipts in/ }).waitFor({ timeout: 15000 });
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.items.add(new File(["x"], "peek.png", { type: "image/png" }));
+      window.dispatchEvent(
+        new DragEvent("dragenter", { dataTransfer: dt, bubbles: true, cancelable: true }),
+      );
+    });
+    await page.waitForSelector(".drop-veil", { timeout: 5000 });
+    check(true, "file drag over the landing raises the drop veil");
+    const dropPng = await makeReceiptPng();
+    await page.evaluate(async (b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const dt = new DataTransfer();
+      dt.items.add(new File([bytes], "dropped.png", { type: "image/png" }));
+      window.dispatchEvent(
+        new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }),
+      );
+    }, dropPng.toString("base64"));
+    await page.waitForSelector(".rc", { timeout: 15000 });
+    check(true, "dropping a receipt anywhere on the landing ingests it");
+    check(
+      (await page.locator(".drop-veil").count()) === 0,
+      "the drop veil clears after the drop",
+    );
   } finally {
     if (browser) await browser.close();
     server.kill("SIGKILL");
