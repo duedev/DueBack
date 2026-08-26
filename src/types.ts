@@ -83,12 +83,15 @@ export interface PerDiem {
   days: number;
 }
 
-/** Phone-service reimbursement: a fixed monthly rate
- *  (`PHONE_SERVICE_MONTHLY_USD` in config/constants.ts) × the months the
- *  user picked. Months are "YYYY-MM"; non-contiguous selections are fine. */
+/** Phone-service reimbursement: a monthly rate × the months the user picked.
+ *  Months are "YYYY-MM"; non-contiguous selections are fine. */
 export interface PhoneService {
   enabled: boolean;
   months: string[];
+  /** Dollars per month. Optional: batches saved before the rate was
+   *  adjustable have none, and read back at the
+   *  `PHONE_SERVICE_MONTHLY_USD` default (util/phone.ts `phoneServiceRate`). */
+  rate?: number;
 }
 
 export interface Batch {

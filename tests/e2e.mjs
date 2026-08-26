@@ -267,6 +267,56 @@ function makeZip(entries) {
   return Buffer.concat([...parts, centralBuf, eocd]);
 }
 
+// Natural size of an embedded image — the aspect ratio the sheet is supposed
+// to render. Receipt thumbnails are JPEG; Insights charts are PNG.
+function imageSize(buf) {
+  if (buf.length > 24 && buf.readUInt32BE(0) === 0x89504e47) {
+    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) }; // PNG IHDR
+  }
+  return jpegSize(buf);
+}
+
+function jpegSize(buf) {
+  let i = 2;
+  while (i + 9 < buf.length) {
+    if (buf[i] !== 0xff) {
+      i++;
+      continue;
+    }
+    const marker = buf[i + 1];
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      i += 2;
+      continue;
+    }
+    const len = buf.readUInt16BE(i + 2);
+    const isSof =
+      marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker);
+    if (isSof) return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) };
+    i += 2 + len;
+  }
+  return null;
+}
+
+// The px a drawing anchor actually covers, walking the sheet's real column
+// widths and row heights — the geometry Excel renders (src/export/anchor.ts).
+function anchorPx(ws, range) {
+  // ECMA-376 §18.3.1.13 — the stored width already carries the cell padding.
+  const colPx = (c) => {
+    const w = (ws.columns ?? [])[c]?.width ?? 9.140625;
+    return w > 0 ? Math.trunc(((256 * w + 18) / 256) * 7) : 0;
+  };
+  const rowPx = (r) => ((ws.findRow(r + 1)?.height ?? 15) * 4) / 3;
+  const span = (from, fromOff, to, toOff, size) => {
+    let px = (toOff - fromOff) / 9525;
+    for (let i = from; i < to; i++) px += size(i);
+    return px;
+  };
+  return {
+    w: span(range.tl.nativeCol, range.tl.nativeColOff, range.br.nativeCol, range.br.nativeColOff, colPx),
+    h: span(range.tl.nativeRow, range.tl.nativeRowOff, range.br.nativeRow, range.br.nativeRowOff, rowPx),
+  };
+}
+
 async function main() {
   log("starting preview server…");
   const server = spawn(
@@ -446,6 +496,39 @@ async function main() {
       if (v && typeof v === "object" && v.hyperlink) linkCount++;
     });
     check(linkCount === 4, `summary links every receipt to its image (got ${linkCount})`);
+
+    // 7a-bis. Receipt images must render at their true aspect ratio. An
+    // anchor expressed as a FRACTION of a column was rescaled by ExcelJS's
+    // width×10000 model and came out ~6.75× too narrow — the "skinny
+    // receipts" bug — while the height stayed right, so only a width/aspect
+    // assertion catches it.
+    const media = wb.model?.media ?? [];
+    let imagesChecked = 0;
+    for (const sheetName of ["Fuel", "Materials", "Meals", "Miscellaneous", "Insights"]) {
+      const ws = wb.getWorksheet(sheetName);
+      if (!ws) continue;
+      for (const image of ws.getImages()) {
+        const entry = media[Number(image.imageId)] ?? media[0];
+        const natural = entry?.buffer ? imageSize(entry.buffer) : null;
+        const drawn = anchorPx(ws, image.range);
+        if (!natural) continue;
+        imagesChecked++;
+        const wantAspect = natural.w / natural.h;
+        const gotAspect = drawn.w / drawn.h;
+        check(
+          Math.abs(gotAspect - wantAspect) / wantAspect < 0.04,
+          `${sheetName}: image keeps its aspect ratio (drawn ${Math.round(drawn.w)}×${Math.round(drawn.h)}px, natural ${natural.w}×${natural.h})`,
+        );
+        check(
+          drawn.w > 150,
+          `${sheetName}: image is a readable width, not a sliver (${Math.round(drawn.w)}px)`,
+        );
+      }
+    }
+    check(
+      imagesChecked >= 8,
+      `every embedded image was measured — receipts and charts (got ${imagesChecked})`,
+    );
 
     // 7b. Images (.zip) packages every receipt image.
     const [zipDl] = await Promise.all([

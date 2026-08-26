@@ -35,9 +35,10 @@ The report bar also remembers your **jobs**: save a job name + number pair
 once (☆ Save job) and typing either one autofills the other from then on
 (manage pairs in Settings). Need flat allowances on top of the receipts? Two
 options sit right there: **Per diem** (enter the dollar amount per day and
-the number of days) and **Phone service** (a fixed $63/month — pick any
-months, across any years, from the ‹ year › month grid). Each renders as a
-labeled line on the workbook's Summary — `Per diem — 5 days × $75.00/day`,
+the number of days) and **Phone service** (a monthly rate, $63 by default and
+editable per report — pick any months, across any years, from the ‹ year ›
+month grid). Each renders as a labeled line on the workbook's Summary —
+`Per diem — 5 days × $75.00/day`,
 `Phone service — 3 months × $63.00/month (Jan 2024, Jun–Jul 2026)` — and
 feeds the grand TOTAL.
 

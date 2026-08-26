@@ -3,7 +3,12 @@
   import { repo } from "../store/repo.ts";
   import { formatMoney, safeAmount } from "../util/money.ts";
   import { perDiemAmount, safePerDiemDays } from "../util/perdiem.ts";
-  import { formatMonthList, normalizeMonths, phoneServiceAmount } from "../util/phone.ts";
+  import {
+    formatMonthList,
+    normalizeMonths,
+    phoneServiceAmount,
+    phoneServiceRate,
+  } from "../util/phone.ts";
   import { PHONE_SERVICE_MONTHLY_USD } from "../config/constants.ts";
   import {
     findByName,
@@ -27,9 +32,11 @@
   let pdEnabled = $state(false);
   let pdRate = $state<number | undefined>(undefined);
   let pdDays = $state<number | undefined>(undefined);
-  // Phone service: fixed monthly rate × the months picked below.
+  // Phone service: a monthly rate (adjustable, defaults to the constant) ×
+  // the months picked below.
   let phEnabled = $state(false);
   let phMonths = $state<string[]>([]);
+  let phRate = $state<number | undefined>(undefined);
   /** Year shown by the month picker — step freely, any year works. */
   let phYear = $state(new Date().getFullYear());
   let seededBatch: string | null = null;
@@ -47,6 +54,9 @@
     pdDays = b.perDiem?.days || undefined;
     phEnabled = b.phoneService?.enabled ?? false;
     phMonths = normalizeMonths(b.phoneService?.months);
+    // A batch saved before the rate was adjustable has none — show the
+    // default it has been reimbursing at all along.
+    phRate = phoneServiceRate(b.phoneService);
     if (phMonths.length) phYear = Number(phMonths[phMonths.length - 1]!.slice(0, 4));
   });
 
@@ -59,9 +69,18 @@
     };
   }
 
-  /** Same rule: fresh array of primitives, nothing reactive leaks through. */
+  /** Same rule: fresh array of primitives, nothing reactive leaks through.
+   *  An emptied rate field falls back to the default rather than to $0. */
   function currentPhoneService(): PhoneService {
-    return { enabled: phEnabled, months: normalizeMonths(phMonths) };
+    return {
+      enabled: phEnabled,
+      months: normalizeMonths(phMonths),
+      rate: phoneServiceRate({
+        enabled: phEnabled,
+        months: [],
+        rate: phRate === undefined || phRate === null ? undefined : Number(phRate),
+      }),
+    };
   }
 
   async function saveMeta(): Promise<void> {
@@ -141,6 +160,7 @@
   );
   const pdAmount = $derived(perDiemAmount(currentPerDiem()));
   const phAmount = $derived(phoneServiceAmount(currentPhoneService()));
+  const phRateValue = $derived(phoneServiceRate(currentPhoneService()));
   /** An allowances-only report (no receipts) is still a real reimbursement. */
   const nothingToExport = $derived(
     exportable.length === 0 && pdAmount === 0 && phAmount === 0,
@@ -363,6 +383,19 @@
         <span>Phone service</span>
       </label>
       {#if phEnabled}
+        <div class="f ph-rate">
+          <label for="xb-ph-rate">$ per month</label>
+          <input
+            id="xb-ph-rate"
+            type="number"
+            min="0"
+            step="0.01"
+            inputmode="decimal"
+            placeholder={String(PHONE_SERVICE_MONTHLY_USD)}
+            bind:value={phRate}
+            onchange={saveMeta}
+          />
+        </div>
         <div class="ph-year">
           <button
             type="button"
@@ -397,12 +430,12 @@
           {#if phMonths.length}
             {formatMonthList(phMonths)} — <strong>{formatMoney(phAmount)}</strong>
           {:else}
-            Pick any months, any year ({formatMoney(PHONE_SERVICE_MONTHLY_USD)} each).
+            Pick any months, any year ({formatMoney(phRateValue)} each).
           {/if}
         </span>
       {:else}
         <span class="muted small">
-          Fixed {formatMoney(PHONE_SERVICE_MONTHLY_USD)}/month, for the months you pick.
+          {formatMoney(phRateValue)}/month (editable), for the months you pick.
         </span>
       {/if}
     </div>
@@ -521,7 +554,10 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* ---- phone-service month picker: ‹ year › + 12 chips ---- */
+  /* ---- phone-service rate + month picker: ‹ year › + 12 chips ---- */
+  .ph-rate {
+    max-width: 10rem;
+  }
   .ph-year {
     display: flex;
     align-items: center;

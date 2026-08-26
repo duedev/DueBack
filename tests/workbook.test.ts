@@ -1,7 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import ExcelJS from "exceljs";
-import { buildWorkbook } from "../src/export/workbook.ts";
+import {
+  buildWorkbook,
+  blockRows,
+  imageRows,
+  IMG_ROW_PT,
+} from "../src/export/workbook.ts";
+import { rowPtToPx } from "../src/export/anchor.ts";
 import type { Batch, Receipt, Category } from "../src/types.ts";
 
 function receipt(f: {
@@ -442,6 +448,23 @@ test("phone service adds a month-listing line and feeds the TOTAL", async () => 
   assert.equal(scan.perDiemLabel, null, "no per-diem row without per diem");
 });
 
+test("a batch's own phone rate drives the line and the TOTAL", async () => {
+  const psBatch: Batch = {
+    ...batch,
+    phoneService: { enabled: true, months: ["2026-01", "2026-02"], rate: 80 },
+  };
+  const result = await buildWorkbook(psBatch, receipts, async () => undefined);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  const scan = summaryScan(wb);
+  assert.equal(
+    scan.phoneLabel,
+    "Phone service — 2 months × $80.00/month (Jan–Feb 2026)",
+  );
+  assert.equal(scan.phoneAmount, 160);
+  assert.ok(Math.abs(scan.total! - (receiptsTotal + 160)) < 0.001);
+});
+
 test("per diem and phone service stack as separate lines in one TOTAL", async () => {
   const bothBatch: Batch = {
     ...batch,
@@ -495,4 +518,36 @@ test("category sheets link back to the Summary", async () => {
   const travel = wb.getWorksheet("Travel")!;
   const back = travel.getCell(1, 6).value as { text?: string; hyperlink?: string };
   assert.ok(back && typeof back === "object" && /Summary/.test(back.hyperlink ?? ""), JSON.stringify(back));
+});
+
+// ── the receipt block layout ─────────────────────────────────────────────────
+// buildWorkbook can't embed images in Node (thumbnail() needs a canvas), so
+// every workbook test above runs the img === undefined branch. The Summary's
+// hyperlink anchors and its amount references are computed from these two
+// helpers, so a desync between them and the image sheet would be silent —
+// assert the contract directly.
+
+test("imageRows and blockRows are one definition of the block", () => {
+  const carrierPx = rowPtToPx(IMG_ROW_PT); // 19
+  assert.equal(imageRows(undefined), 1, "a missing image still gets a row");
+  assert.equal(blockRows(undefined), 5, "header + anchor + 1 + data + spacer");
+  assert.equal(imageRows({ h: carrierPx }), 1);
+  assert.equal(imageRows({ h: carrierPx + 1 }), 2);
+  assert.equal(imageRows({ h: 570 }), 30);
+  assert.equal(imageRows({ h: 760 }), 40);
+  for (const h of [1, 19, 56, 254, 570, 760]) {
+    assert.equal(
+      blockRows({ id: 1, w: 380, h }),
+      4 + imageRows({ h }),
+      `block of a ${h}px image`,
+    );
+  }
+});
+
+test("the carrier band always covers the image it carries", () => {
+  // If it didn't, the image would spill onto the receipt's data row.
+  const carrierPx = rowPtToPx(IMG_ROW_PT);
+  for (let h = 1; h <= 800; h++) {
+    assert.ok(imageRows({ h }) * carrierPx >= h, `${h}px image fits its band`);
+  }
 });

@@ -15,10 +15,21 @@ export function normalizeMonths(months: readonly string[] | undefined | null): s
   return [...new Set(months.filter((m) => MONTH_RE.test(m)))].sort();
 }
 
-/** Total reimbursement: fixed monthly rate × selected months. */
+/** The batch's monthly rate — the one place the default lives. A batch saved
+ *  before the rate was adjustable (or one carrying garbage from a synced
+ *  payload) reimburses at `PHONE_SERVICE_MONTHLY_USD`; an explicit 0 is a
+ *  real choice and stays 0. */
+export function phoneServiceRate(ps: PhoneService | undefined | null): number {
+  const rate = ps?.rate;
+  return typeof rate === "number" && Number.isFinite(rate) && rate >= 0
+    ? safeAmount(rate)
+    : PHONE_SERVICE_MONTHLY_USD;
+}
+
+/** Total reimbursement: the monthly rate × selected months. */
 export function phoneServiceAmount(ps: PhoneService | undefined | null): number {
   if (!ps?.enabled) return 0;
-  return safeAmount(normalizeMonths(ps.months).length * PHONE_SERVICE_MONTHLY_USD);
+  return safeAmount(normalizeMonths(ps.months).length * phoneServiceRate(ps));
 }
 
 /** "2026-03" → "Mar 2026" (chip labels and month lists). */
@@ -65,11 +76,12 @@ export function formatMonthList(months: readonly string[]): string {
     .join(", ");
 }
 
-/** "3 months × $63.00/month (Jan–Mar 2026)" — the report-row breakdown. */
+/** "3 months × $63.00/month (Jan–Mar 2026)" — the report-row breakdown, at
+ *  whatever rate the batch carries. */
 export function phoneServiceLabel(ps: PhoneService, currency = "USD"): string {
   const months = normalizeMonths(ps.months);
   const unit = months.length === 1 ? "month" : "months";
-  const rate = formatMoney(PHONE_SERVICE_MONTHLY_USD, currency);
+  const rate = formatMoney(phoneServiceRate(ps), currency);
   const list = formatMonthList(months);
   return `${months.length} ${unit} × ${rate}/month${list ? ` (${list})` : ""}`;
 }
