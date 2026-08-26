@@ -19,6 +19,18 @@
       media="(prefers-color-scheme: dark)"
       content="#12100e"
     />
+    <script>
+      // Pre-paint theme stamp: apply an explicit saved choice (the same
+      // localStorage "theme" key state.svelte.ts applyTheme writes) before
+      // the bundle loads, so a Light choice on a dark OS doesn't flash dark.
+      try {
+        var t = localStorage.getItem("theme");
+        if (t === "light" || t === "dark")
+          document.documentElement.dataset.theme = t;
+      } catch (e) {
+        /* storage blocked — the boot in state.svelte.ts handles it */
+      }
+    </script>
     <meta
       name="description"
       content="Receipts in. Reimbursement report out. Snap or drop receipts, review them in seconds, download a polished Excel workbook. Free, on-device, no install."

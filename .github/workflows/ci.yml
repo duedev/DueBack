@@ -1,6 +1,7 @@
 name: CI
 
-# Typecheck (tsc + svelte-check), unit tests, and the accuracy testkit gate.
+# Typecheck (tsc + svelte-check), unit tests, the accuracy testkit gate, a
+# production build, and the real-OCR e2e gate (Tesseract in headless Chromium).
 on:
   push:
     branches: [main]
@@ -22,3 +23,19 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run testkit --if-present
+      - run: npm run build # prebuild vendors the OCR core + language data
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      - run: npx playwright install chromium --with-deps
+      - run: npm run build
+      - run: node tests/e2e.mjs # spawns `vite preview` itself

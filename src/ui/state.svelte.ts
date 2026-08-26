@@ -5,6 +5,7 @@ import { syncConfigured } from "../supabase/client.ts";
 import { onAuthChange, currentUser } from "../supabase/auth.ts";
 import { saveVisionConfig } from "../pipeline/vision/config.ts";
 import { validateFile, safeBasename, isPdf, isZip } from "../util/files.ts";
+import { chooseAdoptionBatch, type AdoptionCandidate } from "../store/syncMerge.ts";
 import { uid } from "../util/id.ts";
 import { LIMITS, CURRENCY_DEFAULT } from "../config/constants.ts";
 import type { Batch, Receipt, ReceiptStatus } from "../types.ts";
@@ -68,8 +69,30 @@ class AppState {
   private urlCache = new Map<string, string>();
 
   async init(): Promise<void> {
-    // Theme first so there's no flash.
-    const saved = localStorage.getItem(THEME_KEY) as ThemePref | null;
+    try {
+      await this.boot();
+    } catch (err) {
+      // Storage refused (blocked third-party IndexedDB in an embed, private
+      // mode, …): the splash must still clear so the landing page renders.
+      console.error("init failed", err);
+      this.toast(
+        "Couldn't open this browser's storage — receipts won't save here.",
+        "err",
+      );
+    } finally {
+      this.booting = false;
+    }
+  }
+
+  private async boot(): Promise<void> {
+    // Theme first so there's no flash. localStorage can throw in a
+    // storage-blocked iframe (the Carrd embed) — fall back to "auto".
+    let saved: ThemePref | null = null;
+    try {
+      saved = localStorage.getItem(THEME_KEY) as ThemePref | null;
+    } catch {
+      // storage blocked
+    }
     this.applyTheme(saved ?? "auto");
 
     let batchId = await repo.getSetting<string>(ACTIVE_BATCH_KEY);
@@ -118,6 +141,31 @@ class AppState {
       await repo.setSetting("ai.autoEnabledOnSignIn", true);
     }
     await sync.start(userId);
+    await this.maybeAdoptSyncedBatch();
+  }
+
+  /** A fresh device pins a brand-new empty batch before sync runs, so pulled
+   *  receipts would otherwise live in a batch the UI never shows. After the
+   *  initial pull, adopt the most recently updated batch that has receipts —
+   *  never stealing an active batch that already has its own. */
+  private async maybeAdoptSyncedBatch(): Promise<void> {
+    if (sync.status === "off" || sync.status === "error") return; // no pull ran
+    const candidates: AdoptionCandidate[] = [];
+    for (const b of await repo.listBatches()) {
+      candidates.push({
+        id: b.id,
+        updatedAt: b.updatedAt,
+        receiptCount: (await repo.listReceipts(b.id)).length,
+      });
+    }
+    const adoptId = chooseAdoptionBatch(this.batch?.id ?? null, candidates);
+    if (!adoptId) return;
+    const batch = await repo.getBatch(adoptId);
+    if (!batch) return;
+    await repo.setSetting(ACTIVE_BATCH_KEY, batch.id);
+    this.batch = batch;
+    await this.refresh();
+    if (this.receipts.length > 0) this.entered = true;
   }
 
   async refresh(): Promise<void> {
@@ -157,7 +205,11 @@ class AppState {
     const root = document.documentElement;
     if (pref === "auto") root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", pref);
-    localStorage.setItem(THEME_KEY, pref);
+    try {
+      localStorage.setItem(THEME_KEY, pref);
+    } catch {
+      // storage blocked — the choice just won't stick
+    }
     // Browser/PWA chrome color follows the surface. index.html carries two
     // media-scoped theme-color tags (values = each theme's --bg) that cover
     // "auto"; an explicit choice must override both, since the media query
@@ -277,7 +329,12 @@ class AppState {
         let pages: import("../pipeline/pdf.ts").PdfPageImage[] = [];
         try {
           const { expandPdf } = await import("../pipeline/pdf.ts");
-          pages = await expandPdf(file);
+          // Only render pages the batch still has room for — rasterizing a
+          // 1000-page statement the cap would discard anyway OOMs the tab.
+          pages = await expandPdf(
+            file,
+            LIMITS.maxReceiptsPerBatch - (existing + accepted),
+          );
         } catch {
           // Unreadable/odd PDF: store it as-is — the pipeline still decodes
           // the first page (the pre-expansion behavior).
@@ -291,7 +348,13 @@ class AppState {
             const names = pdfPageNames(base, p.pageNumber, p.pageCount, shown);
             await enqueueOne(p.blob, names.fileName, "image/jpeg", names.originalFileName);
           }
-          if (pages.length > 1) {
+          const pageCount = pages[0]!.pageCount;
+          if (pages.length < pageCount) {
+            this.toast(
+              `${shown}: only the first ${pages.length} of ${pageCount} pages were read.`,
+              "warn",
+            );
+          } else if (pages.length > 1) {
             this.toast(
               `${shown}: ${pages.length} pages, one receipt each.`,
               "info",
@@ -327,6 +390,7 @@ class AppState {
           extensions: LIMITS.acceptedExtensions,
           maxEntryBytes: LIMITS.maxFileBytes,
           maxEntries: LIMITS.maxArchiveEntries,
+          maxTotalBytes: LIMITS.maxArchiveInflatedBytes,
         });
       } catch {
         this.toast(`Skipped ${label}: not a readable ZIP.`, "warn");
@@ -374,9 +438,17 @@ class AppState {
       }
     };
 
+    let failed = 0;
     for (const file of files) {
       if (atCap()) break;
-      await addOne(file, 0);
+      try {
+        await addOne(file, 0);
+      } catch (err) {
+        // One file failing to store (quota, IO) must not drop the rest.
+        failed++;
+        console.error("addFiles failed", err);
+        this.toast(`Couldn't add ${safeBasename(file.name)}: storage error.`, "err");
+      }
     }
 
     if (accepted > 0) {
@@ -385,6 +457,8 @@ class AppState {
         "ok",
       );
       void queue.wake();
+    } else if (failed > 0) {
+      this.toast("No files could be added — storage may be full.", "err");
     }
   }
 

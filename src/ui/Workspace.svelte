@@ -131,9 +131,9 @@
     {:else}
       <ExportBar />
       <div class="board-bar">
-        <div class="seg" role="tablist" aria-label="Board view">
-          <button class="seg-btn" class:active={view === "grid"} onclick={() => (view = "grid")}>Grid</button>
-          <button class="seg-btn" class:active={view === "kanban"} onclick={() => (view = "kanban")}>Kanban</button>
+        <div class="seg" role="group" aria-label="Board view">
+          <button class="seg-btn" class:active={view === "grid"} aria-pressed={view === "grid"} onclick={() => (view = "grid")}>Grid</button>
+          <button class="seg-btn" class:active={view === "kanban"} aria-pressed={view === "kanban"} onclick={() => (view = "kanban")}>Kanban</button>
         </div>
         <label class="sort">
           <span class="muted small">Sort</span>
@@ -338,6 +338,10 @@
     background: var(--accent);
     color: var(--accent-ink);
   }
+  /* .seg's overflow:hidden clips the global focus ring — draw it inset. */
+  .seg-btn:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 4px var(--accent);
+  }
   .sort {
     display: inline-flex;
     align-items: center;
@@ -377,7 +381,7 @@
     color: var(--ink-soft);
     padding: 0.25rem 0.3rem 0.6rem;
   }
-  .lane-review .lane-head { color: var(--warn); }
+  .lane-review .lane-head { color: var(--gold-text); }
   .lane-failed .lane-head { color: var(--err); }
   .lane-count {
     background: var(--line);

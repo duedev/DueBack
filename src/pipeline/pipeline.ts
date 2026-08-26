@@ -18,6 +18,22 @@ import type { Receipt, Flag, OcrResult, ExtractionMethod, LogoMatch } from "../t
 // status. Free path first, everything deterministic. Each receipt records
 // method_used + cost so the "this cost you $0.00" line is honest.
 
+/** What the completion write may carry, given the receipt's state NOW vs the
+ *  `updatedAt` stamped when this run claimed it (status → "processing"). The
+ *  modal opens receipts in any status, so a human can edit, approve or delete
+ *  one mid-flight — and the machine must never overwrite the human. Pure;
+ *  Node-tested. */
+export function completionWriteMode(
+  latest: Pick<Receipt, "approved" | "status" | "updatedAt"> | undefined,
+  claimedAt: number,
+): "skip" | "technical" | "full" {
+  if (!latest) return "skip"; // deleted mid-flight
+  if (latest.approved || latest.status === "done" || latest.updatedAt > claimedAt) {
+    return "technical"; // human touched it — image/relocation plumbing only
+  }
+  return "full";
+}
+
 export async function processReceipt(
   receiptId: string,
   engine: OcrEngine = getOcrEngine(),
@@ -25,7 +41,13 @@ export async function processReceipt(
   const receipt = await repo.getReceipt(receiptId);
   if (!receipt) return;
 
-  await repo.updateReceipt(receiptId, { status: "processing", error: undefined });
+  // The claim's updatedAt is the baseline: any later write is a human's (or a
+  // sync mirror's) and outranks this run's extraction.
+  const claimed = await repo.updateReceipt(receiptId, {
+    status: "processing",
+    error: undefined,
+  });
+  if (!claimed) return; // deleted between the fetch and the claim
 
   const original = await repo.getBlob(receipt.fileKey);
   if (!original) {
@@ -240,14 +262,37 @@ export async function processReceipt(
           })
         : receipt.fileName;
 
-    const patch: Partial<Receipt> = {
-      fileName: renamed,
-      originalFileName: receipt.originalFileName ?? receipt.fileName,
+    // Re-read before the final write: a human may have edited, approved or
+    // deleted this receipt while OCR ran, and extraction must not clobber that.
+    const latest = await repo.getReceipt(receiptId);
+    const mode = completionWriteMode(latest, claimed.updatedAt);
+    if (mode === "skip") {
+      // Deleted mid-flight — drop this run's stored blobs (orphans otherwise).
+      await repo.deleteBlob(cleanedKey).catch(() => {});
+      if (annotatedKey) await repo.deleteBlob(annotatedKey).catch(() => {});
+      return;
+    }
+
+    // Image/relocation plumbing — safe to land even over a human edit (it
+    // carries no vendor/date/amount/category/flags/fileName semantics).
+    const technical: Partial<Receipt> = {
       cleanedKey,
       ...(annotatedKey ? { annotatedKey } : {}),
       imageHash,
       imageWidth: cleaned.width,
       imageHeight: cleaned.height,
+      ocrText: ocrTextOut,
+      ocrLines,
+      // A mid-flight save doesn't set status, which would strand the receipt
+      // in "processing" — hand it to review. An approval's "done" stays.
+      ...(latest!.status === "processing"
+        ? { status: "needs_review" as const, reviewRequired: true }
+        : {}),
+    };
+    const patch: Partial<Receipt> = {
+      ...technical,
+      fileName: renamed,
+      originalFileName: receipt.originalFileName ?? receipt.fileName,
       vendor: ex.vendor,
       date: ex.date,
       amount: ex.amount,
@@ -256,8 +301,6 @@ export async function processReceipt(
       category: ex.category,
       confidence: ex.confidence,
       flags,
-      ocrText: ocrTextOut,
-      ocrLines,
       logoMatch,
       methodUsed,
       methodDetail,
@@ -266,9 +309,14 @@ export async function processReceipt(
       status: needsReview ? "needs_review" : "done",
       error: undefined,
     };
-    await repo.updateReceipt(receiptId, patch);
+    await repo.updateReceipt(receiptId, mode === "technical" ? technical : patch);
   } catch (err) {
-    await fail(receiptId, err instanceof Error ? err.message : String(err));
+    // Same human-outranks-machine rule on the failure path: never stamp
+    // "failed" (and its flag overwrite) over a receipt approved mid-flight.
+    const latest = await repo.getReceipt(receiptId);
+    if (!latest?.approved && latest?.status !== "done") {
+      await fail(receiptId, err instanceof Error ? err.message : String(err));
+    }
     throw err; // let the queue decide on retry
   }
 }

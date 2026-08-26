@@ -1,4 +1,4 @@
-import { IMAGE_PREP } from "../config/constants.ts";
+import { IMAGE_PREP, LIMITS } from "../config/constants.ts";
 
 // Multi-page PDF intake. A scanner PDF is a *stack* of receipts — one per
 // page — so PDFs are expanded here, at add time, into one JPEG per page and
@@ -31,15 +31,24 @@ async function pdfjsLib(): Promise<typeof import("pdfjs-dist")> {
   return pdfjs;
 }
 
-/** Render every page of a PDF to a JPEG blob sized for OCR. Throws on
- *  unreadable input — the caller falls back to storing the PDF as-is. */
-export async function expandPdf(file: File | Blob): Promise<PdfPageImage[]> {
+/** Render the pages of a PDF to JPEG blobs sized for OCR. Throws on
+ *  unreadable input — the caller falls back to storing the PDF as-is.
+ *  Rendering stops at `maxPages` (the caller passes its remaining batch
+ *  capacity) and at the `LIMITS.maxPdfPages` backstop — rasterizing pages the
+ *  batch cap would discard anyway burns minutes and memory. Each returned
+ *  page still reports the document's full `pageCount`, so the caller can see
+ *  how many pages went unrendered. */
+export async function expandPdf(
+  file: File | Blob,
+  maxPages = LIMITS.maxPdfPages,
+): Promise<PdfPageImage[]> {
   const pdfjs = await pdfjsLib();
   const data = new Uint8Array(await file.arrayBuffer());
   const doc = await pdfjs.getDocument({ data }).promise;
   try {
     const pages: PdfPageImage[] = [];
-    for (let n = 1; n <= doc.numPages; n++) {
+    const last = Math.min(doc.numPages, maxPages, LIMITS.maxPdfPages);
+    for (let n = 1; n <= last; n++) {
       const page = await doc.getPage(n);
       const base = page.getViewport({ scale: 1 });
       const scale = Math.max(

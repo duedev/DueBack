@@ -115,6 +115,8 @@
     display: flex;
     gap: 0.6rem;
     align-items: flex-start;
+    text-transform: none;
+    letter-spacing: 0;
     font: 500 0.88rem/1.45 var(--font-ui);
     color: var(--ink-soft);
     cursor: pointer;

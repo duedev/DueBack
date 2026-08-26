@@ -39,7 +39,6 @@ export default defineConfig({
         theme_color: "#12100e",
         background_color: "#12100e",
         display: "standalone",
-        orientation: "portrait",
         start_url: "./",
         scope: "./",
         icons: [

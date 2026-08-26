@@ -42,6 +42,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm test # a red unit suite must not deploy
       - run: npm run build # prebuild vendors Tesseract core + language data
       - uses: actions/configure-pages@v5
       # The Pages actions below still declare Node 20 upstream; runners force

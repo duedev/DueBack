@@ -87,7 +87,9 @@
     a.href = url;
     a.download = `dueback_corrections_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
-    URL.revokeObjectURL(url);
+    // Deferred like ExportBar's download(): a synchronous revoke can abort
+    // the download in Safari.
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
   }
 
   async function resetCorrections(): Promise<void> {
@@ -208,6 +210,40 @@
   function onKey(e: KeyboardEvent): void {
     if (e.key === "Escape") close();
   }
+
+  // ---- Focus management (role=dialog + aria-modal promise it) -------------
+  let dialogEl = $state<HTMLElement | null>(null);
+
+  // On open, remember what had focus and move it into the dialog; on close
+  // ({#if} unmount → bind:this null) the effect cleanup gives it back.
+  $effect(() => {
+    const el = dialogEl;
+    if (!el) return;
+    const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    el.focus();
+    return () => prev?.focus();
+  });
+
+  /** Keep Tab cycling inside the dialog instead of walking the obscured page. */
+  function trapTab(e: KeyboardEvent): void {
+    if (e.key !== "Tab" || !dialogEl) return;
+    const focusables = Array.from(
+      dialogEl.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (!first || !last) return;
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === dialogEl)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -220,7 +256,15 @@
       if (e.target === e.currentTarget) close();
     }}
   >
-    <div class="panel card" role="dialog" aria-modal="true" aria-label="Settings">
+    <div
+      class="panel card"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Settings"
+      tabindex="-1"
+      bind:this={dialogEl}
+      onkeydown={trapTab}
+    >
       <header class="p-head">
         <strong>Settings</strong>
         <span class="spacer"></span>

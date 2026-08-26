@@ -803,6 +803,73 @@ test("a genuine larger amount above the total still flags", () => {
   assert.ok(r.flags.some((f) => f.code === "total_mismatch"));
 });
 
+// ── Audit round: tax-line poisons + label-only-TOTAL tender grab ─────────────
+
+test("a VAT registration number never becomes the tax or rewrites the total", () => {
+  const r = parseReceipt(
+    ocr([
+      "CORNER SHOP LTD",
+      "VAT No 123 4567 89",
+      "Date: 03/14/2026",
+      "SUBTOTAL 4.50",
+      "VAT 0.90",
+      "TOTAL 5.40",
+    ]),
+  );
+  assert.equal(r.amount.value, 5.4, `amount ${r.amount.value}`);
+  assert.equal(r.tax.value, 0.9, `tax ${r.tax.value}`);
+  assert.ok(!r.flags.some((f) => f.code === "total_mismatch"), JSON.stringify(r.flags));
+});
+
+test("a TAX ID line never donates its digits as the tax", () => {
+  const r = parseReceipt(
+    ocr(["ACME SUPPLY", "TAX ID: 84-1234567", "SUBTOTAL 50.00", "SALES TAX 4.13", "TOTAL 54.13"]),
+  );
+  assert.equal(r.amount.value, 54.13, `amount ${r.amount.value}`);
+  assert.equal(r.tax.value, 4.13, `tax ${r.tax.value}`);
+});
+
+test("a TAX INVOICE number never donates its digits as the tax", () => {
+  const r = parseReceipt(
+    ocr(["CITY BISTRO", "TAX INVOICE #123456", "SUBTOTAL 60.00", "GST 6.00", "TOTAL 66.00"]),
+  );
+  assert.equal(r.amount.value, 66, `amount ${r.amount.value}`);
+  assert.equal(r.tax.value, 6, `tax ${r.tax.value}`);
+});
+
+test("TAX RATE / percentage lines are skipped; the real tax amount still wins", () => {
+  const rate = parseReceipt(
+    ocr(["GAS N GO", "TAX RATE 8.25%", "SUBTOTAL 20.00", "SALES TAX 1.65", "TOTAL 21.65"]),
+  );
+  assert.equal(rate.tax.value, 1.65, `tax ${rate.tax.value}`);
+  assert.equal(rate.amount.value, 21.65, `amount ${rate.amount.value}`);
+
+  // Keyword-less rate line: the chosen hit itself is percent-suffixed.
+  const pct = parseReceipt(
+    ocr(["GAS N GO", "TAX 8.25%", "SUBTOTAL 20.00", "SALES TAX 1.65", "TOTAL 21.65"]),
+  );
+  assert.equal(pct.tax.value, 1.65, `tax ${pct.tax.value}`);
+
+  // A rate sharing the line with the amount still donates the AMOUNT.
+  const inline = parseReceipt(
+    ocr(["SHOPPE", "SUBTOTAL 42.00", "GST 5%: 2.10", "TOTAL 44.10"]),
+  );
+  assert.equal(inline.tax.value, 2.1, `tax ${inline.tax.value}`);
+});
+
+test("a garbled tax larger than the subtotal never rewrites the total", () => {
+  const r = parseReceipt(ocr(["SHOP", "SUBTOTAL 40.00", "TAX 289.00", "TOTAL 43.20"]));
+  assert.equal(r.amount.value, 43.2, `amount ${r.amount.value}`);
+  assert.equal(r.tax.value, 0, "implausible tax is dropped");
+});
+
+test("label-only TOTAL never grabs a tender/change line below it", () => {
+  const r = parseReceipt(
+    ocr(["CORNER MARKET", "Item 12.99", "TOTAL", "CASH 20.00", "CHANGE 7.01", "05/01/2026"]),
+  );
+  assert.equal(r.amount.value, 12.99, `amount ${r.amount.value}`);
+});
+
 function lines2(texts: string[]): OcrLine[] {
   return texts.map((text, i) => ({
     text,

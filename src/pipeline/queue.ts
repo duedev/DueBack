@@ -53,6 +53,10 @@ class ProcessingQueue {
     receiptId: string,
     attempts: number,
   ): Promise<void> {
+    // Heartbeat the lock while the job runs — extraction routinely outlives
+    // the stale window (model downloads, binarize rescue, vision), and a
+    // stale-looking lock would let the pool claim the same job twice.
+    const heartbeat = setInterval(() => void repo.touchJob(jobId), 20_000);
     try {
       await processReceipt(receiptId, getOcrEngine());
       await repo.completeJob(jobId);
@@ -64,6 +68,7 @@ class ProcessingQueue {
         await repo.releaseJob({ id: jobId, receiptId, attempts, lockedAt: null });
       }
     } finally {
+      clearInterval(heartbeat);
       this.running--;
       await this.announce();
       // Pull the next job if any remain.

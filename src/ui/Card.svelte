@@ -21,12 +21,27 @@
   const busy = $derived(
     receipt.status === "queued" || receipt.status === "processing",
   );
+
+  /** What a screen reader hears on focus: status first, then the card's facts. */
+  const ariaLabel = $derived.by(() => {
+    const status =
+      receipt.status === "needs_review" ? "Review needed" : meta.label;
+    if (receipt.status === "done" || receipt.status === "needs_review") {
+      const amount =
+        receipt.amount.value > 0
+          ? formatMoney(receipt.amount.value, receipt.currency)
+          : "no amount";
+      const vendor = receipt.vendor.value || "Unknown vendor";
+      return `${status} — ${vendor}, ${amount}, ${receipt.fileName}`;
+    }
+    return `${status} — ${receipt.fileName}`;
+  });
 </script>
 
 <button
   class="rc card"
   onclick={() => (app.reviewId = receipt.id)}
-  aria-label={`Open ${receipt.fileName}`}
+  aria-label={ariaLabel}
 >
   <div class="thumb" class:skeleton={busy}>
     {#await app.blobUrl(receipt.annotatedKey ?? receipt.cleanedKey ?? receipt.fileKey) then url}
@@ -118,7 +133,7 @@
   }
   .fname {
     font-size: 0.8rem;
-    color: var(--ink-faint);
+    color: var(--ink-soft);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

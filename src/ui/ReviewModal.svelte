@@ -45,8 +45,47 @@
     category = r.category.value;
     imgLoaded = false;
     imageUrl = null;
-    void app.blobUrl(r.cleanedKey ?? r.fileKey).then((u) => (imageUrl = u));
+    const id = r.id;
+    void app.blobUrl(r.cleanedKey ?? r.fileKey).then((u) => {
+      // Rapid prev/next: the LAST promise to resolve would win otherwise —
+      // only the still-current receipt may set the image.
+      if (seededId === id) imageUrl = u;
+    });
   });
+
+  // ---- Focus management (role=dialog + aria-modal promise it) -------------
+  let dialogEl = $state<HTMLElement | null>(null);
+
+  // On open, remember what had focus and move it into the dialog; on close
+  // ({#if} unmount → bind:this null) the effect cleanup gives it back.
+  $effect(() => {
+    const el = dialogEl;
+    if (!el) return;
+    const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    el.focus();
+    return () => prev?.focus();
+  });
+
+  /** Keep Tab cycling inside the dialog instead of walking the obscured board. */
+  function trapTab(e: KeyboardEvent): void {
+    if (e.key !== "Tab" || !dialogEl) return;
+    const focusables = Array.from(
+      dialogEl.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (!first || !last) return;
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === dialogEl)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
 
   function close(): void {
     app.reviewId = null;
@@ -201,12 +240,15 @@
     });
     // Advance ONLY through receipts that still need review (after this one,
     // wrapping to earlier ones) — the sweep must not cycle back through
-    // already-done receipts. When none remain, the sweep is over.
+    // already-done receipts. When none remain, the sweep is over. app.receipts
+    // is still the PRE-save array here (refresh is async), so the just-approved
+    // receipt must be excluded by id or the last one re-selects itself.
     const fresh = app.receipts;
     const after = fresh.find(
-      (x, i) => i > index && x.reviewRequired && !x.approved,
+      (x, i) => i > index && x.id !== r.id && x.reviewRequired && !x.approved,
     );
-    const target = after ?? fresh.find((x) => x.reviewRequired && !x.approved);
+    const target =
+      after ?? fresh.find((x) => x.id !== r.id && x.reviewRequired && !x.approved);
     if (target) {
       app.reviewId = target.id;
     } else {
@@ -220,14 +262,14 @@
     if (!r) return;
     // Deletes immediately — a blocking confirm dialog here was unwanted
     // friction (the button is explicit and the modal shows what it targets).
-    const wasIndex = index;
+    // Pick the successor from the PRE-delete list, before the await:
+    // app.receipts still contains the deleted receipt afterwards (refresh is
+    // async), so a post-await read re-selected the deleted id and closed.
+    const rest = list.filter((x) => x.id !== r.id);
+    const target = rest[Math.min(index, rest.length - 1)];
     await app.deleteReceipt(r.id);
-    const fresh = app.receipts;
-    if (fresh.length === 0) close();
-    else {
-      const target = fresh[Math.min(wasIndex, fresh.length - 1)];
-      if (target) app.reviewId = target.id;
-    }
+    if (target) app.reviewId = target.id;
+    else close();
   }
 
   function onKey(e: KeyboardEvent): void {
@@ -238,8 +280,11 @@
       close();
       return;
     }
-    // Approve & Next works even while typing (Enter), for a fast sweep.
+    // Approve & Next works even while typing (Enter), for a fast sweep — but
+    // Enter on a focused control must activate THAT control, not approve
+    // (otherwise Delete/Close/Prev/Next and open selects all approve).
     if (e.key === "Enter") {
+      if (tag === "BUTTON" || tag === "A" || tag === "SUMMARY" || tag === "SELECT") return;
       e.preventDefault();
       void approveAndNext();
       return;
@@ -301,7 +346,15 @@
       if (e.target === e.currentTarget) close();
     }}
   >
-    <div class="modal card" role="dialog" aria-modal="true" aria-label="Review receipt">
+    <div
+      class="modal card"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Review receipt"
+      tabindex="-1"
+      bind:this={dialogEl}
+      onkeydown={trapTab}
+    >
       <header class="m-head">
         <strong>Review receipt</strong>
         <span class="muted">{index + 1} of {list.length}</span>
@@ -511,20 +564,23 @@
     text-transform: uppercase;
     padding: 0.18rem 0.4rem;
     border-radius: 4px;
-    color: #fff;
     white-space: nowrap;
   }
+  /* Each tag pairs its fill token with that token's ink partner — the fills
+     turn pastel in dark mode, where hardcoded #fff fails AA. */
   .m-vendor {
     border-color: var(--cat-3);
   }
   .m-vendor span {
     background: var(--cat-3);
+    color: var(--cat-3-ink);
   }
   .m-date {
     border-color: var(--err);
   }
   .m-date span {
     background: var(--err);
+    color: var(--err-ink);
   }
   .m-amount {
     border-color: var(--ok);
@@ -581,7 +637,7 @@
   }
   .flag.warn {
     background: var(--gold-soft);
-    color: var(--gold);
+    color: var(--gold-text); /* --gold is only 3.6:1 on gold-soft in light */
   }
   .flag.error {
     background: var(--err-soft);

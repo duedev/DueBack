@@ -155,7 +155,7 @@
     border-radius: 50%;
   }
   .note {
-    color: var(--gold);
+    color: var(--gold-text); /* --gold is only 4.0:1 in light — never small copy */
     font-weight: 600;
     font-size: 0.72rem;
   }
