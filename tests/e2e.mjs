@@ -627,6 +627,37 @@ async function main() {
     await page.getByText("Drop receipts here").waitFor({ timeout: 10000 });
     check(true, "landing offers the way back to the workspace");
 
+    // 8b. Phone width: neither surface may overflow the viewport sideways —
+    // an overflowing row used to let touch swipes pan the whole page, and
+    // under the root overflow-x clip it would instead strand controls
+    // off-screen. Measured with the clip disabled so the check catches the
+    // underlying overflow, not the backstop masking it.
+    const contentWidth = () =>
+      page.evaluate(() => {
+        document.documentElement.style.setProperty("overflow-x", "visible", "important");
+        document.body.style.setProperty("overflow-x", "visible", "important");
+        const w = document.scrollingElement.scrollWidth;
+        document.documentElement.style.removeProperty("overflow-x");
+        document.body.style.removeProperty("overflow-x");
+        return w;
+      });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const wsW = await contentWidth();
+    check(wsW <= 390, `workspace fits a 390px phone with receipts on the board (scrollWidth ${wsW})`);
+    await page.getByRole("button", { name: "Settings" }).click();
+    const settingsDialog = page.getByRole("dialog", { name: "Settings" });
+    await settingsDialog.waitFor({ timeout: 5000 });
+    check(true, "Settings is reachable at phone width");
+    await page.keyboard.press("Escape");
+    await settingsDialog.waitFor({ state: "hidden", timeout: 5000 });
+    await page.locator("header.ws-head .brand").click();
+    await page.getByRole("heading", { name: /Receipts in/ }).waitFor({ timeout: 10000 });
+    const landW = await contentWidth();
+    check(landW <= 390, `landing fits a 390px phone (scrollWidth ${landW})`);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.getByRole("button", { name: /Back to your receipts \(7\)/ }).click();
+    await page.getByText("Drop receipts here").waitFor({ timeout: 10000 });
+
     // 9. Delete all receipts — immediate, no confirm dialog.
     await page.getByRole("button", { name: /Delete all/ }).click();
     await page.waitForFunction(

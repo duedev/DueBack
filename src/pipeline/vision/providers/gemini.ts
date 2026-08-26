@@ -18,7 +18,7 @@ interface GeminiResponse {
 export function createGeminiProvider(init: ProviderInit): VisionProvider {
   return {
     id: "gemini",
-    async extract(image, ctx) {
+    async extract(image) {
       const { base64, mediaType } = await blobToBase64(image);
       const baseUrl = init.baseUrl || "https://generativelanguage.googleapis.com/v1beta";
       const url = `${baseUrl}/models/${init.model}:generateContent?key=${encodeURIComponent(init.apiKey)}`;
@@ -31,7 +31,7 @@ export function createGeminiProvider(init: ProviderInit): VisionProvider {
             {
               role: "user",
               parts: [
-                { text: userInstruction(ctx.currencyDefault) },
+                { text: userInstruction() },
                 { inline_data: { mime_type: mediaType, data: base64 } },
               ],
             },

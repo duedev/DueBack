@@ -59,6 +59,25 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
 - **Svelte $state proxies can't enter IndexedDB** — `structuredClone` throws on
   them. Unwrap with `$state.snapshot(...)` before any `repo` write that carries
   objects from reactive state (see `ReviewModal.patchFromForm`).
+- **The app is USD-only.** Nothing detects or selects a currency: extraction
+  and the vision tier always emit `currency: "USD"` (the field stays on
+  `Receipt` for the stored-data shape; a ReviewModal save normalizes legacy
+  values), `formatMoney` takes no currency, the workbook always renders `$`,
+  and the CSV's Currency column is pinned to "USD" (a legacy stored code
+  must not contradict the workbook). Don't add per-receipt currency back
+  without a product decision.
+- **Horizontal touch-panning is clipped at the root** (`html, body`
+  `overflow-x: hidden` then `clip`, theme.css — declaration order is the
+  fallback and test-pinned; no `overscroll-behavior-x`, which would kill
+  swipe-back history navigation). Any element poking past the viewport
+  otherwise lets mobile swipes drag the page sideways — and under the clip an
+  overflowing bar strands its controls off-screen instead. So fix real
+  offenders too: BOTH headers compact below 560px (landing nav: wordmark +
+  Nerd-mode label hide; workspace header: wordmark + Delete-all label hide
+  and the row wraps) because brand + actions genuinely didn't fit a phone.
+  The e2e asserts both surfaces fit 390px with the clip disabled and that
+  Settings opens at phone width. Wide content that should scroll gets its
+  own `overflow-x: auto` container.
 - **Money parsing is US-first and deliberately strict** (`util/money.ts` +
   `MONEY_SRC` in `extract.ts`): a single dot with 3 decimals is a *decimal*
   ("$3.499/gal", "11.204 GAL"), never thousands grouping — the permissive form

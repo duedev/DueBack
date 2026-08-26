@@ -172,3 +172,17 @@ test("the PWA manifest doesn't lock orientation (WCAG 1.3.4)", () => {
     "manifest orientation must be unset or \"any\"",
   );
 });
+
+// ── mobile horizontal-pan guard ──────────────────────────────────────────────
+
+test("html/body clip horizontal overflow, hidden fallback declared first", () => {
+  const m = themeCss.match(/html,\s*body\s*\{([^}]*)\}/);
+  assert.ok(m, "the html, body horizontal-overflow guard exists");
+  const decls = [...m![1]!.matchAll(/overflow-x:\s*([\w-]+)/g)].map((d) => d[1]);
+  // Order is load-bearing: `hidden` must come first so browsers without
+  // `clip` support fall back to it instead of to `visible` (pannable).
+  assert.deepEqual(decls, ["hidden", "clip"]);
+  // No overscroll-behavior-x — it would disable swipe back/forward history
+  // navigation, which the hash-routed landing relies on.
+  assert.doesNotMatch(themeCss, /overscroll-behavior-x/);
+});

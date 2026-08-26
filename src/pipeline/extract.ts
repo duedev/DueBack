@@ -6,7 +6,7 @@ import type {
   Field,
   Flag,
 } from "../types.ts";
-import { parseAmount, detectCurrency } from "../util/money.ts";
+import { parseAmount } from "../util/money.ts";
 import { monthFromName, toIso, fromIso, daysBetween } from "../util/format.ts";
 import { categorize } from "../config/categories.ts";
 import {
@@ -995,10 +995,7 @@ export function forcesManualReview(flags: Flag[]): boolean {
   );
 }
 
-export function parseReceipt(
-  ocr: OcrResult,
-  opts: { currencyDefault?: string } = {},
-): Extraction {
+export function parseReceipt(ocr: OcrResult): Extraction {
   const lines = ocr.lines.length
     ? ocr.lines
     : ocr.text
@@ -1025,7 +1022,7 @@ export function parseReceipt(
     : applyFootingMath(lines, pump.amount, subtotal, tax);
   const amount = footing.amount;
   const date = findDate(lines);
-  const currency = detectCurrency(ocr.text, opts.currencyDefault ?? CURRENCY_DEFAULT);
+  const currency = CURRENCY_DEFAULT; // USD-only app — nothing detects currency.
 
   // Vendor: prefer a recognized brand (names the merchant, not the store address —
   // the lesson ported from the original app's vendor DB). Fall back to the

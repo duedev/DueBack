@@ -207,12 +207,13 @@
       <div class="nav-actions">
         <button
           class="nerd-toggle"
+          aria-label="Nerd mode"
           aria-pressed={prefs.nerd}
           onclick={() => prefs.toggleNerd()}
           title="Reveal the engineering margin notes"
         >
           <span class="nt-mark" aria-hidden="true">&#123;&nbsp;&#125;</span>
-          Nerd mode
+          <span class="nt-label">Nerd mode</span>
         </button>
         <ThemeToggle />
         <button class="btn" onclick={() => app.enter()}>Open the app</button>
@@ -665,6 +666,25 @@
     }
     .nerd-toggle {
       padding: 0.45rem 0.6rem;
+    }
+  }
+  /* Phone widths: the first nav row (brand + actions) must fit the viewport —
+     an overflowing row used to widen the page and let touch swipes pan it
+     sideways. The wordmark and the Nerd-mode label give way; the DB mark and
+     the { } glyph (aria-label keeps the name) carry the identity. */
+  @media (max-width: 560px) {
+    .nav {
+      gap: 0.6rem;
+    }
+    .brand-name {
+      display: none;
+    }
+    .nerd-toggle .nt-label {
+      display: none;
+    }
+    .nav-actions .btn {
+      font-size: 0.85rem;
+      padding: 0.55rem 0.8rem;
     }
   }
 

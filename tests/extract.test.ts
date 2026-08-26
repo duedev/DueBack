@@ -69,7 +69,7 @@ test("European date and amount", () => {
   const r = parseReceipt(
     ocr(["Café Berlin", "Datum 14.03.2026", "Summe  19,90 EUR"]),
   );
-  assert.equal(r.currency, "EUR");
+  assert.equal(r.currency, "USD"); // USD-only app — currency is never detected
   assert.equal(r.amount.value, 19.9);
   assert.equal(r.date.value, "2026-03-14");
 });

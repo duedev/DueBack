@@ -14,8 +14,6 @@
   // and per-field zoomed callouts show each extracted value beside the slice of
   // the receipt it came from, so a human can confirm a batch in seconds.
 
-  const CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF", "INR", "MXN", "CNY"];
-
   const list = $derived(app.receipts);
   const index = $derived(list.findIndex((r) => r.id === app.reviewId));
   const current = $derived(index >= 0 ? list[index] : undefined);
@@ -26,7 +24,6 @@
   let vendor = $state("");
   let date = $state("");
   let amount = $state<string | number>("");
-  let currency = $state("USD");
   let category = $state<Category>("Other");
 
   let imgEl = $state<HTMLImageElement | null>(null);
@@ -41,7 +38,6 @@
     vendor = r.vendor.value;
     date = r.date.value;
     amount = r.amount.value ? String(r.amount.value) : "";
-    currency = r.currency;
     category = r.category.value;
     imgLoaded = false;
     imageUrl = null;
@@ -128,7 +124,7 @@
         edited: true,
         ...(r.amount.bbox ? { bbox: r.amount.bbox } : {}),
       },
-      currency: currency.toUpperCase(),
+      currency: "USD", // USD-only app — a save normalizes any legacy value
       category: { value: category, confidence: 1, edited: true },
       // Edits change the fields the file is named after — keep it in sync
       // (same amount>0 gate as the pipeline: failed reads keep their name).
@@ -418,21 +414,14 @@
 
           <div class="frow f-amount">
             <label for="rv-amount">Amount</label>
-            <div class="amount-grid">
-              <input
-                id="rv-amount"
-                type="number"
-                step="0.01"
-                min="0"
-                bind:value={amount}
-                onchange={save}
-              />
-              <select aria-label="Currency" bind:value={currency} onchange={save}>
-                {#each [...new Set([current.currency, ...CURRENCIES])] as c (c)}
-                  <option value={c}>{c}</option>
-                {/each}
-              </select>
-            </div>
+            <input
+              id="rv-amount"
+              type="number"
+              step="0.01"
+              min="0"
+              bind:value={amount}
+              onchange={save}
+            />
             {#if imgLoaded && current.amount.bbox}
               {#key current.id}
                 <canvas class="callout" use:callout={current.amount.bbox}></canvas>
@@ -608,11 +597,6 @@
   }
   .f-amount input {
     border-left: 3px solid var(--ok);
-  }
-  .amount-grid {
-    display: grid;
-    grid-template-columns: 1fr 6.2rem;
-    gap: 0.5rem;
   }
   .callout {
     margin-top: 0.15rem;

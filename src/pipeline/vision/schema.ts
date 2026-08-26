@@ -18,10 +18,9 @@ export const RECEIPT_JSON_SCHEMA = {
     date: { type: "string", description: "Purchase date as ISO yyyy-mm-dd." },
     amount: { type: "number", description: "Grand total actually paid." },
     tax: { type: "number", description: "Tax amount, or 0 if none shown." },
-    currency: { type: "string", description: "ISO 4217 code, e.g. USD." },
     category: { type: "string", enum: CATEGORIES },
   },
-  required: ["vendor", "date", "amount", "tax", "currency", "category"],
+  required: ["vendor", "date", "amount", "tax", "category"],
 } as const;
 
 /** Gemini uses an OpenAPI-style schema dialect (uppercase type names). */
@@ -33,10 +32,9 @@ export function geminiSchema(): Record<string, unknown> {
       date: { type: "STRING" },
       amount: { type: "NUMBER" },
       tax: { type: "NUMBER" },
-      currency: { type: "STRING" },
       category: { type: "STRING", enum: [...CATEGORIES] },
     },
-    required: ["vendor", "date", "amount", "tax", "currency", "category"],
+    required: ["vendor", "date", "amount", "tax", "category"],
   };
 }
 
@@ -47,11 +45,11 @@ export const SYSTEM_PROMPT =
   "the grand total actually paid; tax is the tax line (0 if none). Pick the single " +
   "best category from the allowed list. Do not invent values you cannot see.";
 
-export function userInstruction(currencyDefault: string): string {
+export function userInstruction(): string {
   return (
     "Extract the receipt fields as JSON. Allowed categories: " +
     CATEGORIES.join(", ") +
-    `. If no currency is visible, use ${currencyDefault}.`
+    ". Amounts are US dollars."
   );
 }
 
@@ -72,10 +70,6 @@ export function parseVisionJson(text: string): Record<string, unknown> | null {
   }
 }
 
-const KNOWN_CURRENCIES = new Set([
-  "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "INR", "CNY", "MXN",
-]);
-
 function coerceAmount(v: unknown): number {
   if (typeof v === "number" && Number.isFinite(v)) return safeAmount(v);
   if (typeof v === "string") return safeAmount(parseAmount(v) ?? 0);
@@ -84,10 +78,7 @@ function coerceAmount(v: unknown): number {
 
 /** Map a model's loose JSON into the app's `Extraction` (same shape the rules
  *  path produces), so the rest of the pipeline is identical for either tier. */
-export function visionToExtraction(
-  raw: Record<string, unknown>,
-  currencyDefault = CURRENCY_DEFAULT,
-): Extraction {
+export function visionToExtraction(raw: Record<string, unknown>): Extraction {
   const vendorName = String(raw.vendor ?? "").trim().slice(0, 80);
   const amountVal = coerceAmount(raw.amount);
   const taxVal = coerceAmount(raw.tax);
@@ -95,8 +86,7 @@ export function visionToExtraction(
   const dateRaw = String(raw.date ?? "").trim();
   const dateVal = isValidIso(dateRaw) ? dateRaw : "";
 
-  const curRaw = String(raw.currency ?? "").trim().toUpperCase();
-  const currency = KNOWN_CURRENCIES.has(curRaw) ? curRaw : currencyDefault;
+  const currency = CURRENCY_DEFAULT; // USD-only app
 
   const catRaw = String(raw.category ?? "").trim();
   const modelCat = CATEGORIES.find((c) => c === catRaw);

@@ -91,7 +91,7 @@ export async function processReceipt(
     }
 
     // 4. Rules extraction (free, deterministic, on-device).
-    let ex: Extraction = parseReceipt(ocr, { currencyDefault: receipt.currency });
+    let ex: Extraction = parseReceipt(ocr);
 
     // 4a. Weak-read rescue: when the grayscale pass reads poorly (or the
     //     rules can't find an amount), retry on an adaptively binarized copy
@@ -107,7 +107,7 @@ export async function processReceipt(
       try {
         const bin = await binarizeBlob(cleaned.ocrBlob);
         const ocr2 = await engine.recognize(bin.blob, bin.width, bin.height);
-        const ex2 = parseReceipt(ocr2, { currencyDefault: receipt.currency });
+        const ex2 = parseReceipt(ocr2);
         // Swap only when the retry is strictly safer: it found an amount the
         // first pass missed, or BOTH passes agree on the amount (then it's a
         // pure text/vendor/date upgrade) and it scores higher. A confidently
@@ -174,9 +174,7 @@ export async function processReceipt(
     //     only when the user has opted in + supplied a key, get a vision-model
     //     second opinion. It returns the same Extraction shape, so everything
     //     below is identical. Any failure silently keeps the free result.
-    const assist = await runVisionAssist(cleaned.blob, ex, {
-      currencyDefault: receipt.currency,
-    });
+    const assist = await runVisionAssist(cleaned.blob, ex);
     if (assist) {
       ex = assist.extraction;
       methodUsed = "paid";
