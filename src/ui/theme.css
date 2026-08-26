@@ -41,6 +41,7 @@
 
   --gold: #d9480f; /* "review" accents — vivid orange. Only 4.0:1 on --bg: fills, large text and badges, never small copy */
   --gold-soft: rgb(217 72 15 / 0.12);
+  --gold-text: #b13a05; /* --gold's small-copy partner — 5.6:1 on --bg, 5.1:1 on gold-soft chips */
   --ok: #147246;
   --warn: #d9480f;
   --err: #b42323;
@@ -79,6 +80,7 @@
 
   --gold: #ffa94d;
   --gold-soft: rgb(255 169 77 / 0.16);
+  --gold-text: #ffa94d;
   --ok: #3ecf82;
   --warn: #ffa94d;
   --err: #f37272;
@@ -120,6 +122,7 @@
 
     --gold: #ffa94d;
     --gold-soft: rgb(255 169 77 / 0.16);
+    --gold-text: #ffa94d;
     --ok: #3ecf82;
     --warn: #ffa94d;
     --err: #f37272;
@@ -206,8 +209,7 @@ small,
 
 :focus-visible {
   outline: none;
-  box-shadow: var(--focus-ring);
-  border-radius: var(--radius-s);
+  box-shadow: var(--focus-ring); /* follows the element's own border-radius */
 }
 
 img {
@@ -360,7 +362,7 @@ label {
 }
 .chip-warn {
   background: var(--gold-soft);
-  color: var(--gold);
+  color: var(--gold-text);
 }
 .chip-err {
   background: var(--err-soft);

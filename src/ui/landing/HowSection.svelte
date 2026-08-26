@@ -105,6 +105,10 @@
   .step summary::-webkit-details-marker {
     display: none;
   }
+  /* .step's overflow:hidden clips the global focus ring — draw it inset. */
+  .step summary:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 4px var(--accent);
+  }
   .step summary::after {
     content: "+";
     color: var(--accent);

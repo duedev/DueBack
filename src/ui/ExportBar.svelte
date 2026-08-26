@@ -537,6 +537,8 @@
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
+    text-transform: none;
+    letter-spacing: 0;
     font: 550 0.95rem/1.3 var(--font-ui);
     color: var(--ink);
     cursor: pointer;

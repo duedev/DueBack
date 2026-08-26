@@ -350,6 +350,10 @@
   .qa summary::-webkit-details-marker {
     display: none;
   }
+  /* .qa's overflow:hidden clips the global focus ring — draw it inset. */
+  .qa summary:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 4px var(--accent);
+  }
   .qa summary::after {
     content: "+";
     position: absolute;
@@ -394,7 +398,7 @@
     gap: 0.6rem;
     align-items: center;
     padding: 1.6rem 0 2.2rem;
-    color: var(--ink-faint);
+    color: var(--ink-soft);
     font-size: 0.88rem;
   }
   .foot-sep {
