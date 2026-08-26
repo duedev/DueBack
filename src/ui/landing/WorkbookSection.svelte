@@ -1,6 +1,6 @@
 <section id="workbook" class="wrap workbook">
-  <p class="section-label">The deliverable</p>
-  <h2>A workbook your office will actually accept.</h2>
+  <p class="section-label">The workbook</p>
+  <h2>A workbook your office will be excited for.</h2>
   <p class="lede">
     Not a data dump: a themed, multi-sheet Excel file with live formulas, the
     receipt images embedded beside their rows, and an insights dashboard.

@@ -16,6 +16,30 @@
 
   let fileInput = $state<HTMLInputElement | null>(null);
 
+  /** Svelte action: track the pointer inside a CTA card so its ::after aura
+      (a soft accent glow) follows the mouse. Hover-only by CSS. */
+  function aura(node: HTMLElement): { destroy(): void } {
+    const move = (e: PointerEvent): void => {
+      const r = node.getBoundingClientRect();
+      node.style.setProperty("--aura-x", `${e.clientX - r.left}px`);
+      node.style.setProperty("--aura-y", `${e.clientY - r.top}px`);
+    };
+    node.addEventListener("pointermove", move);
+    return {
+      destroy() {
+        node.removeEventListener("pointermove", move);
+      },
+    };
+  }
+
+  /** Nerd mode earns an entrance: a brief green binary-bits rain when it
+      turns ON (never on the way out; reduced-motion no-op inside). */
+  function nerdToggle(): void {
+    const turningOn = !prefs.nerd;
+    prefs.toggleNerd();
+    if (turningOn) void import("./landing/binaryBits.ts").then((m) => m.binaryBurst());
+  }
+
   function pick(): void {
     fileInput?.click();
   }
@@ -190,10 +214,10 @@
 />
 
 {#snippet ctaMini()}
-  <div class="card cta-mini">
+  <div class="card cta-mini" use:aura>
     <div class="cm-copy">
       <strong>Got a pile of receipts?</strong>
-      <span class="muted">You're about a minute from a finished report.</span>
+      <span class="muted">You're about a minute away from a finished report.</span>
     </div>
     <button class="btn btn-primary" onclick={pick}>Add receipts</button>
   </div>
@@ -233,7 +257,7 @@
           class="nerd-toggle"
           aria-label="Nerd mode"
           aria-pressed={prefs.nerd}
-          onclick={() => prefs.toggleNerd()}
+          onclick={nerdToggle}
           title="Reveal the engineering margin notes"
         >
           <span class="nt-mark" aria-hidden="true">&#123;&nbsp;&#125;</span>
@@ -315,7 +339,7 @@
     </section>
 
     <section class="wrap last-cta">
-      <div class="card cta-card">
+      <div class="card cta-card" use:aura>
         <h2>Got a pile of receipts?</h2>
         <p>You're about a minute away from a finished report.</p>
         <button class="btn btn-primary btn-lg" onclick={pick}>Add receipts</button>
@@ -383,10 +407,10 @@
   <div class="lpage" hidden={page !== "workbook"}>
     <header class="wrap page-head">
       <p class="page-no">03 · The Excel workbook</p>
-      <h2 class="page-title">The deliverable, in detail.</h2>
+      <h2 class="page-title">What you hand in, in detail.</h2>
       <p class="page-deck">
-        What lands in your download folder, and why your office will take it
-        without a second look.
+        What lands in your download folder, and why your office will be
+        thrilled.
       </p>
     </header>
 
@@ -572,11 +596,6 @@
   <div class="lpage" hidden={page !== "contact"}>
     <header class="wrap page-head">
       <p class="page-no">06 · Contact</p>
-      <h2 class="page-title">A direct line to the developer.</h2>
-      <p class="page-deck">
-        No ticket system and no support queue: the form below opens an email
-        straight to the person who built this.
-      </p>
     </header>
 
     <ContactSection />
@@ -866,6 +885,32 @@
   }
   .cm-copy .muted {
     font-size: 0.88rem;
+  }
+  /* The soft accent aura that trails the pointer over a CTA card. */
+  .cta-mini,
+  .cta-card {
+    position: relative;
+    overflow: hidden;
+  }
+  .cta-mini::after,
+  .cta-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    background: radial-gradient(
+      240px circle at var(--aura-x, 50%) var(--aura-y, 50%),
+      color-mix(in srgb, var(--accent) 16%, transparent),
+      transparent 72%
+    );
+  }
+  @media (hover: hover) {
+    .cta-mini:hover::after,
+    .cta-card:hover::after {
+      opacity: 1;
+    }
   }
   .next-link {
     margin-left: auto; /* the forward path reads from the right edge */

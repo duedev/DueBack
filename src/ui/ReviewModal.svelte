@@ -7,7 +7,7 @@
   import { receiptFileName } from "../util/rename.ts";
   import { annotateReceipt, HIGHLIGHT_COLORS } from "../pipeline/annotate.ts";
   import { buildCorrectionRecords, appendCorrections } from "../train/corrections.ts";
-  import { locateValue } from "../pipeline/extract.ts";
+  import { locateValue, readValueInBox } from "../pipeline/extract.ts";
   import type { Receipt, BBox, Category, OcrLine, Field } from "../types.ts";
 
   // The review sweep: board → modal → keyboard Approve & Next. On-image markers
@@ -400,12 +400,25 @@
 
   async function drawUp(): Promise<void> {
     const field = drawField;
-    const box = dragRect;
+    // Snapshot: dragRect is a $state proxy, and a proxy inside the patch
+    // makes IndexedDB's structuredClone throw — the box then silently never
+    // persisted (the original "marks don't stick" bug).
+    const box = dragRect ? ($state.snapshot(dragRect) as BBox) : null;
     dragStart = null;
     dragRect = null;
     drawField = null;
     // A sub-1% smear is a slip, not a box.
     if (!field || !box || !current || box.w < 0.01 || box.h < 0.005) return;
+    // The box also ANSWERS: read the stored OCR geometry inside it and
+    // autofill the field, so drawing on the right line fixes the value too.
+    const lines = ($state.snapshot(current.ocrLines ?? []) as OcrLine[]) ?? [];
+    const read = readValueInBox(lines, field, box);
+    if (read !== null && read !== "") {
+      if (field === "vendor") vendor = String(read);
+      else if (field === "date") date = String(read);
+      else amount = String(read);
+    }
+    // Build the patch AFTER the autofill so the new value rides along.
     const patch = patchFromForm(current);
     const f = patch[field] as Field<string | number>;
     f.bbox = box;
@@ -527,7 +540,7 @@
               <label for="rv-vendor">Vendor</label>
               <button
                 type="button"
-                class="draw-btn"
+                class="draw-btn db-vendor"
                 class:active={drawField === "vendor"}
                 onclick={() => (drawField = drawField === "vendor" ? null : "vendor")}
                 title="Draw a box on the receipt around the vendor name"
@@ -547,7 +560,7 @@
               <label for="rv-date">Date</label>
               <button
                 type="button"
-                class="draw-btn"
+                class="draw-btn db-date"
                 class:active={drawField === "date"}
                 onclick={() => (drawField = drawField === "date" ? null : "date")}
                 title="Draw a box on the receipt around the date"
@@ -567,7 +580,7 @@
               <label for="rv-amount">Amount</label>
               <button
                 type="button"
-                class="draw-btn"
+                class="draw-btn db-amount"
                 class:active={drawField === "amount"}
                 onclick={() => (drawField = drawField === "amount" ? null : "amount")}
                 title="Draw a box on the receipt around the grand total"
@@ -770,23 +783,33 @@
   .lrow label {
     margin-bottom: 0;
   }
+  /* Prominent, color-coded to the field it marks, and big enough for a
+     thumb: drawing works over touch (pointer events + touch-action none). */
   .draw-btn {
-    border: 0;
-    background: none;
-    font: 600 0.72rem/1 var(--font-ui);
-    color: var(--ink-faint);
+    border: 1.5px solid var(--db-c, var(--ink-faint));
+    background: color-mix(in srgb, var(--db-c, var(--ink-faint)) 8%, transparent);
+    font: 650 0.74rem/1 var(--font-ui);
+    color: var(--db-c, var(--ink-faint));
     cursor: pointer;
-    padding: 0.15rem 0.3rem;
-    border-radius: 6px;
+    padding: 0.42rem 0.6rem;
+    border-radius: var(--radius-pill);
+    white-space: nowrap;
   }
   .draw-btn:hover {
-    color: var(--accent);
-    background: var(--accent-soft);
+    background: color-mix(in srgb, var(--db-c, var(--ink-faint)) 16%, transparent);
   }
   .draw-btn.active {
-    color: var(--accent);
-    background: var(--accent-soft);
-    box-shadow: inset 0 0 0 1px var(--accent-line);
+    background: var(--db-c);
+    color: var(--bg-raised);
+  }
+  .db-vendor {
+    --db-c: var(--cat-3);
+  }
+  .db-date {
+    --db-c: var(--cat-4);
+  }
+  .db-amount {
+    --db-c: var(--accent);
   }
   .imgwrap.drawing {
     cursor: crosshair;

@@ -39,31 +39,43 @@ export function celebrate(): void {
   const H = window.innerHeight;
   const parts: P[] = [];
   const cannon = (x: number, dir: number): void => {
-    for (let i = 0; i < 70; i++) {
+    for (let i = 0; i < 110; i++) {
       const angle = (-Math.PI / 2) + dir * (0.15 + Math.random() * 0.45);
-      const speed = 9 + Math.random() * 8;
+      const speed = 10 + Math.random() * 10;
       parts.push({
         x,
         y: H + 8,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        w: 5 + Math.random() * 5,
-        h: 8 + Math.random() * 7,
+        w: 6 + Math.random() * 7,
+        h: 9 + Math.random() * 9,
         rot: Math.random() * Math.PI,
         vr: (Math.random() - 0.5) * 0.3,
         color: colors[i % colors.length] ?? "#147246",
       });
     }
   };
-  cannon(W * 0.12, +1);
-  cannon(W * 0.88, -1);
+  // Three volleys: both corners fire immediately, a center burst follows,
+  // then the corners reload — a real celebration, not a polite sprinkle.
+  cannon(W * 0.1, +1);
+  cannon(W * 0.9, -1);
+  const volleys: { at: number; fire: () => void; done?: boolean }[] = [
+    { at: 650, fire: () => cannon(W * 0.5, Math.random() < 0.5 ? +1 : -1) },
+    { at: 1300, fire: () => ((cannon(W * 0.16, +1)), cannon(W * 0.84, -1)) },
+  ];
 
   const started = performance.now();
-  const DURATION = 1900;
+  const DURATION = 4200;
   const tick = (now: number): void => {
     const t = now - started;
+    for (const v of volleys) {
+      if (!v.done && t >= v.at) {
+        v.done = true;
+        v.fire();
+      }
+    }
     ctx.clearRect(0, 0, W, H);
-    const fade = t > DURATION - 400 ? Math.max(0, (DURATION - t) / 400) : 1;
+    const fade = t > DURATION - 600 ? Math.max(0, (DURATION - t) / 600) : 1;
     for (const p of parts) {
       p.vy += 0.32; // gravity
       p.vx *= 0.992;

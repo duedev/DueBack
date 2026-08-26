@@ -147,12 +147,17 @@
     void repo.setSetting(INSIGHTS_KEY, includeInsights);
   }
 
-  // ---- Images ZIP (an option like the rest; off unless wanted) -------------
-  const ZIP_KEY = "report.imagesZip";
-  let includeZip = $state(false);
-  void repo.getSetting<boolean>(ZIP_KEY).then((v) => (includeZip = v === true));
-  function saveZipPref(): void {
-    void repo.setSetting(ZIP_KEY, includeZip);
+  // ---- Images ZIP (HIDDEN for now — the option card is commented out and
+  //      the toggle is forced off; exportImagesZip and kv "report.imagesZip"
+  //      stay wired for when it returns, with a saveZipPref like the rest) --
+  const includeZip = false;
+
+  // ---- Bundle: zip whatever Generate produces into ONE download ------------
+  const BUNDLE_KEY = "report.bundleZip";
+  let bundleZip = $state(false);
+  void repo.getSetting<boolean>(BUNDLE_KEY).then((v) => (bundleZip = v === true));
+  function saveBundlePref(): void {
+    void repo.setSetting(BUNDLE_KEY, bundleZip);
   }
 
   // ---- Print packet (on by default: offices staple paper copies) -----------
@@ -282,17 +287,35 @@
     building = true;
     try {
       const result = await buildReport();
-      download(result.blob, result.fileName);
+      let packet: Blob | null = null;
       if (includePrint) {
         try {
-          const packet = await buildPrintPacket();
-          if (packet) {
-            const { printPdfFileName } = await import("../export/printPdf.ts");
-            download(packet, printPdfFileName(employee));
-          }
+          packet = await buildPrintPacket();
         } catch {
           app.toast("Couldn't build the print packet; the workbook is fine.", "warn");
         }
+      }
+      const { printPdfFileName } = await import("../export/printPdf.ts");
+      if (bundleZip) {
+        // One archive holding everything Generate produced.
+        const { buildZip } = await import("../export/zip.ts");
+        const entries = [
+          { name: result.fileName, data: new Uint8Array(await result.blob.arrayBuffer()) },
+        ];
+        if (packet) {
+          entries.push({
+            name: printPdfFileName(employee),
+            data: new Uint8Array(await packet.arrayBuffer()),
+          });
+        }
+        const zip = await buildZip(entries);
+        const who = (employee || "Employee").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_") || "Employee";
+        const now = new Date();
+        const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+        download(zip, `Report_${who}_${stamp}.zip`);
+      } else {
+        download(result.blob, result.fileName);
+        if (packet) download(packet, printPdfFileName(employee));
       }
       if (includeZip) await exportImagesZip();
       app.toast(`Workbook ready: ${result.count} receipts.`, "ok");
@@ -348,6 +371,34 @@
       );
     } finally {
       odSaving = false;
+    }
+  }
+
+  // ---- Preview: the print packet, in the browser, before any download ----
+  let previewing = $state(false);
+  async function previewPacket(): Promise<void> {
+    if (previewing || exportable.length === 0) return;
+    // The tab must open synchronously inside the click or popup blockers
+    // eat it (the OneDrive lesson); the PDF navigates it when ready.
+    const win = window.open("", "_blank");
+    previewing = true;
+    try {
+      await saveMeta();
+      const packet = await buildPrintPacket();
+      if (!packet) {
+        win?.close();
+        app.toast("No receipt images to preview yet.", "warn");
+        return;
+      }
+      const url = URL.createObjectURL(packet);
+      if (win) win.location.href = url;
+      else window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      win?.close();
+      app.toast(err instanceof Error ? err.message : "Couldn't build the preview.", "err");
+    } finally {
+      previewing = false;
     }
   }
 
@@ -409,6 +460,8 @@
   </div>
 
   <div class="opts">
+    <fieldset class="opt-group">
+      <legend>Adds to the total</legend>
     <div class="opt" class:open={pdEnabled}>
       <label class="check">
         <input type="checkbox" bind:checked={pdEnabled} onchange={saveMeta} />
@@ -513,7 +566,10 @@
         </span>
       {/if}
     </div>
+    </fieldset>
 
+    <fieldset class="opt-group">
+      <legend>With your download</legend>
     <div class="opt" class:open={includeInsights}>
       <label class="check">
         <input type="checkbox" bind:checked={includeInsights} onchange={saveInsightsPref} />
@@ -536,6 +592,8 @@
       </span>
     </div>
 
+    <!-- Receipt images (ZIP) is HIDDEN for now (product call) — the wiring
+         stays (exportImagesZip + kv report.imagesZip) for when it returns.
     <div class="opt" class:open={includeZip}>
       <label class="check">
         <input type="checkbox" bind:checked={includeZip} onchange={saveZipPref} />
@@ -545,6 +603,18 @@
         Also downloads every receipt image, compressed, in one archive.
       </span>
     </div>
+    -->
+
+    <div class="opt" class:open={bundleZip}>
+      <label class="check">
+        <input type="checkbox" bind:checked={bundleZip} onchange={saveBundlePref} />
+        <span>Bundle into one ZIP</span>
+      </label>
+      <span class="muted small">
+        One download instead of several: everything above zipped together.
+      </span>
+    </div>
+    </fieldset>
   </div>
 
   <div class="actions">
@@ -565,6 +635,14 @@
         Review flagged ({flagged.length})
       </button>
     {/if}
+    <button
+      class="btn btn-ghost"
+      onclick={() => void previewPacket()}
+      disabled={previewing || exportable.length === 0}
+      title="Open the print packet PDF in a new tab to check it before downloading"
+    >
+      {previewing ? "Building…" : "Preview packet"}
+    </button>
     {#if oneDriveOn}
       <button
         class="btn btn-ghost"
@@ -626,15 +704,35 @@
     min-height: 2.2rem;
   }
 
-  /* ---- report options: three self-contained cards ---- */
+  /* ---- report options: two labeled groups ----
+     Allowances CHANGE the reimbursed total; the second group only shapes
+     what the download contains. The fieldset border draws that line. */
   .opts {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-    gap: 0.8rem;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 0.9rem;
     align-items: stretch;
   }
-  .opt {
+  .opt-group {
+    margin: 0;
     border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 0.7rem 0.8rem 0.8rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 0.7rem;
+    align-content: start;
+    min-width: 0;
+  }
+  .opt-group legend {
+    font: 700 0.7rem/1 var(--font-ui);
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding: 0 0.4rem;
+  }
+  .opt {
+    border: 1px dashed var(--line);
     border-radius: 10px;
     padding: 0.7rem 0.8rem;
     display: grid;
