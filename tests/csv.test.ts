@@ -65,6 +65,15 @@ test("failed and zero-amount receipts are excluded", () => {
   assert.equal(csv.split("\r\n").length, 2); // header + Shell only
 });
 
+test("the Currency column is pinned to USD, even for legacy stored codes", () => {
+  // A pre-USD-only build could store e.g. "EUR"; the CSV must still agree
+  // with the workbook, which always renders $.
+  const legacy = receipt({ vendor: "Cafe Berlin", amount: 19.9, category: "Meals", date: "2026-03-14" });
+  legacy.currency = "EUR";
+  const csv = toCsv([legacy]);
+  assert.ok(csv.split("\r\n")[1]!.includes(",19.90,USD,"));
+});
+
 test("csvFileName is sanitized and dated", () => {
   assert.match(csvFileName({ jobName: "Q1 Travel" }), /^Q1_Travel_\d{4}-\d{2}-\d{2}\.csv$/);
   assert.match(csvFileName({}), /^reimbursement_\d{4}-\d{2}-\d{2}\.csv$/);

@@ -1,3 +1,11 @@
+<script lang="ts">
+  // Steps open on hover and stay open (reading shouldn't require a click);
+  // clicking the summary still toggles, so a click can close one again.
+  function openOnHover(e: MouseEvent): void {
+    (e.currentTarget as HTMLDetailsElement).open = true;
+  }
+</script>
+
 <section id="how" class="wrap how">
   <p class="section-label">How it works</p>
   <h2>Three steps. About a minute.</h2>
@@ -9,7 +17,7 @@
   <div class="how-cols">
     <ol class="steps">
       <li>
-        <details class="card step" open>
+        <details class="card step" open onmouseenter={openOnHover}>
           <summary>
             <span class="step-n">1</span>
             <span class="step-head">
@@ -38,7 +46,7 @@
         </details>
       </li>
       <li>
-        <details class="card step">
+        <details class="card step" onmouseenter={openOnHover}>
           <summary>
             <span class="step-n">2</span>
             <span class="step-head">
@@ -71,11 +79,11 @@
         </details>
       </li>
       <li>
-        <details class="card step">
+        <details class="card step" onmouseenter={openOnHover}>
           <summary>
             <span class="step-n">3</span>
             <span class="step-head">
-              <span class="step-title">Download the workbook</span>
+              <span class="step-title">Download the Excel workbook</span>
               <span class="step-deck">
                 One click builds a themed Excel report, plus a CSV and an
                 images ZIP if you need them.
@@ -162,14 +170,14 @@
     <p>
       Every image is straightened before it's read: EXIF rotation, a
       projection-profile deskew, and an edge-energy autocrop, then OCR runs
-      over a transient ~2600px render — <strong>on your hardware</strong>, no
+      over a transient ~2600px render, <strong>on your hardware</strong>, no
       server round-trip. Weak reads get a second pass over an adaptively
       binarized copy (rescue-only: binarization helps uneven phone photos and
       hurts clean scans, so it never runs first).
     </p>
     <p>
       The money grammar is deliberately strict: "3.499/gal" and "11.204 GAL"
-      are decimals, never $3,499 — and the line under a bare TOTAL label must
+      are decimals, never $3,499; the line under a bare TOTAL label must
       parse as strict money and must not be a tender line, so "CASH 20.00"
       never ships as the total. Subtotal + tax must foot, gallons ×
       price-per-gallon is cross-checked on fuel receipts, and anything that
@@ -179,8 +187,8 @@
     <p>
       Accuracy is gated: the extraction rules run against a fixed
       nine-challenge test set on every change, and CI drives real OCR in a
-      real browser over sample receipts — fuel math, split total labels,
-      skewed scans, multi-page PDFs — with per-receipt amount assertions. A
+      real browser over sample receipts (fuel math, split total labels,
+      skewed scans, multi-page PDFs) with per-receipt amount assertions. A
       regression fails the build, <strong>not your report</strong>.
     </p>
   </aside>

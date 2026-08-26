@@ -78,10 +78,10 @@ export function formatMonthList(months: readonly string[]): string {
 
 /** "3 months × $63.00/month (Jan–Mar 2026)" — the report-row breakdown, at
  *  whatever rate the batch carries. */
-export function phoneServiceLabel(ps: PhoneService, currency = "USD"): string {
+export function phoneServiceLabel(ps: PhoneService): string {
   const months = normalizeMonths(ps.months);
   const unit = months.length === 1 ? "month" : "months";
-  const rate = formatMoney(phoneServiceRate(ps), currency);
+  const rate = formatMoney(phoneServiceRate(ps));
   const list = formatMonthList(months);
   return `${months.length} ${unit} × ${rate}/month${list ? ` (${list})` : ""}`;
 }

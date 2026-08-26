@@ -7,14 +7,12 @@
   import { receiptFileName } from "../util/rename.ts";
   import { annotateReceipt, HIGHLIGHT_COLORS } from "../pipeline/annotate.ts";
   import { buildCorrectionRecords, appendCorrections } from "../train/corrections.ts";
-  import { locateValue } from "../pipeline/extract.ts";
+  import { locateValue, readValueInBox } from "../pipeline/extract.ts";
   import type { Receipt, BBox, Category, OcrLine, Field } from "../types.ts";
 
   // The review sweep: board → modal → keyboard Approve & Next. On-image markers
   // and per-field zoomed callouts show each extracted value beside the slice of
   // the receipt it came from, so a human can confirm a batch in seconds.
-
-  const CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF", "INR", "MXN", "CNY"];
 
   const list = $derived(app.receipts);
   const index = $derived(list.findIndex((r) => r.id === app.reviewId));
@@ -26,7 +24,6 @@
   let vendor = $state("");
   let date = $state("");
   let amount = $state<string | number>("");
-  let currency = $state("USD");
   let category = $state<Category>("Other");
 
   let imgEl = $state<HTMLImageElement | null>(null);
@@ -41,7 +38,6 @@
     vendor = r.vendor.value;
     date = r.date.value;
     amount = r.amount.value ? String(r.amount.value) : "";
-    currency = r.currency;
     category = r.category.value;
     imgLoaded = false;
     imageUrl = null;
@@ -114,21 +110,26 @@
     };
     const newDate = date && isValidIso(date) && saneYear(date) ? date : r.date.value;
     const newAmount = amt !== null ? safeAmount(amt) : r.amount.value;
+    // Boxes (and their hand-drawn flag) survive every save.
+    const keepBox = (f: Field<unknown>) => ({
+      ...(f.bbox ? { bbox: f.bbox } : {}),
+      ...(f.manualBox ? { manualBox: true } : {}),
+    });
     return {
-      vendor: { value: newVendor, confidence: 1, edited: true, ...(r.vendor.bbox ? { bbox: r.vendor.bbox } : {}) },
+      vendor: { value: newVendor, confidence: 1, edited: true, ...keepBox(r.vendor) },
       date: {
         value: newDate,
         confidence: 1,
         edited: true,
-        ...(r.date.bbox ? { bbox: r.date.bbox } : {}),
+        ...keepBox(r.date),
       },
       amount: {
         value: newAmount,
         confidence: 1,
         edited: true,
-        ...(r.amount.bbox ? { bbox: r.amount.bbox } : {}),
+        ...keepBox(r.amount),
       },
-      currency: currency.toUpperCase(),
+      currency: "USD", // USD-only app — a save normalizes any legacy value
       category: { value: category, confidence: 1, edited: true },
       // Edits change the fields the file is named after — keep it in sync
       // (same amount>0 gate as the pipeline: failed reads keep their name).
@@ -164,7 +165,9 @@
       const f = patch[kind] as Field<string | number> | undefined;
       if (!f) continue;
       const prev = r[kind].bbox;
-      if (lines.length > 0 && f.value) {
+      if (f.manualBox) {
+        // A hand-drawn box is ground truth — relocation must never move it.
+      } else if (lines.length > 0 && f.value) {
         const hit = locateValue(lines, kind, f.value);
         if (hit) f.bbox = hit.bbox;
         else if (f.edited) delete f.bbox;
@@ -252,6 +255,8 @@
     if (target) {
       app.reviewId = target.id;
     } else {
+      // The sweep is over — every receipt reviewed. Worth a moment.
+      void import("./confetti.ts").then((m) => m.celebrate());
       app.toast("All caught up. Every receipt reviewed.", "ok");
       close();
     }
@@ -277,6 +282,11 @@
     const tag = (e.target as HTMLElement)?.tagName;
     const typing = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
     if (e.key === "Escape") {
+      // Escape backs out of draw mode first; a second press closes.
+      if (drawField) {
+        cancelDraw();
+        return;
+      }
       close();
       return;
     }
@@ -322,6 +332,106 @@
     return { update: draw };
   }
 
+  // Each flag renders beside the field it questions, so the reason and the
+  // fix share one glance (and one scroll position on a phone). Codes with no
+  // home field stay in the general list under the form.
+  const FLAG_FIELD: Record<string, "vendor" | "date" | "amount" | "category"> = {
+    no_vendor: "vendor",
+    vendor_unclear: "vendor",
+    logo_mismatch: "vendor",
+    no_date: "date",
+    future_date: "date",
+    stale_date: "date",
+    no_amount: "amount",
+    total_mismatch: "amount",
+    total_suspect: "amount",
+    large_amount: "amount",
+    uncategorized: "category",
+  };
+  function flagsFor(field: "vendor" | "date" | "amount" | "category") {
+    return (current?.flags ?? []).filter((f) => FLAG_FIELD[f.code] === field);
+  }
+  const generalFlags = $derived(
+    (current?.flags ?? []).filter((f) => !FLAG_FIELD[f.code]),
+  );
+
+  // ---- Manual box drawing -------------------------------------------------
+  // "Mark on image": pick a field, drag a rectangle on the receipt, and that
+  // becomes the field's box — highlighted, re-baked into the annotated copy,
+  // and protected from automatic relocation (Field.manualBox).
+  type DrawField = "vendor" | "date" | "amount";
+  let drawField = $state<DrawField | null>(null);
+  let dragStart: { x: number; y: number } | null = null;
+  let dragRect = $state<BBox | null>(null);
+
+  /** Pointer position normalized to the receipt image's frame. */
+  function normPoint(e: PointerEvent): { x: number; y: number } | null {
+    const img = imgEl;
+    if (!img) return null;
+    const rect = img.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)),
+    };
+  }
+
+  function drawDown(e: PointerEvent): void {
+    if (!drawField) return;
+    const p = normPoint(e);
+    if (!p) return;
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragStart = p;
+    dragRect = { x: p.x, y: p.y, w: 0, h: 0 };
+  }
+
+  function drawMove(e: PointerEvent): void {
+    if (!drawField || !dragStart) return;
+    const p = normPoint(e);
+    if (!p) return;
+    dragRect = {
+      x: Math.min(dragStart.x, p.x),
+      y: Math.min(dragStart.y, p.y),
+      w: Math.abs(p.x - dragStart.x),
+      h: Math.abs(p.y - dragStart.y),
+    };
+  }
+
+  async function drawUp(): Promise<void> {
+    const field = drawField;
+    // Snapshot: dragRect is a $state proxy, and a proxy inside the patch
+    // makes IndexedDB's structuredClone throw — the box then silently never
+    // persisted (the original "marks don't stick" bug).
+    const box = dragRect ? ($state.snapshot(dragRect) as BBox) : null;
+    dragStart = null;
+    dragRect = null;
+    drawField = null;
+    // A sub-1% smear is a slip, not a box.
+    if (!field || !box || !current || box.w < 0.01 || box.h < 0.005) return;
+    // The box also ANSWERS: read the stored OCR geometry inside it and
+    // autofill the field, so drawing on the right line fixes the value too.
+    const lines = ($state.snapshot(current.ocrLines ?? []) as OcrLine[]) ?? [];
+    const read = readValueInBox(lines, field, box);
+    if (read !== null && read !== "") {
+      if (field === "vendor") vendor = String(read);
+      else if (field === "date") date = String(read);
+      else amount = String(read);
+    }
+    // Build the patch AFTER the autofill so the new value rides along.
+    const patch = patchFromForm(current);
+    const f = patch[field] as Field<string | number>;
+    f.bbox = box;
+    f.manualBox = true;
+    await applyPatch(current, patch);
+  }
+
+  function cancelDraw(): void {
+    dragStart = null;
+    dragRect = null;
+    drawField = null;
+  }
+
   const markers = $derived.by(() => {
     const r = current;
     if (!r) return [];
@@ -358,9 +468,7 @@
       <header class="m-head">
         <strong>Review receipt</strong>
         <span class="muted">{index + 1} of {list.length}</span>
-        {#if current.reviewRequired && !current.approved}
-          <span class="chip chip-warn">needs review</span>
-        {:else if current.approved}
+        {#if current.approved}
           <span class="chip chip-ok">approved</span>
         {/if}
         <span class="spacer"></span>
@@ -370,7 +478,17 @@
       <div class="m-body">
         <div class="m-image">
           {#if imageUrl}
-            <div class="imgwrap">
+            <!-- svelte-ignore a11y_no_static_element_interactions -- the
+                 pointer handlers only serve the draw-a-box mode; keyboard
+                 users reach the same result via the field inputs. -->
+            <div
+              class="imgwrap"
+              class:drawing={!!drawField}
+              onpointerdown={drawDown}
+              onpointermove={drawMove}
+              onpointerup={() => void drawUp()}
+              onpointercancel={cancelDraw}
+            >
               <img
                 bind:this={imgEl}
                 src={imageUrl}
@@ -387,6 +505,18 @@
                       <span>{m.label}</span>
                     </div>
                   {/each}
+                  {#if dragRect}
+                    <div
+                      class="marker draw-rect m-{drawField}"
+                      style="left:{dragRect.x * 100}%;top:{dragRect.y * 100}%;width:{dragRect.w * 100}%;height:{dragRect.h * 100}%"
+                    ></div>
+                  {/if}
+                </div>
+              {/if}
+              {#if drawField}
+                <div class="draw-hint">
+                  Drag a box around the {drawField === "amount" ? "total" : drawField}
+                  · Esc cancels
                 </div>
               {/if}
             </div>
@@ -396,9 +526,28 @@
         </div>
 
         <div class="m-form">
+          {#snippet fieldFlags(field: "vendor" | "date" | "amount" | "category")}
+            {#each flagsFor(field) as f (f.code + f.message)}
+              <div class="flag inline {f.severity}">
+                <span>{f.severity === "error" ? "⛔" : f.severity === "warn" ? "⚠️" : "ℹ️"}</span>
+                <span>{f.message}</span>
+              </div>
+            {/each}
+          {/snippet}
+
           <div class="frow f-vendor">
-            <label for="rv-vendor">Vendor</label>
+            <div class="lrow">
+              <label for="rv-vendor">Vendor</label>
+              <button
+                type="button"
+                class="draw-btn db-vendor"
+                class:active={drawField === "vendor"}
+                onclick={() => (drawField = drawField === "vendor" ? null : "vendor")}
+                title="Draw a box on the receipt around the vendor name"
+              >▣ mark on image</button>
+            </div>
             <input id="rv-vendor" type="text" bind:value={vendor} onchange={save} />
+            {@render fieldFlags("vendor")}
             {#if imgLoaded && current.vendor.bbox}
               {#key current.id}
                 <canvas class="callout" use:callout={current.vendor.bbox}></canvas>
@@ -407,8 +556,18 @@
           </div>
 
           <div class="frow f-date">
-            <label for="rv-date">Date</label>
+            <div class="lrow">
+              <label for="rv-date">Date</label>
+              <button
+                type="button"
+                class="draw-btn db-date"
+                class:active={drawField === "date"}
+                onclick={() => (drawField = drawField === "date" ? null : "date")}
+                title="Draw a box on the receipt around the date"
+              >▣ mark on image</button>
+            </div>
             <input id="rv-date" type="date" bind:value={date} onchange={save} />
+            {@render fieldFlags("date")}
             {#if imgLoaded && current.date.bbox}
               {#key current.id}
                 <canvas class="callout" use:callout={current.date.bbox}></canvas>
@@ -417,22 +576,25 @@
           </div>
 
           <div class="frow f-amount">
-            <label for="rv-amount">Amount</label>
-            <div class="amount-grid">
-              <input
-                id="rv-amount"
-                type="number"
-                step="0.01"
-                min="0"
-                bind:value={amount}
-                onchange={save}
-              />
-              <select aria-label="Currency" bind:value={currency} onchange={save}>
-                {#each [...new Set([current.currency, ...CURRENCIES])] as c (c)}
-                  <option value={c}>{c}</option>
-                {/each}
-              </select>
+            <div class="lrow">
+              <label for="rv-amount">Amount</label>
+              <button
+                type="button"
+                class="draw-btn db-amount"
+                class:active={drawField === "amount"}
+                onclick={() => (drawField = drawField === "amount" ? null : "amount")}
+                title="Draw a box on the receipt around the grand total"
+              >▣ mark on image</button>
             </div>
+            <input
+              id="rv-amount"
+              type="number"
+              step="0.01"
+              min="0"
+              bind:value={amount}
+              onchange={save}
+            />
+            {@render fieldFlags("amount")}
             {#if imgLoaded && current.amount.bbox}
               {#key current.id}
                 <canvas class="callout" use:callout={current.amount.bbox}></canvas>
@@ -447,11 +609,12 @@
                 <option value={c}>{c}</option>
               {/each}
             </select>
+            {@render fieldFlags("category")}
           </div>
 
-          {#if current.flags.length}
+          {#if generalFlags.length}
             <div class="flags">
-              {#each current.flags as f (f.code + f.message)}
+              {#each generalFlags as f (f.code + f.message)}
                 <div class="flag {f.severity}">
                   <span>{f.severity === "error" ? "⛔" : f.severity === "warn" ? "⚠️" : "ℹ️"}</span>
                   <span>{f.message}</span>
@@ -498,7 +661,7 @@
   }
   .modal {
     width: min(1040px, 100%);
-    max-height: min(92dvh, 100%);
+    max-height: min(94dvh, 100%);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -575,12 +738,14 @@
     background: var(--cat-3);
     color: var(--cat-3-ink);
   }
+  /* Date reads purple, not red: red stayed too close to the orange "review"
+     accents, and errors keep red to themselves. */
   .m-date {
-    border-color: var(--err);
+    border-color: var(--cat-4);
   }
   .m-date span {
-    background: var(--err);
-    color: var(--err-ink);
+    background: var(--cat-4);
+    color: var(--cat-4-ink);
   }
   .m-amount {
     border-color: var(--ok);
@@ -604,15 +769,71 @@
     border-left: 3px solid var(--cat-3);
   }
   .f-date input {
-    border-left: 3px solid var(--err);
+    border-left: 3px solid var(--cat-4);
   }
   .f-amount input {
     border-left: 3px solid var(--ok);
   }
-  .amount-grid {
-    display: grid;
-    grid-template-columns: 1fr 6.2rem;
-    gap: 0.5rem;
+  .lrow {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+  .lrow label {
+    margin-bottom: 0;
+  }
+  /* Prominent, color-coded to the field it marks, and big enough for a
+     thumb: drawing works over touch (pointer events + touch-action none). */
+  .draw-btn {
+    border: 1.5px solid var(--db-c, var(--ink-faint));
+    background: color-mix(in srgb, var(--db-c, var(--ink-faint)) 8%, transparent);
+    font: 650 0.74rem/1 var(--font-ui);
+    color: var(--db-c, var(--ink-faint));
+    cursor: pointer;
+    padding: 0.42rem 0.6rem;
+    border-radius: var(--radius-pill);
+    white-space: nowrap;
+  }
+  .draw-btn:hover {
+    background: color-mix(in srgb, var(--db-c, var(--ink-faint)) 16%, transparent);
+  }
+  .draw-btn.active {
+    background: var(--db-c);
+    color: var(--bg-raised);
+  }
+  .db-vendor {
+    --db-c: var(--cat-3);
+  }
+  .db-date {
+    --db-c: var(--cat-4);
+  }
+  .db-amount {
+    --db-c: var(--accent);
+  }
+  .imgwrap.drawing {
+    cursor: crosshair;
+    touch-action: none; /* the drag must not scroll the page */
+  }
+  .imgwrap.drawing img {
+    -webkit-user-drag: none;
+    user-select: none;
+  }
+  .draw-rect {
+    border-style: dashed;
+  }
+  .draw-hint {
+    position: absolute;
+    left: 50%;
+    bottom: 0.6rem;
+    translate: -50% 0;
+    font: 600 0.75rem/1 var(--font-ui);
+    color: var(--accent-ink);
+    background: color-mix(in srgb, var(--accent) 88%, transparent);
+    padding: 0.4rem 0.7rem;
+    border-radius: var(--radius-pill);
+    pointer-events: none;
+    white-space: nowrap;
   }
   .callout {
     margin-top: 0.15rem;
@@ -643,8 +864,43 @@
     background: var(--err-soft);
     color: var(--err);
   }
+  /* Field-adjacent flags: same vocabulary, tighter fit under an input. */
+  .flag.inline {
+    font-size: 0.82rem;
+    padding: 0.35rem 0.55rem;
+  }
   .provenance {
     font-size: 0.8rem;
     margin: 0;
+  }
+
+  /* Phone fit, any orientation: the dialog must never push its own header,
+     footer or close button off-screen. The body is the only scroll region;
+     the footer wraps instead of overflowing, and the keyboard hint (useless
+     on touch) gives way first. */
+  .m-foot {
+    flex-wrap: wrap;
+  }
+  @media (max-width: 640px), (max-height: 500px) {
+    .scrim {
+      padding: 0.5rem;
+    }
+    .m-head,
+    .m-foot {
+      padding: 0.6rem 0.8rem;
+      gap: 0.5rem;
+    }
+    .m-body {
+      padding: 0.8rem;
+      gap: 0.8rem;
+    }
+    .m-foot .kbd {
+      display: none;
+    }
+  }
+  @media (max-height: 500px) {
+    .modal {
+      max-height: 100%;
+    }
   }
 </style>

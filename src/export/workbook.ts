@@ -42,30 +42,16 @@ const NOTE_YELLOW = "FFFEF9C3"; // subtotal band
 const FOOT_GRAY = "FF8A93A6"; // footer text
 const WHITE = "FFFFFFFF";
 
-/** Pastel accent behind each receipt's header band on its image sheet. */
-const CATEGORY_TINTS: Partial<Record<Category, string>> = {
-  Fuel: "FFFFF3CC",
-  Materials: "FFD4FAE8",
-  "Office Supplies": "FFF0FDF4",
-  "Meals": "FFFFE4E6",
-  Travel: "FFE0F2FE",
-  Lodging: "FFEDE9FF",
-  "Ground Transportation": "FFDBEAFE",
-  "Software & Subscriptions": "FFF3E8FF",
-  "Utilities & Phone": "FFECFEFF",
-  "Shipping & Postage": "FFFEF3C7",
-  "Professional Services": "FFE2E8F0",
-  Other: "FFEDE9FF",
-};
+/** Fill behind each receipt's file-name band on its image sheet. NEUTRAL on
+ *  purpose: color is reserved for the coded fields (vendor blue, date purple,
+ *  amount green) and the category's own band at the top — a pastel here read
+ *  as a fourth code that meant nothing. */
+const RECEIPT_BAND_FILL = "FFF1F2F4";
 
-/** Accounting number format ("$  1,234.56", dash for zero) like the original. */
-function acctFormat(currency: string): string {
-  const sym: Record<string, string> = {
-    USD: "$", CAD: "$", AUD: "$", MXN: "$",
-    GBP: "£", EUR: "€", JPY: "¥", CNY: "¥", INR: "₹",
-  };
-  const s = sym[currency] ?? "$";
-  return `_("${s}"* #,##0.00_);_("${s}"* \\(#,##0.00\\);_("${s}"* "-"??_);_(@_)`;
+/** Accounting number format ("$  1,234.56", dash for zero) like the original.
+ *  USD-only: every sheet renders dollars. */
+function acctFormat(): string {
+  return `_("$"* #,##0.00_);_("$"* \\(#,##0.00\\);_("$"* "-"??_);_(@_)`;
 }
 
 export interface ExportResult {
@@ -93,7 +79,7 @@ interface ReceiptAnchor {
 // scheme as the on-image highlighter — vendor blue, date red, amount green.
 const FIELD_TINTS = {
   vendor: { fill: "FFDBEAFE", ink: "FF1D4ED8" },
-  date: { fill: "FFFEE2E2", ink: "FFB91C1C" },
+  date: { fill: "FFEDE9FE", ink: "FF6D28D9" }, // purple, matching the app's date color
   amount: { fill: "FFD8F0E3", ink: "FF116A43" },
 } as const;
 
@@ -236,7 +222,6 @@ export async function buildWorkbook(
   }
 
   const totalCost = rows.reduce((s, r) => s + (r.cost || 0), 0);
-  const currency = dominantCurrency(rows);
   // Always computed — the Summary's info band uses insights.period — but the
   // charts (the slow part) only render when the Insights sheet is wanted.
   const insights = computeInsights(rows);
@@ -277,12 +262,12 @@ export async function buildWorkbook(
   // Tab order: Summary first (it IS the per-category receipt table, linked),
   // the category image sheets next (Fuel, Materials, … Miscellaneous), and —
   // when opted in — Insights all the way to the right.
-  const refs = buildSummarySheet(wb, batch, perCategory, anchors, amountRefs, currency, insights);
+  const refs = buildSummarySheet(wb, batch, perCategory, anchors, amountRefs, insights);
   for (const g of perCategory) {
-    buildImageSheet(wb, g.cat, g.rows, imageByReceipt, batch, currency);
+    buildImageSheet(wb, g.cat, g.rows, imageByReceipt, batch);
   }
   if (withInsights) {
-    buildInsightsSheet(wb, batch, insights, currency, charts, refs);
+    buildInsightsSheet(wb, batch, insights, charts, refs);
   }
 
   const buffer = await wb.xlsx.writeBuffer();
@@ -442,7 +427,6 @@ function buildSummarySheet(
   perCategory: { cat: Category; rows: Receipt[] }[],
   anchors: Map<string, ReceiptAnchor>,
   amountRefs: Map<string, string>,
-  currency: string,
   insights: Insights,
 ): SummaryRefs {
   const ws = wb.addWorksheet("Summary", {
@@ -500,7 +484,7 @@ function buildSummarySheet(
 
   r++; // breathing room before the first section
 
-  const fmt = acctFormat(currency);
+  const fmt = acctFormat();
   const subtotalCells: string[] = [];
   const byCategory: SummaryRefs["byCategory"] = new Map();
 
@@ -550,14 +534,14 @@ function buildSummarySheet(
   const perDiem = perDiemAmount(batch.perDiem);
   if (perDiem > 0) {
     allowances.push({
-      label: `Per diem — ${perDiemLabel(batch.perDiem!, currency)}`,
+      label: `Per diem — ${perDiemLabel(batch.perDiem!)}`,
       amount: perDiem,
     });
   }
   const phone = phoneServiceAmount(batch.phoneService);
   if (phone > 0) {
     allowances.push({
-      label: `Phone service — ${phoneServiceLabel(batch.phoneService!, currency)}`,
+      label: `Phone service — ${phoneServiceLabel(batch.phoneService!)}`,
       amount: phone,
     });
   }
@@ -614,7 +598,6 @@ function buildImageSheet(
   rows: Receipt[],
   images: Map<string, EmbeddedImage>,
   batch: Batch,
-  currency: string,
 ): void {
   const ws = wb.addWorksheet(sheetName(cat), {
     properties: { tabColor: { argb: CATEGORY_META[cat].color } },
@@ -643,8 +626,8 @@ function buildImageSheet(
   tableHeaderRow(ws, 2, 10);
   ws.getRow(2).height = 28;
 
-  const tint = CATEGORY_TINTS[cat] ?? "FFEDE9FF";
-  const fmt = acctFormat(currency);
+  const tint = RECEIPT_BAND_FILL;
+  const fmt = acctFormat();
   const geom = geometryOf(ws);
   let r = 3;
   rows.forEach((rec, i) => {
@@ -714,7 +697,6 @@ function buildInsightsSheet(
   wb: ExcelJS.Workbook,
   batch: Batch,
   insights: Insights,
-  currency: string,
   charts: {
     category: ChartImage | null;
     daily: ChartImage | null;
@@ -754,7 +736,7 @@ function buildInsightsSheet(
   sub.alignment = { horizontal: "center", vertical: "middle" };
   for (let c = 1; c <= COLS; c++) fill(ws.getCell(2, c), INFO_BLUE);
 
-  const fmt = acctFormat(currency);
+  const fmt = acctFormat();
 
   // ── KPI tiles ──────────────────────────────────────────────────────────────
   bandRow(ws, 4, COLS, "  Key Figures", { bg: SECTION_BLUE });
@@ -936,17 +918,6 @@ function smallTable(
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-
-
-function dominantCurrency(rows: Receipt[]): string {
-  const counts = new Map<string, number>();
-  for (const r of rows)
-    counts.set(r.currency, (counts.get(r.currency) ?? 0) + 1);
-  let best = "USD";
-  let max = 0;
-  for (const [cur, n] of counts) if (n > max) ((max = n), (best = cur));
-  return best;
-}
 
 /** Report label for a category — "Other" reads "Miscellaneous", like the
  *  original app's fuel/materials/miscellaneous taxonomy. */

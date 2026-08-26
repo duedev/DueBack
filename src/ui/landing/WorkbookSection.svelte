@@ -1,6 +1,6 @@
 <section id="workbook" class="wrap workbook">
   <p class="section-label">The deliverable</p>
-  <h2>A workbook your office will actually accept.</h2>
+  <h2>A workbook your office will be excited for.</h2>
   <p class="lede">
     Not a data dump: a themed, multi-sheet Excel file with live formulas, the
     receipt images embedded beside their rows, and an insights dashboard.
@@ -9,7 +9,10 @@
   </p>
 
   <!-- Sheet-tab order mirrors the real workbook: Fuel and Materials lead,
-       Miscellaneous closes (util taxonomy; "Misc" is the tab shorthand). -->
+       Miscellaneous closes (util taxonomy; "Misc" is the tab shorthand).
+       Colors mirror the deliverable's actual scheme: vendor blue / date
+       purple / amount green on the VALUES, and the real sheet-tab colors on
+       the category dots — never the field colors reused for categories. -->
   <div class="card book" aria-hidden="true">
     <div class="tabs">
       <span class="tab active">Summary</span>
@@ -25,24 +28,24 @@
           <span>Vendor</span><span>Date</span><span>Category</span><span class="num">Amount</span><span class="notes">Notes</span>
         </div>
         <div class="trow">
-          <span>Maple St. Hardware</span><span>06/24</span>
-          <span class="cat"><i class="dot" style="background: var(--cat-3)"></i>Materials</span>
-          <span class="num">27.45</span><span class="notes"></span>
+          <span class="f-v">Maple St. Hardware</span><span class="f-d">06/24</span>
+          <span class="cat"><i class="dot" style="background: #d97706"></i>Materials</span>
+          <span class="num f-a">27.45</span><span class="notes"></span>
         </div>
         <div class="trow">
-          <span>Corner Bistro</span><span>06/24</span>
-          <span class="cat"><i class="dot" style="background: var(--cat-2)"></i>Meals</span>
-          <span class="num">18.20</span><span class="notes note">billable</span>
+          <span class="f-v">Corner Bistro</span><span class="f-d">06/24</span>
+          <span class="cat"><i class="dot" style="background: #f97316"></i>Meals</span>
+          <span class="num f-a">18.20</span><span class="notes note">billable</span>
         </div>
         <div class="trow">
-          <span>CityGas #214</span><span>06/25</span>
-          <span class="cat"><i class="dot" style="background: var(--cat-1)"></i>Fuel</span>
-          <span class="num">41.03</span><span class="notes"></span>
+          <span class="f-v">CityGas #214</span><span class="f-d">06/25</span>
+          <span class="cat"><i class="dot" style="background: #ef4444"></i>Fuel</span>
+          <span class="num f-a">41.03</span><span class="notes"></span>
         </div>
         <div class="trow">
-          <span>Parking meter</span><span>06/26</span>
-          <span class="cat"><i class="dot" style="background: var(--cat-4)"></i>Misc</span>
-          <span class="num">4.00</span><span class="notes"></span>
+          <span class="f-v">Parking meter</span><span class="f-d">06/26</span>
+          <span class="cat"><i class="dot" style="background: #94a3b8"></i>Misc</span>
+          <span class="num f-a">4.00</span><span class="notes"></span>
         </div>
         <div class="tfoot">
           <span>TOTAL</span><span class="sum">$90.68</span>
@@ -51,10 +54,10 @@
 
       <div class="rail">
         <div class="chart">
-          <div class="bar" style="height: 52%; background: var(--cat-1)"></div>
-          <div class="bar" style="height: 30%; background: var(--cat-2)"></div>
-          <div class="bar" style="height: 78%; background: var(--cat-3)"></div>
-          <div class="bar" style="height: 22%; background: var(--cat-4)"></div>
+          <div class="bar" style="height: 78%; background: #ef4444"></div>
+          <div class="bar" style="height: 52%; background: #d97706"></div>
+          <div class="bar" style="height: 30%; background: #f97316"></div>
+          <div class="bar" style="height: 22%; background: #94a3b8"></div>
         </div>
         <p class="rail-note">
           Insights sheet: spend by category and by week, largest vendors, and
@@ -63,7 +66,7 @@
         <div class="chips">
           <span class="chip">receipt images embedded</span>
           <span class="chip">custom notes per line (billable, needs-attention)</span>
-          <span class="chip">+ CSV</span>
+          <span class="chip">+ print packet PDF</span>
           <span class="chip">+ images ZIP</span>
         </div>
       </div>
@@ -75,7 +78,7 @@
     <p>
       The category sheets hold the stored amounts; the Summary references them
       with live formulas and the Insights tiles are COUNT/SUMIF over the
-      Summary — <strong>edit one cell in Excel and everything re-foots</strong>.
+      Summary: <strong>edit one cell in Excel and everything re-foots</strong>.
       There's no duplicated data to drift.
     </p>
     <p>
@@ -169,6 +172,19 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
+  }
+  /* The field values wear their semantic colors, like the real sheets. */
+  .f-v {
+    color: var(--cat-3);
+    font-weight: 600;
+  }
+  .f-d {
+    color: var(--cat-4);
+    font-weight: 600;
+  }
+  .f-a {
+    color: var(--ok);
+    font-weight: 600;
   }
   .note {
     color: var(--gold-text); /* --gold is only 4.0:1 in light — never small copy */

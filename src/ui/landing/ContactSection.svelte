@@ -4,12 +4,13 @@
 
   // Static site, no server: the form opens the visitor's own mail app via a
   // prefilled mailto: draft. mailto can't attach files, so the "attach my
-  // tuning bundle" checkbox downloads the ZIP first and the draft asks the
+  // tuning bundle" checkbox (ON by default — the bundle is what makes
+  // feedback actionable) downloads the ZIP first and the draft asks the
   // sender to attach it — honest, works everywhere, no third-party service.
   const CONTACT_EMAIL = "contact@duanehamilton.net";
   let cName = $state("");
   let cMsg = $state("");
-  let cAttach = $state(false);
+  let cAttach = $state(true);
   let cBusy = $state(false);
 
   async function sendMessage(e: SubmitEvent): Promise<void> {
@@ -26,8 +27,8 @@
         attachNote =
           `
 
-(P.S. Please attach the file "${bundle.fileName}" that just downloaded — ` +
-          `it holds my ${bundle.receiptCount} receipts' extraction data and ` +
+(P.S. Please attach the file "${bundle.fileName}" that just downloaded. ` +
+          `It holds my ${bundle.receiptCount} receipts' extraction data and ` +
           `${bundle.correctionCount} corrections for tuning.)`;
       }
     } catch {
@@ -64,18 +65,18 @@
     <label class="c-check">
       <input type="checkbox" bind:checked={cAttach} />
       <span>
-        Attach my tuning bundle — receipts' extraction data, corrections and
-        images, zipped for download so you can add it to the email.
+        Attach my tuning bundle: extraction data, corrections and images,
+        zipped so the developer can reproduce exactly what you saw.
       </span>
     </label>
     <div class="c-actions">
-      <button class="btn btn-primary" disabled={cBusy}>
-        {cBusy ? "Packaging…" : "Open email draft"}
+      <button
+        class="btn btn-primary"
+        disabled={cBusy}
+        title={`Opens your mail app addressed to ${CONTACT_EMAIL}.${cAttach ? " The tuning-bundle ZIP downloads first; attach it to the email before sending." : ""}`}
+      >
+        {cBusy ? "Packaging…" : "Send email"}
       </button>
-      <span class="muted small">
-        Opens your mail app addressed to {CONTACT_EMAIL}.
-        {#if cAttach}The bundle ZIP downloads first; attach it before sending.{/if}
-      </span>
     </div>
   </form>
 </section>
@@ -89,6 +90,7 @@
     gap: 1rem;
     max-width: 40rem;
     padding: 1.4rem;
+    margin-inline: auto; /* centered — hugging the left edge looked unfinished */
   }
   .c-field {
     display: grid;
@@ -128,6 +130,7 @@
   .c-actions {
     display: flex;
     align-items: center;
+    justify-content: flex-end; /* the send action reads from the right edge */
     gap: 0.8rem;
     flex-wrap: wrap;
   }

@@ -108,7 +108,7 @@ test("dark --gold-text meets AA everywhere the warn chips render", () => {
 test("marker ink partners exist in all three palettes", () => {
   // The identity test above only walks tokens present in the fallback block,
   // so presence in every block is asserted explicitly.
-  for (const t of ["--cat-3-ink", "--err-ink"]) {
+  for (const t of ["--cat-3-ink", "--cat-4-ink", "--err-ink"]) {
     assert.ok(root.has(t), `${t} in :root`);
     assert.ok(dark.has(t), `${t} in [data-theme=dark]`);
     assert.ok(darkAuto.has(t), `${t} in the prefers-color-scheme fallback`);
@@ -121,8 +121,12 @@ test("light marker inks meet AA on their fills (review VENDOR/DATE tags)", () =>
     "vendor tag",
   );
   assert.ok(
-    contrast(hex(root.get("--err-ink")!), hex(root.get("--err")!)) >= 4.5,
+    contrast(hex(root.get("--cat-4-ink")!), hex(root.get("--cat-4")!)) >= 4.5,
     "date tag",
+  );
+  assert.ok(
+    contrast(hex(root.get("--err-ink")!), hex(root.get("--err")!)) >= 4.5,
+    "error marker",
   );
 });
 
@@ -132,8 +136,12 @@ test("dark marker inks meet AA on their fills (review VENDOR/DATE tags)", () => 
     "vendor tag",
   );
   assert.ok(
-    contrast(hex(dark.get("--err-ink")!), hex(dark.get("--err")!)) >= 4.5,
+    contrast(hex(dark.get("--cat-4-ink")!), hex(dark.get("--cat-4")!)) >= 4.5,
     "date tag",
+  );
+  assert.ok(
+    contrast(hex(dark.get("--err-ink")!), hex(dark.get("--err")!)) >= 4.5,
+    "error marker",
   );
 });
 
@@ -171,4 +179,18 @@ test("the PWA manifest doesn't lock orientation (WCAG 1.3.4)", () => {
     /orientation:\s*"(?!any")/,
     "manifest orientation must be unset or \"any\"",
   );
+});
+
+// ── mobile horizontal-pan guard ──────────────────────────────────────────────
+
+test("html/body clip horizontal overflow, hidden fallback declared first", () => {
+  const m = themeCss.match(/html,\s*body\s*\{([^}]*)\}/);
+  assert.ok(m, "the html, body horizontal-overflow guard exists");
+  const decls = [...m![1]!.matchAll(/overflow-x:\s*([\w-]+)/g)].map((d) => d[1]);
+  // Order is load-bearing: `hidden` must come first so browsers without
+  // `clip` support fall back to it instead of to `visible` (pannable).
+  assert.deepEqual(decls, ["hidden", "clip"]);
+  // No overscroll-behavior-x — it would disable swipe back/forward history
+  // navigation, which the hash-routed landing relies on.
+  assert.doesNotMatch(themeCss, /overscroll-behavior-x/);
 });

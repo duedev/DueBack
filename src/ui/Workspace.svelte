@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from "./state.svelte.ts";
+  import BrandLogo from "./BrandLogo.svelte";
   import Dropzone from "./Dropzone.svelte";
   import Card from "./Card.svelte";
   import ThemeToggle from "./ThemeToggle.svelte";
@@ -20,7 +21,9 @@
   const storedSort = localStorage.getItem("board.sort");
   let sortKey = $state<SortKey>(
     // "status" was a sort option before the kanban lanes made it redundant.
-    storedSort && storedSort !== "status" ? (storedSort as SortKey) : "added",
+    // Default: category, then date — receipts group the way the workbook
+    // files them, so the board previews the report.
+    storedSort && storedSort !== "status" ? (storedSort as SortKey) : "category",
   );
   $effect(() => localStorage.setItem("board.view", view));
   $effect(() => localStorage.setItem("board.sort", sortKey));
@@ -34,7 +37,10 @@
       case "vendor":
         return (a.vendor.value || "\uffff").localeCompare(b.vendor.value || "\uffff");
       case "category":
-        return a.category.value.localeCompare(b.category.value);
+        return (
+          a.category.value.localeCompare(b.category.value) ||
+          (a.date.value || "￿").localeCompare(b.date.value || "￿")
+        );
       default:
         return b.createdAt - a.createdAt; // newest first
     }
@@ -55,6 +61,38 @@
     ),
   );
 
+  // ---- Grid view: receipts grouped by category, each group toggleable ----
+  let hiddenCats = $state<Set<string>>(
+    new Set(
+      (() => {
+        try {
+          const raw = localStorage.getItem("board.hiddenCats");
+          return raw ? (JSON.parse(raw) as string[]) : [];
+        } catch {
+          return [];
+        }
+      })(),
+    ),
+  );
+  $effect(() =>
+    localStorage.setItem("board.hiddenCats", JSON.stringify([...hiddenCats])),
+  );
+  function toggleCat(c: string): void {
+    const next = new Set(hiddenCats);
+    if (next.has(c)) next.delete(c);
+    else next.add(c);
+    hiddenCats = next;
+  }
+  const catGroups = $derived.by(() => {
+    const m = new Map<string, Receipt[]>();
+    for (const r of sorted) {
+      const c = r.category.value;
+      if (!m.has(c)) m.set(c, []);
+      m.get(c)!.push(r);
+    }
+    return [...m.entries()].map(([cat, items]) => ({ cat, items }));
+  });
+
   let cameraInput = $state<HTMLInputElement | null>(null);
 
   function onCameraPicked(e: Event): void {
@@ -74,8 +112,7 @@
         title="Back to the home page"
         aria-label="Back to the home page"
       >
-        <span class="brand-mark">DB</span>
-        <span class="brand-name">DueBack</span>
+        <BrandLogo size={28} />
       </button>
       {#if total > 0}
         <div class="progress" aria-label="Processing progress">
@@ -93,12 +130,13 @@
           <button
             class="btn btn-ghost clear-all"
             onclick={() => app.clearAll()}
+            aria-label="Delete all receipts"
             title="Delete all receipts"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
             </svg>
-            Delete all
+            <span class="ca-label">Delete all</span>
           </button>
         {/if}
         <button
@@ -132,27 +170,54 @@
       <ExportBar />
       <div class="board-bar">
         <div class="seg" role="group" aria-label="Board view">
-          <button class="seg-btn" class:active={view === "grid"} aria-pressed={view === "grid"} onclick={() => (view = "grid")}>Grid</button>
-          <button class="seg-btn" class:active={view === "kanban"} aria-pressed={view === "kanban"} onclick={() => (view = "kanban")}>Kanban</button>
+          <button class="seg-btn" class:active={view === "grid"} aria-pressed={view === "grid"} title="One flat grid of every receipt" onclick={() => (view = "grid")}>Grid</button>
+          <button class="seg-btn" class:active={view === "kanban"} aria-pressed={view === "kanban"} title="Lanes by status: processing, needs review, done" onclick={() => (view = "kanban")}>Kanban</button>
         </div>
         <label class="sort">
           <span class="muted small">Sort</span>
-          <select bind:value={sortKey} aria-label="Sort receipts">
+          <select bind:value={sortKey} aria-label="Sort receipts" title="Order the receipts in every view">
             <option value="added">Newest added</option>
             <option value="date">Receipt date</option>
             <option value="amount">Amount (high first)</option>
             <option value="vendor">Vendor A–Z</option>
-            <option value="category">Category</option>
+            <option value="category">Category, then date</option>
           </select>
         </label>
       </div>
 
       {#if view === "grid"}
-        <div class="grid">
-          {#each sorted as r (r.id)}
-            <Card receipt={r} />
-          {/each}
-        </div>
+        {#if catGroups.length > 1}
+          <div class="cat-filter" role="group" aria-label="Categories shown">
+            {#each catGroups as g (g.cat)}
+              <button
+                class="chip cat-chip"
+                class:off={hiddenCats.has(g.cat)}
+                aria-pressed={!hiddenCats.has(g.cat)}
+                title={hiddenCats.has(g.cat) ? "Show this category" : "Hide this category"}
+                onclick={() => toggleCat(g.cat)}
+              >
+                {g.cat} <span class="cat-n">{g.items.length}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+        {#each catGroups as g (g.cat)}
+          {#if !hiddenCats.has(g.cat)}
+            <section class="cat-group">
+              {#if catGroups.length > 1}
+                <header class="cat-head">
+                  <span>{g.cat}</span>
+                  <span class="lane-count">{g.items.length}</span>
+                </header>
+              {/if}
+              <div class="grid">
+                {#each g.items as r (r.id)}
+                  <Card receipt={r} />
+                {/each}
+              </div>
+            </section>
+          {/if}
+        {/each}
       {:else}
         <div class="kanban">
           {#each lanes as lane (lane.key)}
@@ -190,7 +255,7 @@
   aria-hidden="true"
   tabindex="-1"
 />
-<button class="camera-fab" onclick={() => cameraInput?.click()} aria-label="Snap a receipt">
+<button class="camera-fab" onclick={() => cameraInput?.click()} aria-label="Snap a receipt" title="Open the camera and snap a receipt">
   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d="M14.5 4h-5L7.9 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.9L14.5 4Z" />
     <circle cx="12" cy="13" r="3.6" />
@@ -232,7 +297,7 @@
     color: inherit;
     font: inherit;
   }
-  .brand:hover .brand-name {
+  .brand:hover :global(.bl-name) {
     color: var(--accent);
   }
   .clear-all {
@@ -240,16 +305,6 @@
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-  }
-  .brand-mark {
-    font: 600 0.85rem/1 var(--font-display);
-    color: var(--accent-ink);
-    background: var(--accent);
-    border-radius: 8px;
-    padding: 0.35rem 0.45rem;
-  }
-  .brand-name {
-    font: 650 0.95rem/1 var(--font-ui);
   }
   .progress {
     display: flex;
@@ -261,6 +316,26 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
+  }
+  /* Phone widths: the header must fit the viewport — with the root
+     overflow-x clip an overflowing row wouldn't pan, it would put Settings
+     and the theme toggle permanently off-screen. The wordmark and the
+     Delete-all label give way (aria-labels keep the names) and anything
+     still too wide wraps to a second row instead of widening the page. */
+  @media (max-width: 560px) {
+    .ws-head-in {
+      flex-wrap: wrap;
+      gap: 0.35rem 0.6rem;
+    }
+    .brand :global(.bl-name) {
+      display: none;
+    }
+    .clear-all .ca-label {
+      display: none;
+    }
+    .progress {
+      font-size: 0.82rem;
+    }
   }
 
   .ws-main {
@@ -371,6 +446,42 @@
     padding: 0.6rem;
     min-height: 8rem;
   }
+  /* Grid view: category groups + show/hide chips. */
+  .cat-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: -0.4rem 0 0.2rem;
+  }
+  .cat-chip {
+    cursor: pointer;
+  }
+  .cat-chip:hover {
+    border-color: var(--accent-line);
+  }
+  .cat-chip.off {
+    opacity: 0.5;
+    text-decoration: line-through;
+  }
+  .cat-n {
+    font-weight: 500;
+    color: var(--ink-faint);
+  }
+  .cat-group {
+    display: grid;
+    gap: 0.6rem;
+  }
+  .cat-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font: 700 0.8rem/1 var(--font-ui);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    padding: 0.25rem 0.3rem 0;
+  }
+
   .lane-head {
     display: flex;
     align-items: center;

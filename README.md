@@ -52,7 +52,7 @@ feeds the grand TOTAL.
 | Read | **Tesseract.js** on-device (default, $0, offline), or the opt-in **PaddleOCR PP-OCRv5** tier on onnxruntime-web for tough photos |
 | Name the merchant | curated **~300-brand vendor DB** with word-boundary matching, **glyph-normalized** OCR-confusion folding (`7-ELEUEN` → 7-Eleven), printed-slogan aliases ("How doers get more done." → The Home Depot), and a bounded fuzzy backstop |
 | **See the logo** | when the name is a logo the OCR can't spell: CLIP image embeddings (transformers.js, on-device) vs. a brand-logo index. **Teach it any brand with one image**, no retraining |
-| Extract | grand-total selection reconciled against the receipt's own arithmetic (subtotal + tax footing, pump math on fuel receipts), US-first dates, tax, currency, category |
+| Extract | grand-total selection reconciled against the receipt's own arithmetic (subtotal + tax footing, pump math on fuel receipts), US-first dates, tax, category — amounts are always US dollars |
 | Trust | per-field confidence + provenance boxes, flags, semantic + image-hash duplicate detection; anything the rules can't verify is queued for manual review instead of shipping wrong |
 | Assist (opt-in) | low-confidence receipts can get a vision-LLM second opinion. Bring your own key, or sign in and use the server-keyed proxy |
 

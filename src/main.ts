@@ -1,5 +1,8 @@
 import "@fontsource-variable/inter";
-import "@fontsource-variable/fraunces";
+// Lora: warm bookish serif for headings. Replaced Fraunces, whose display
+// letterforms (the flamboyant lowercase f in particular) kept reading as a
+// rendering glitch in product feedback.
+import "@fontsource-variable/lora";
 import "./ui/theme.css";
 import { mount } from "svelte";
 import App from "./ui/App.svelte";

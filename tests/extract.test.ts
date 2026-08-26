@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseReceipt, locateValue } from "../src/pipeline/extract.ts";
+import { parseReceipt, locateValue, readValueInBox } from "../src/pipeline/extract.ts";
 import type { OcrResult, OcrLine } from "../src/types.ts";
 
 // Build a synthetic OCR result from text lines (words left empty; the extractor
@@ -69,7 +69,7 @@ test("European date and amount", () => {
   const r = parseReceipt(
     ocr(["Café Berlin", "Datum 14.03.2026", "Summe  19,90 EUR"]),
   );
-  assert.equal(r.currency, "EUR");
+  assert.equal(r.currency, "USD"); // USD-only app — currency is never detected
   assert.equal(r.amount.value, 19.9);
   assert.equal(r.date.value, "2026-03-14");
 });
@@ -878,3 +878,16 @@ function lines2(texts: string[]): OcrLine[] {
     words: [],
   }));
 }
+
+test("readValueInBox reads the OCR lines under a hand-drawn box", () => {
+  const lines = [
+    { text: "JOES DINER", confidence: 0.9, bbox: { x: 0.2, y: 0.05, w: 0.6, h: 0.04 }, words: [] },
+    { text: "Date: 05/10/2026", confidence: 0.9, bbox: { x: 0.1, y: 0.4, w: 0.5, h: 0.03 }, words: [] },
+    { text: "TOTAL   $24.11", confidence: 0.9, bbox: { x: 0.1, y: 0.6, w: 0.8, h: 0.03 }, words: [] },
+  ];
+  assert.equal(readValueInBox(lines, "vendor", { x: 0.1, y: 0.02, w: 0.8, h: 0.1 }), "JOES DINER");
+  assert.equal(readValueInBox(lines, "date", { x: 0, y: 0.36, w: 1, h: 0.1 }), "2026-05-10");
+  assert.equal(readValueInBox(lines, "amount", { x: 0, y: 0.56, w: 1, h: 0.1 }), 24.11);
+  // A box over empty space autofills nothing (the box itself still stands).
+  assert.equal(readValueInBox(lines, "amount", { x: 0, y: 0.85, w: 1, h: 0.1 }), null);
+});

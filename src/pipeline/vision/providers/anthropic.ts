@@ -28,7 +28,7 @@ const PRICES: Record<string, { in: number; out: number }> = {
 export function createAnthropicProvider(init: ProviderInit): VisionProvider {
   return {
     id: "anthropic",
-    async extract(image, ctx) {
+    async extract(image) {
       const { base64, mediaType } = await blobToBase64(image);
       const url = `${init.baseUrl || "https://api.anthropic.com"}/v1/messages`;
       const res = await fetch(url, {
@@ -47,7 +47,7 @@ export function createAnthropicProvider(init: ProviderInit): VisionProvider {
             {
               role: "user",
               content: [
-                { type: "text", text: userInstruction(ctx.currencyDefault) },
+                { type: "text", text: userInstruction() },
                 { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
               ],
             },

@@ -1,5 +1,5 @@
 import type { Extraction } from "../extract.ts";
-import type { VisionProvider, VisionContext } from "./types.ts";
+import type { VisionProvider } from "./types.ts";
 import {
   getVisionConfig,
   withinBudget,
@@ -54,7 +54,6 @@ export interface VisionAssist {
 export async function runVisionAssist(
   image: Blob,
   ex: Extraction,
-  ctx: VisionContext,
 ): Promise<VisionAssist | null> {
   let cfg = getVisionConfig();
   if (!shouldAssist(ex)) return null;
@@ -74,10 +73,10 @@ export async function runVisionAssist(
     return null;
   }
   try {
-    const result = await getVisionProvider(cfg).extract(image, ctx);
+    const result = await getVisionProvider(cfg).extract(image);
     recordSpend(result.costUsd);
     return {
-      extraction: visionToExtraction(result.fields, ctx.currencyDefault),
+      extraction: visionToExtraction(result.fields),
       costUsd: result.costUsd,
       provider: cfg.provider,
       model: result.model,
@@ -97,7 +96,7 @@ export async function testVisionConnection(
   if (!effectiveApiKey(cfg)) return { ok: false, message: "Add an API key first." };
   try {
     const blob = await tinyTestImage();
-    await getVisionProvider(cfg).extract(blob, { currencyDefault: "USD" });
+    await getVisionProvider(cfg).extract(blob);
     return { ok: true, message: `${cfg.provider} responded — key looks good.` };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) };

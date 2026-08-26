@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from "./state.svelte.ts";
   import ThemeToggle from "./ThemeToggle.svelte";
+  import BrandLogo from "./BrandLogo.svelte";
   import Hero from "./landing/Hero.svelte";
   import HowSection from "./landing/HowSection.svelte";
   import LogoSection from "./landing/LogoSection.svelte";
@@ -11,6 +12,30 @@
   import "./landing/landing.css";
 
   let fileInput = $state<HTMLInputElement | null>(null);
+
+  /** Svelte action: track the pointer inside a CTA card so its ::after aura
+      (a soft accent glow) follows the mouse. Hover-only by CSS. */
+  function aura(node: HTMLElement): { destroy(): void } {
+    const move = (e: PointerEvent): void => {
+      const r = node.getBoundingClientRect();
+      node.style.setProperty("--aura-x", `${e.clientX - r.left}px`);
+      node.style.setProperty("--aura-y", `${e.clientY - r.top}px`);
+    };
+    node.addEventListener("pointermove", move);
+    return {
+      destroy() {
+        node.removeEventListener("pointermove", move);
+      },
+    };
+  }
+
+  /** Nerd mode earns an entrance: a brief green binary-bits rain when it
+      turns ON (never on the way out; reduced-motion no-op inside). */
+  function nerdToggle(): void {
+    const turningOn = !prefs.nerd;
+    prefs.toggleNerd();
+    if (turningOn) void import("./landing/binaryBits.ts").then((m) => m.binaryBurst());
+  }
 
   function pick(): void {
     fileInput?.click();
@@ -81,11 +106,14 @@
      The landing is a single scrolling document: the nav links are plain
      anchors, and every hash the five-page era (or older) ever handed out
      still lands on the section that hosts that content today. A hash that
-     points at a FAQ <details> pops it open before scrolling; the sticky
-     nav's height is cleared by scroll-margin-top (landing.css). */
+     points at a FAQ <details> pops it open before scrolling; a hash whose
+     target is Nerd-mode-only falls back to its visible host when the toggle
+     is off. The sticky nav's height is cleared by scroll-margin-top
+     (landing.css). #process is NOT ours: it deep-links into the workspace
+     (App.svelte stamps it while the workspace shows). */
   const NAV = [
     { id: "how", label: "How it works" },
-    { id: "workbook", label: "Workbook" },
+    { id: "workbook", label: "Excel workbook" },
     { id: "faq", label: "FAQ" },
     { id: "contact", label: "Contact" },
   ];
@@ -101,18 +129,33 @@
     account: "account",
     faq: "faq",
     help: "faq",
+    roadmap: "roadmap",
     contact: "contact",
+  };
+  /** Nerd-gated targets: where the link lands with the toggle off. */
+  const VISIBLE_FALLBACK: Record<string, string> = {
+    account: "privacy",
+    roadmap: "faq",
   };
 
   function applyHash(initial = false): void {
     const raw = location.hash.replace(/^#\/?/, "");
     if (!raw) return; // no target — stay put
+    // #process belongs to the workspace: entering unmounts this component.
+    if (raw === "process") {
+      app.enter();
+      return;
+    }
     const id = ANCHOR_FOR_HASH[raw] ?? raw;
     if (!id) {
       window.scrollTo(0, 0); // #home
       return;
     }
-    const el = document.getElementById(id);
+    let el = document.getElementById(id);
+    if (!el || el.getClientRects().length === 0) {
+      const fallback = VISIBLE_FALLBACK[id];
+      el = fallback ? document.getElementById(fallback) : null;
+    }
     if (!el) {
       if (!initial) window.scrollTo(0, 0);
       return;
@@ -149,38 +192,46 @@
     return () => spy.disconnect();
   });
 
-  /* The Your-data page lives on as FAQ answers; #privacy and #account keep
-     resolving to the two entries that carry its substance. */
-  const faqs: { q: string; a: string; id?: string }[] = [
+  /* The Your-data page lives on inside this list: #privacy resolves to the
+     receipts-go entry, #account to the boosters entry. Entries marked `nerd`
+     describe in-progress/future work and only render with Nerd mode on — a
+     visitor with the toggle off sees only what exists today. */
+  const faqs: { q: string; a: string; id?: string; nerd?: boolean }[] = [
     {
       q: "Is it really free?",
-      a: "Yes. Receipts are read on your device with open-source OCR, so there is no per-receipt charge, no trial, no account. Optional boosters (an AI second opinion, cloud sync) are off by default.",
+      a: "Yes. Receipts are read on your device with open-source OCR, so there is no per-receipt charge, no trial and no account.",
     },
     {
       id: "privacy",
       q: "Where do my receipts go?",
-      a: "Nowhere, by default. Images are stored in your browser and processed on your device — the reading, the logo matching and the Excel build all run on your hardware. The hosted site counts visits anonymously (no cookies); your receipts and their contents are never part of that. If you sign in, your data syncs to your own private cloud workspace; if you enable the AI booster, low-confidence receipts go to the model you choose. Both are opt-in, clearly labeled, and off by default.",
-    },
-    {
-      id: "account",
-      q: "What does signing in add?",
-      a: "A private workspace that follows you — nothing more. Reading still happens in your browser, but your batches, receipts and taught brands sync to your own cloud workspace, protected by row-level security, so you can pick up on any device. Signing in is one tap with Google or an email magic link (no new password), and it's entirely optional: skip it and everything simply stays on this device.",
+      a: "Nowhere. Images are stored in your browser and processed on your device — the reading, the logo matching and the Excel build all run on your hardware. Close the tab and they're still there; clear your browser data and they're gone. Nothing is uploaded.",
     },
     {
       q: "What do I hand to my office?",
-      a: "A polished multi-sheet Excel workbook: a summary that foots with real formulas, per-category sheets with the receipt images embedded, an insights sheet, plus a CSV if your system prefers imports.",
+      a: "A polished multi-sheet Excel workbook: a summary that foots with real formulas, per-category sheets with the receipt images embedded and an insights dashboard. A print packet PDF of the receipts downloads alongside for offices that keep paper copies.",
     },
     {
       q: "What kinds of files work?",
-      a: "JPEG, PNG and WebP photos plus PDFs (HEIC too on Safari). You can also drop in a ZIP — every receipt inside is unpacked, however deeply its folders nest, and a multi-page PDF becomes one receipt per page. Snap receipts with your phone camera or drop in files; crumpled, faded and tilted receipts are straightened and cleaned up before reading.",
+      a: "JPEG, PNG and WebP photos plus PDFs (HEIC too on Safari). You can also drop in a ZIP: every receipt inside is unpacked no matter how deeply its folders nest, and a multi-page PDF becomes one receipt per page. Crumpled, faded and tilted receipts are straightened and cleaned up before reading.",
     },
     {
       q: "How does logo recognition help?",
-      a: "Many receipts show the merchant only as a stylized logo the text reader can't spell. Teach the app a brand once with one clear photo of the logo in Settings, and from then on it recognizes that logo visually, names the brand, and files it in the right category.",
+      a: "Many receipts show the merchant only as a stylized logo the text reader can't spell. Teach the app a brand once with one clear photo of the logo in Settings. From then on it recognizes that logo visually, names the brand and files it in the right category.",
     },
     {
-      q: "Can it watch a Google Drive folder?",
-      a: "Not yet — it's planned. Today you can sign in to keep batches, receipts and taught brands in your own private cloud workspace and pick up on any device. The plan: link a Drive folder, snap receipts into it from your phone as you go, and download an up-to-date workbook whenever you need one.",
+      id: "account",
+      nerd: true,
+      q: "What about cloud sync and the AI assist?",
+      a: "They're rolling out now; the roadmap below tracks them. Signing in will sync your batches, receipts and taught brands to your own private workspace behind row-level security, so you can pick up on any device — and the AI assist will send low-confidence receipts to the model you configure. Both will always be opt-in and off by default.",
+    },
+    {
+      nerd: true,
+      q: "Can it watch a Google Drive or OneDrive folder?",
+      a: "Not yet. Both are on the roadmap: automatic Drive-folder scanning that keeps a workbook current, and saving reports straight to OneDrive. The full roadmap is right below this FAQ.",
+    },
+    {
+      q: "What is Nerd mode?",
+      a: "The { } toggle in the top bar. It reveals engineering margin notes across the page (how the pipeline, sync and workbook actually work) plus the project roadmap below the FAQ. Purely informational, and it changes nothing about how the app runs.",
     },
   ];
 </script>
@@ -204,7 +255,7 @@
           <path d="M12 16V4m0 0 4.5 4.5M12 4 7.5 8.5M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2" />
         </svg>
         <strong>Drop your receipts</strong>
-        <span>Photos, scans, PDFs or ZIP folders — read right on this device.</span>
+        <span>Photos, scans, PDFs or ZIP folders, read right on this device.</span>
       </div>
     </div>
   {/if}
@@ -212,9 +263,8 @@
   <!-- ======================= sticky anchor nav ======================= -->
   <div class="nav-bar">
     <nav class="wrap nav" aria-label="Site">
-      <a class="brand" href="#home">
-        <span class="brand-mark">DB</span>
-        <span class="brand-name">DueBack</span>
+      <a class="brand" href="#home" aria-label="DueBack home">
+        <BrandLogo size={30} />
       </a>
       <div class="nav-tabs">
         {#each NAV as l (l.id)}
@@ -229,15 +279,15 @@
       <div class="nav-actions">
         <button
           class="nerd-toggle"
+          aria-label="Nerd mode"
           aria-pressed={prefs.nerd}
-          onclick={() => prefs.toggleNerd()}
+          onclick={nerdToggle}
           title="Reveal the engineering margin notes"
         >
           <span class="nt-mark" aria-hidden="true">&#123;&nbsp;&#125;</span>
-          Nerd mode
+          <span class="nt-label">Nerd mode</span>
         </button>
         <ThemeToggle />
-        <button class="btn" onclick={() => app.enter()}>Open the app</button>
       </div>
     </nav>
   </div>
@@ -276,7 +326,7 @@
   <WorkbookSection />
 
   <section class="wrap last-cta">
-    <div class="card cta-card">
+    <div class="card cta-card" use:aura>
       <h2>Got a pile of receipts?</h2>
       <p>You're about a minute away from a finished report.</p>
       <button class="btn btn-primary btn-lg" onclick={pick}>Add receipts</button>
@@ -287,7 +337,7 @@
   <section id="faq" class="wrap faq">
     <p class="section-label">FAQ</p>
     <h2>Questions, answered.</h2>
-    {#each faqs as f (f.q)}
+    {#each faqs.filter((f) => !f.nerd || prefs.nerd) as f (f.q)}
       <details class="card qa" id={f.id}>
         <summary>{f.q}</summary>
         <p>{f.a}</p>
@@ -300,7 +350,7 @@
         Sign in and rows mirror to your own Supabase workspace behind
         row-level security (<strong>user_id = auth.uid()</strong>),
         reconciled last-write-wins on <strong>updatedAt</strong> in both
-        directions — a stale device can't clobber a newer edit, and deletes
+        directions: a stale device can't clobber a newer edit, and deletes
         propagate as tombstones so nothing you removed ever resurrects.
       </p>
       <p>
@@ -311,16 +361,70 @@
     </aside>
   </section>
 
+  <!-- Roadmap: nerd-mode only (the { } toggle), like the margin notes. -->
+  <section id="roadmap" class="wrap roadmap db-nerd-only" aria-label="Project roadmap">
+    <p class="section-label">Roadmap</p>
+    <h2>Where this is going.</h2>
+    <div class="road-cols">
+      <div class="card road">
+        <span class="chip chip-ok">Shipped</span>
+        <ul>
+          <li>On-device reading: OCR, cleanup passes and total reconciliation</li>
+          <li>Teach-a-brand visual logo recognition</li>
+          <li>Themed Excel workbook, insights dashboard, CSV and image archive</li>
+          <li>Installable app (PWA) that works offline</li>
+        </ul>
+      </div>
+      <div class="card road">
+        <span class="chip chip-warn">In progress</span>
+        <ul>
+          <li>Cloud sync: sign in and pick up your batches on any device</li>
+          <li>AI second opinion for low-confidence receipts, behind a policed proxy</li>
+          <li>Save the workbook straight to OneDrive</li>
+        </ul>
+      </div>
+      <div class="card road">
+        <span class="chip">Planned</span>
+        <ul>
+          <li>Google Drive folder watch: drop receipts in Drive, download a current workbook</li>
+          <li>Stronger on-device OCR engine as a one-click booster</li>
+          <li>Shared team workspaces</li>
+        </ul>
+      </div>
+    </div>
+    <p class="muted road-note">
+      Dates on purpose absent: one developer, real job. Want something
+      sooner? Say so below.
+    </p>
+  </section>
+
   <ContactSection />
 
-  <footer class="wrap foot">
-    <span>DueBack</span>
-    <span class="foot-sep">·</span>
-    <a href="https://github.com/duedev/DueBack" rel="noopener">GitHub</a>
-    <span class="foot-sep">·</span>
-    <span>MIT license</span>
-    <span class="foot-sep">·</span>
-    <span>Built by one person, with on-device AI.</span>
+  <footer class="foot">
+    <div class="wrap foot-in">
+      <div class="foot-brand">
+        <a class="foot-logo" href="#home" aria-label="DueBack home">
+          <BrandLogo size={32} />
+        </a>
+        <p>
+          Receipts in. Report out. Read on your device, filed into an Excel
+          workbook your office will love.
+        </p>
+      </div>
+      <nav class="foot-col" aria-label="Product sections">
+        <h4>Product</h4>
+        <a href="#how">How it works</a>
+        <a href="#workbook">The Excel workbook</a>
+        <a href="#privacy">Your data</a>
+        <a href="#faq">Help &amp; FAQ</a>
+      </nav>
+      <nav class="foot-col" aria-label="Project links">
+        <h4>Project</h4>
+        <a href="https://github.com/duedev/DueBack" rel="noopener">GitHub</a>
+        <a href="#contact">Contact</a>
+        {#if prefs.nerd}<a href="#roadmap">Roadmap</a>{/if}
+      </nav>
+    </div>
   </footer>
 </div>
 
@@ -399,20 +503,8 @@
   .brand {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
     text-decoration: none;
     color: inherit;
-  }
-  .brand-mark {
-    font: 600 1rem/1 var(--font-display);
-    color: var(--accent-ink);
-    background: var(--accent);
-    border-radius: 9px;
-    padding: 0.45rem 0.55rem;
-  }
-  .brand-name {
-    font: 650 1.02rem/1 var(--font-ui);
-    letter-spacing: -0.01em;
   }
   .nav-tabs {
     display: flex;
@@ -499,6 +591,21 @@
       padding: 0.45rem 0.6rem;
     }
   }
+  /* Phone widths: the first nav row (brand + actions) must fit the viewport —
+     an overflowing row used to widen the page and let touch swipes pan it
+     sideways. The wordmark and the Nerd-mode label give way; the DB mark and
+     the { } glyph (aria-label keeps the name) carry the identity. */
+  @media (max-width: 560px) {
+    .nav {
+      gap: 0.6rem;
+    }
+    .brand :global(.bl-name) {
+      display: none;
+    }
+    .nerd-toggle .nt-label {
+      display: none;
+    }
+  }
 
   /* ---- why ---- */
   .why {
@@ -561,7 +668,42 @@
     max-width: 52rem;
   }
 
+  /* ---- roadmap (nerd-mode only) ---- */
+  .roadmap {
+    padding-block: 1.8rem 0.4rem;
+  }
+  .road-cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 0.9rem;
+    align-items: stretch;
+  }
+  .road {
+    padding: 1.1rem 1.2rem;
+    display: grid;
+    gap: 0.7rem;
+    align-content: start;
+  }
+  .road .chip {
+    justify-self: start;
+  }
+  .road ul {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: grid;
+    gap: 0.45rem;
+    font-size: 0.92rem;
+    color: var(--ink-soft);
+  }
+  .road-note {
+    font-size: 0.85rem;
+    margin-top: 0.9rem;
+  }
+
   /* ---- closing CTA ---- */
+  .last-cta {
+    padding-bottom: 2rem;
+  }
   .cta-card {
     text-align: center;
     padding: 3rem 1.5rem;
@@ -577,17 +719,86 @@
     color: var(--ink-soft);
     margin-bottom: 1.4rem;
   }
-
-  .foot {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-    align-items: center;
-    padding: 1.6rem 0 2.2rem;
-    color: var(--ink-soft);
-    font-size: 0.88rem;
+  /* The soft accent aura that trails the pointer over the CTA card. */
+  .cta-card {
+    position: relative;
+    overflow: hidden;
   }
-  .foot-sep {
-    opacity: 0.5;
+  .cta-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    background: radial-gradient(
+      240px circle at var(--aura-x, 50%) var(--aura-y, 50%),
+      color-mix(in srgb, var(--accent) 16%, transparent),
+      transparent 72%
+    );
+  }
+  @media (hover: hover) {
+    .cta-card:hover::after {
+      opacity: 1;
+    }
+  }
+
+  /* ---- footer: brand + link columns ---- */
+  .foot {
+    border-top: 1px solid var(--line);
+    background: var(--bg-sunken);
+    margin-top: 2rem;
+  }
+  .foot-in {
+    display: grid;
+    grid-template-columns: minmax(240px, 1.4fr) repeat(2, minmax(140px, 1fr));
+    gap: 2rem;
+    padding: 2.4rem 0 2.6rem;
+  }
+  .foot-brand {
+    display: grid;
+    gap: 0.8rem;
+    align-content: start;
+    justify-items: start;
+  }
+  .foot-logo {
+    text-decoration: none;
+    color: inherit;
+  }
+  .foot-brand p {
+    margin: 0;
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+    max-width: 24rem;
+  }
+  .foot-col {
+    display: grid;
+    gap: 0.5rem;
+    align-content: start;
+    justify-items: start;
+  }
+  .foot-col h4 {
+    font: 700 0.75rem/1 var(--font-ui);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 0.3rem;
+  }
+  .foot-col a {
+    font-size: 0.92rem;
+    color: var(--ink-soft);
+    text-decoration: none;
+  }
+  .foot-col a:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+  @media (max-width: 700px) {
+    .foot-in {
+      grid-template-columns: 1fr 1fr;
+    }
+    .foot-brand {
+      grid-column: 1 / -1;
+    }
   }
 </style>

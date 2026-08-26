@@ -7,6 +7,7 @@ import {
   maskToRgba,
   borderColor,
   darkBorderInsets,
+  paperRegionBox,
 } from "../src/pipeline/binarize.ts";
 
 // Synthetic-image helpers ----------------------------------------------------
@@ -189,4 +190,87 @@ test("darkBorderInsets trims black scan strips but not sparse text rows", () => 
   const clean = new Float32Array(w * h).fill(240);
   const none = darkBorderInsets(clean, w, h);
   assert.deepEqual(none, { left: 0, top: 0, right: 0, bottom: 0 });
+});
+
+// paperRegionBox -------------------------------------------------------------
+
+/** Paint a solid rectangle in a specific RGB color. */
+function fillRect(
+  d: Uint8ClampedArray,
+  w: number,
+  x0: number,
+  y0: number,
+  rw: number,
+  rh: number,
+  [r, g, b]: [number, number, number],
+): void {
+  for (let y = y0; y < y0 + rh; y++) {
+    for (let x = x0; x < x0 + rw; x++) {
+      const i = (y * w + x) * 4;
+      d[i] = r;
+      d[i + 1] = g;
+      d[i + 2] = b;
+      d[i + 3] = 255;
+    }
+  }
+}
+
+test("paperRegionBox finds a bright slab on a dark background", () => {
+  const w = 120;
+  const h = 160;
+  const d = rgba(w, h, 40); // dark table
+  fillRect(d, w, 30, 20, 50, 120, [235, 233, 228]); // the receipt
+  const box = paperRegionBox(d, w, h);
+  assert.ok(box, "slab found");
+  assert.ok(Math.abs(box!.x - 30) <= 2 && Math.abs(box!.y - 20) <= 2);
+  assert.ok(Math.abs(box!.w - 50) <= 3 && Math.abs(box!.h - 120) <= 3);
+});
+
+test("paperRegionBox ignores a bright but saturated object (food, packaging)", () => {
+  const w = 160;
+  const h = 120;
+  const d = rgba(w, h, 45);
+  fillRect(d, w, 10, 10, 50, 100, [230, 228, 224]); // receipt
+  fillRect(d, w, 80, 10, 70, 100, [250, 210, 60]); // shredded-cheese yellow, larger
+  const box = paperRegionBox(d, w, h);
+  assert.ok(box, "slab found");
+  assert.ok(box!.x + box!.w <= 66, `saturated blob excluded (right edge ${box!.x + box!.w})`);
+});
+
+test("paperRegionBox picks the big slab over scattered bright speckles", () => {
+  const w = 160;
+  const h = 120;
+  const d = rgba(w, h, 50);
+  fillRect(d, w, 10, 10, 60, 100, [230, 230, 230]); // receipt
+  // grayscale-photo speckles (bright, desaturated, but fragmented)
+  for (let i = 0; i < 40; i++) {
+    const x = 100 + ((i * 7) % 50);
+    const y = 10 + ((i * 13) % 100);
+    fillRect(d, w, x, y, 2, 2, [220, 220, 220]);
+  }
+  const box = paperRegionBox(d, w, h);
+  assert.ok(box, "slab found");
+  assert.ok(box!.x + box!.w <= 76, "speckle field not merged into the slab");
+});
+
+test("paperRegionBox merges a fold-split slab", () => {
+  const w = 120;
+  const h = 160;
+  const d = rgba(w, h, 40);
+  fillRect(d, w, 30, 20, 50, 60, [235, 235, 235]); // top half
+  fillRect(d, w, 30, 84, 50, 60, [235, 235, 235]); // bottom half (4px shadow gap)
+  const box = paperRegionBox(d, w, h);
+  assert.ok(box, "slab found");
+  assert.ok(box!.h >= 120, `both halves kept (h ${box!.h})`);
+});
+
+test("paperRegionBox returns null for all-paper and all-dark frames", () => {
+  // A scan that is already all paper: nothing to win.
+  assert.equal(paperRegionBox(rgba(100, 100, 235), 100, 100), null);
+  // A dark frame with no slab at all.
+  assert.equal(paperRegionBox(rgba(100, 100, 30), 100, 100), null);
+  // A tiny bright dot is not a slab.
+  const d = rgba(100, 100, 30);
+  fillRect(d, 100, 48, 48, 5, 5, [240, 240, 240]);
+  assert.equal(paperRegionBox(d, 100, 100), null);
 });

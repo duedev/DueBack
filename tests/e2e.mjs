@@ -6,7 +6,7 @@ import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mkdtemp, access } from "node:fs/promises";
+import { mkdtemp, access, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { deflateRawSync, crc32 } from "node:zlib";
 import sharp from "sharp";
@@ -463,14 +463,49 @@ async function main() {
     // 7. Generate the spreadsheet and validate the downloaded workbook.
     await page.locator("#xb-emp").fill("Ada Lovelace");
     await page.locator("#xb-job").fill("Q1 Coffee Run");
-    // Insights is opt-in (default off) — tick it so the dashboard assertions
-    // below also gate the toggle itself.
-    await page.getByText("Insights sheet", { exact: true }).click();
+    // Insights is on by default — the dashboard assertions below gate that.
+    check(
+      await page.locator(".opt", { hasText: "Insights sheet" }).locator("input").isChecked(),
+      "Insights toggle defaults to on",
+    );
+
     const dlDir = await mkdtemp(join(tmpdir(), "reimb-"));
-    const [download] = await Promise.all([
-      page.waitForEvent("download", { timeout: 60000 }),
-      page.getByRole("button", { name: /Generate workbook/ }).click(),
-    ]);
+    // Job number was left blank on purpose: generating must first raise the
+    // blank-details prompt, and "Generate anyway" proceeds.
+    await page.getByRole("button", { name: /Generate workbook/ }).click();
+    const blankDialog = page.getByRole("dialog", { name: "Missing report details" });
+    await blankDialog.waitFor({ timeout: 5000 });
+    check(true, "blank job number raises the missing-details prompt");
+    // Generating yields TWO files: the workbook and (default-on) the print
+    // packet PDF. Collect both before validating either.
+    const downloads = [];
+    const onDownload = (d) => downloads.push(d);
+    page.on("download", onDownload);
+    await page.getByRole("button", { name: "Generate anyway" }).click();
+    for (let i = 0; i < 240 && downloads.length < 2; i++) {
+      await page.waitForTimeout(500);
+    }
+    page.off("download", onDownload);
+    const download = downloads.find((d) => d.suggestedFilename().endsWith(".xlsx"));
+    const packetDl = downloads.find((d) => d.suggestedFilename().endsWith(".pdf"));
+    check(!!download, "generate downloads the workbook");
+    check(
+      !!packetDl && /^Receipt_Packet_Ada_Lovelace_\d{8}\.pdf$/.test(packetDl.suggestedFilename()),
+      `print packet PDF downloads alongside (got ${packetDl?.suggestedFilename()})`,
+    );
+    if (packetDl) {
+      const pdfPath = join(dlDir, packetDl.suggestedFilename());
+      await packetDl.saveAs(pdfPath);
+      const pdfRaw = (await readFile(pdfPath)).toString("latin1");
+      check(
+        pdfRaw.startsWith("%PDF-1.4") && /\/Subtype \/Image/.test(pdfRaw),
+        "print packet is a real PDF with embedded receipt images",
+      );
+      check(
+        pdfRaw.includes("Receipt packet - Ada Lovelace"),
+        "print packet header carries the employee and job",
+      );
+    }
     const xlsxPath = join(dlDir, download.suggestedFilename());
     await download.saveAs(xlsxPath);
     log("downloaded", download.suggestedFilename());
@@ -530,18 +565,6 @@ async function main() {
       `every embedded image was measured — receipts and charts (got ${imagesChecked})`,
     );
 
-    // 7b. Images (.zip) packages every receipt image.
-    const [zipDl] = await Promise.all([
-      page.waitForEvent("download", { timeout: 60000 }),
-      page.getByRole("button", { name: /Images \(\.zip\)/ }).click(),
-    ]);
-    const zipPath = join(dlDir, zipDl.suggestedFilename());
-    await zipDl.saveAs(zipPath);
-    const zipBytes = await (await import("node:fs/promises")).readFile(zipPath);
-    check(
-      zipBytes[0] === 0x50 && zipBytes[1] === 0x4b && /^Receipts_.*\.zip$/.test(zipDl.suggestedFilename()),
-      `images zip downloads (${zipDl.suggestedFilename()}, ${zipBytes.length} bytes)`,
-    );
 
     // 7c. Multi-page PDF: every page becomes its own receipt — the scanner
     // workflow (processing only page 1 silently dropped the rest).
@@ -626,6 +649,37 @@ async function main() {
     await page.getByRole("button", { name: /Back to your receipts \(7\)/ }).click();
     await page.getByText("Drop receipts here").waitFor({ timeout: 10000 });
     check(true, "landing offers the way back to the workspace");
+
+    // 8b. Phone width: neither surface may overflow the viewport sideways —
+    // an overflowing row used to let touch swipes pan the whole page, and
+    // under the root overflow-x clip it would instead strand controls
+    // off-screen. Measured with the clip disabled so the check catches the
+    // underlying overflow, not the backstop masking it.
+    const contentWidth = () =>
+      page.evaluate(() => {
+        document.documentElement.style.setProperty("overflow-x", "visible", "important");
+        document.body.style.setProperty("overflow-x", "visible", "important");
+        const w = document.scrollingElement.scrollWidth;
+        document.documentElement.style.removeProperty("overflow-x");
+        document.body.style.removeProperty("overflow-x");
+        return w;
+      });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const wsW = await contentWidth();
+    check(wsW <= 390, `workspace fits a 390px phone with receipts on the board (scrollWidth ${wsW})`);
+    await page.getByRole("button", { name: "Settings" }).click();
+    const settingsDialog = page.getByRole("dialog", { name: "Settings" });
+    await settingsDialog.waitFor({ timeout: 5000 });
+    check(true, "Settings is reachable at phone width");
+    await page.keyboard.press("Escape");
+    await settingsDialog.waitFor({ state: "hidden", timeout: 5000 });
+    await page.locator("header.ws-head .brand").click();
+    await page.getByRole("heading", { name: /Receipts in/ }).waitFor({ timeout: 10000 });
+    const landW = await contentWidth();
+    check(landW <= 390, `landing fits a 390px phone (scrollWidth ${landW})`);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.getByRole("button", { name: /Back to your receipts \(7\)/ }).click();
+    await page.getByText("Drop receipts here").waitFor({ timeout: 10000 });
 
     // 9. Delete all receipts — immediate, no confirm dialog.
     await page.getByRole("button", { name: /Delete all/ }).click();

@@ -259,3 +259,153 @@ export function darkBorderInsets(
   while (right < maxH && colDark(w - 1 - right) >= frac) right++;
   return { left, top, right, bottom };
 }
+
+export interface PaperBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Find the receipt "paper" slab: the largest connected bright, desaturated
+ * region of the frame. The edge-energy content box keeps anything textured
+ * (a salad next to the receipt, a patterned tablecloth), so photos with a
+ * busy background barely cropped at all; the paper itself is what we want,
+ * and it is reliably the biggest bright low-saturation blob.
+ *
+ * Returns the slab's bounding box in the same pixel space as the input, or
+ * null when no plausible slab exists — a dark scene, or a frame that is
+ * already all paper (a scan) where cropping would win nothing. Guards are
+ * deliberately conservative: a null falls back to the edge-energy crop.
+ */
+export function paperRegionBox(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number,
+): PaperBox | null {
+  const n = w * h;
+  if (n === 0) return null;
+
+  // Luminance + saturation (max-min channel spread) per pixel.
+  const lum = new Float32Array(n);
+  const spread = new Float32Array(n);
+  for (let i = 0, p = 0; p < n; i += 4, p++) {
+    const r = data[i] ?? 0;
+    const g = data[i + 1] ?? 0;
+    const b = data[i + 2] ?? 0;
+    lum[p] = 0.299 * r + 0.587 * g + 0.114 * b;
+    spread[p] = Math.max(r, g, b) - Math.min(r, g, b);
+  }
+
+  // Otsu's threshold over the luminance histogram separates the bright
+  // cluster (paper) from the rest. Grayscale photos still split fine.
+  const hist = new Float64Array(256);
+  for (let p = 0; p < n; p++) hist[Math.min(255, Math.round(lum[p] ?? 0))]!++;
+  let sumAll = 0;
+  for (let v = 0; v < 256; v++) sumAll += v * (hist[v] ?? 0);
+  let sumB = 0;
+  let wB = 0;
+  let best = 0;
+  let thresh = 127;
+  for (let v = 0; v < 256; v++) {
+    wB += hist[v] ?? 0;
+    if (wB === 0) continue;
+    const wF = n - wB;
+    if (wF === 0) break;
+    sumB += v * (hist[v] ?? 0);
+    const mB = sumB / wB;
+    const mF = (sumAll - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > best) {
+      best = between;
+      thresh = v;
+    }
+  }
+
+  // Paper mask: brighter than the split AND desaturated. The saturation gate
+  // (≤ 64/255 spread) is what drops colorful bright objects (food, packaging)
+  // that the luminance split alone would keep.
+  const mask = new Uint8Array(n);
+  let maskCount = 0;
+  for (let p = 0; p < n; p++) {
+    if ((lum[p] ?? 0) > thresh && (spread[p] ?? 0) <= 64) {
+      mask[p] = 1;
+      maskCount++;
+    }
+  }
+  const frac = maskCount / n;
+  // Nearly nothing bright (dark scene) or nearly everything (a scan that is
+  // already all paper): no crop to be won either way.
+  if (frac < 0.04 || frac > 0.9) return null;
+
+  // Largest connected component (4-neighbor, iterative flood fill).
+  const label = new Int32Array(n); // 0 = unvisited, else component id
+  const stack: number[] = [];
+  let bestId = 0;
+  let bestArea = 0;
+  const compBox = new Map<number, { x1: number; y1: number; x2: number; y2: number; area: number }>();
+  let nextId = 0;
+  for (let start = 0; start < n; start++) {
+    if (!mask[start] || label[start]) continue;
+    const id = ++nextId;
+    let area = 0;
+    let x1 = w;
+    let y1 = h;
+    let x2 = -1;
+    let y2 = -1;
+    stack.length = 0;
+    stack.push(start);
+    label[start] = id;
+    while (stack.length) {
+      const p = stack.pop()!;
+      const x = p % w;
+      const y = (p - x) / w;
+      area++;
+      if (x < x1) x1 = x;
+      if (x > x2) x2 = x;
+      if (y < y1) y1 = y;
+      if (y > y2) y2 = y;
+      if (x > 0 && mask[p - 1] && !label[p - 1]) ((label[p - 1] = id), stack.push(p - 1));
+      if (x < w - 1 && mask[p + 1] && !label[p + 1]) ((label[p + 1] = id), stack.push(p + 1));
+      if (y > 0 && mask[p - w] && !label[p - w]) ((label[p - w] = id), stack.push(p - w));
+      if (y < h - 1 && mask[p + w] && !label[p + w]) ((label[p + w] = id), stack.push(p + w));
+    }
+    compBox.set(id, { x1, y1, x2, y2, area });
+    if (area > bestArea) {
+      bestArea = area;
+      bestId = id;
+    }
+  }
+  if (!bestId) return null;
+
+  const main = compBox.get(bestId)!;
+  // The slab must be substantial and slab-shaped: a real presence in the
+  // frame, the dominant share of the mask (not one bright speckle among
+  // many), and reasonably solid within its own bounding box.
+  const bw = main.x2 - main.x1 + 1;
+  const bh = main.y2 - main.y1 + 1;
+  if (bestArea / n < 0.04) return null;
+  if (bestArea / maskCount < 0.35) return null;
+  if (bestArea / (bw * bh) < 0.4) return null;
+  if (bw < w * 0.12 || bh < h * 0.12) return null;
+
+  // Fold shadows and glare can split one receipt into pieces: merge any
+  // sibling component whose box lies within a small margin of the main one.
+  let { x1, y1, x2, y2 } = main;
+  const margin = Math.round(Math.max(w, h) * 0.04);
+  for (const [id, c] of compBox) {
+    if (id === bestId || c.area < n * 0.002) continue;
+    const near =
+      c.x1 <= x2 + margin && c.x2 >= x1 - margin &&
+      c.y1 <= y2 + margin && c.y2 >= y1 - margin;
+    if (near) {
+      if (c.x1 < x1) x1 = c.x1;
+      if (c.y1 < y1) y1 = c.y1;
+      if (c.x2 > x2) x2 = c.x2;
+      if (c.y2 > y2) y2 = c.y2;
+    }
+  }
+
+  return { x: x1, y: y1, w: x2 - x1 + 1, h: y2 - y1 + 1 };
+}

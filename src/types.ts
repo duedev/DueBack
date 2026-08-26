@@ -70,6 +70,9 @@ export interface Field<T> {
   bbox?: BBox;
   /** True once a human has confirmed/edited the value in review. */
   edited?: boolean;
+  /** True when the box was DRAWN by hand in review — automatic relocation
+   *  (`locateValue`) must never move a human-placed box. */
+  manualBox?: boolean;
 }
 
 /** Flat daily allowance added to the report on top of the receipts:
@@ -77,7 +80,7 @@ export interface Field<T> {
  *  toggling the option off in the UI preserves the entered values. */
 export interface PerDiem {
   enabled: boolean;
-  /** Dollars reimbursed per day (the batch's dominant currency). */
+  /** US dollars reimbursed per day. */
   rate: number;
   /** Duration in days (fractions allowed for half days). */
   days: number;
@@ -151,9 +154,9 @@ export interface Receipt {
   // Extracted fields (each carries its own confidence + provenance bbox).
   vendor: Field<string>;
   date: Field<string>; // ISO yyyy-mm-dd
-  amount: Field<number>; // grand total, in `currency`
+  amount: Field<number>; // grand total, in US dollars
   tax: Field<number>;
-  currency: string; // ISO 4217-ish, e.g. "USD"
+  currency: string; // always "USD" — kept for the stored-data shape (older rows may carry other codes)
   category: Field<Category>;
 
   /** Overall 0..1 confidence across the receipt. */

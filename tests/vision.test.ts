@@ -20,17 +20,29 @@ test("a clean model response maps to a high-confidence extraction", () => {
     date: "2026-03-14",
     amount: 8.99,
     tax: 0.74,
-    currency: "usd",
     category: "Meals",
   });
   assert.equal(ex.vendor.value, "Blue Bottle Coffee");
   assert.equal(ex.amount.value, 8.99);
   assert.equal(ex.tax.value, 0.74);
   assert.equal(ex.date.value, "2026-03-14");
-  assert.equal(ex.currency, "USD"); // normalized to upper-case
+  assert.equal(ex.currency, "USD"); // USD-only app
   assert.equal(ex.category.value, "Meals");
   assert.ok(ex.confidence >= 0.8); // all fields present ⇒ auto-done
   assert.ok(!ex.flags.some((f) => f.code === "no_amount"));
+});
+
+test("a stray currency field from a model is ignored — extraction is USD-only", () => {
+  // The schema no longer asks for a currency, but a model may still send one.
+  const ex = visionToExtraction({
+    vendor: "Cafe Berlin",
+    date: "2026-03-14",
+    amount: 19.9,
+    tax: 0,
+    currency: "EUR",
+    category: "Meals",
+  });
+  assert.equal(ex.currency, "USD");
 });
 
 test("string amounts and non-ISO dates are coerced/flagged", () => {
@@ -55,7 +67,6 @@ test("a missing total is an error and forces review", () => {
     date: "2026-01-02",
     amount: 0,
     tax: 0,
-    currency: "EUR",
     category: "Other",
   });
   assert.ok(ex.amount.value <= 0);
