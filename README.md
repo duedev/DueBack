@@ -2,6 +2,8 @@
 
 **Receipts in. What you're due, back.**
 
+Live at **[dueback.duanehamilton.net](https://dueback.duanehamilton.net)**.
+
 Snap or drop a pile of receipts. They're read **on your device**, the text
 *and* the logos. You review the flagged ones in a keyboard-driven sweep, and
 out comes a polished multi-sheet Excel workbook with the receipt images
@@ -88,7 +90,9 @@ VITE_OCR_ENGINE=paddle npm run dev
 ## Deploy
 
 Static output (`dist/`) with a GitHub Pages workflow included
-(`.github/workflows/deploy.yml`). Optional build-time settings:
+(`.github/workflows/deploy.yml`); the production deployment is
+[dueback.duanehamilton.net](https://dueback.duanehamilton.net).
+Optional build-time settings:
 `OPENROUTER_API_KEY` (free zero-click AI assist), `VITE_SUPABASE_URL` +
 `VITE_SUPABASE_ANON_KEY` (sync layer), `VITE_ONEDRIVE_CLIENT_ID`
 ("Save to OneDrive" — see [`ONEDRIVE_SETUP.md`](./ONEDRIVE_SETUP.md)),

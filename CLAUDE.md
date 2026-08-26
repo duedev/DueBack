@@ -4,9 +4,9 @@
 
 ## What this is
 
-**DueBack** (repo `ReimbursementsF5`, formerly "Reimbursements F5") — a
-browser-only receipt → reimbursement-report app. `APP_NAME` in
-`src/config/constants.ts` is the single product-name source; the IndexedDB
+**DueBack** (repo `duedev/DueBack`, formerly "Reimbursements F5"; deployed at
+`dueback.duanehamilton.net`) — a browser-only receipt → reimbursement-report
+app. `APP_NAME` in `src/config/constants.ts` is the single product-name source; the IndexedDB
 name stays `reimbursements-f5` so existing users keep their data.
 Receipts are read **on-device** (OCR + visual logo recognition), reviewed in a
 keyboard sweep, and exported as a themed multi-sheet Excel workbook. Local-first
@@ -14,8 +14,7 @@ keyboard sweep, and exported as a themed multi-sheet Excel workbook. Local-first
 server-keyed AI assist. Static build, embeddable (Carrd), PWA.
 
 Rebuilt from scratch from the Python app in `../Reimbursements` (see its
-`CLAUDE.md`); the extraction *ideas/data* are ported, not the code. Intended to
-be transplanted to `duedev/ReimbursementsF5`.
+`CLAUDE.md`); the extraction *ideas/data* are ported, not the code.
 
 ## Stack
 

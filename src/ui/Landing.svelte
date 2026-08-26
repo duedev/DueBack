@@ -420,7 +420,7 @@
   <footer class="wrap foot">
     <span>DueBack</span>
     <span class="foot-sep">·</span>
-    <a href="https://github.com/duedev/ReimbursementsF5" rel="noopener">GitHub</a>
+    <a href="https://github.com/duedev/DueBack" rel="noopener">GitHub</a>
     <span class="foot-sep">·</span>
     <span>MIT license</span>
     <span class="foot-sep">·</span>

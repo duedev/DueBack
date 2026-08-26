@@ -8,7 +8,7 @@
 
 <header class="wrap hero">
   <div class="hero-copy">
-    <h1>Receipts in.<br />Reimbursement report out.</h1>
+    <h1>Receipts in.<br />Report out.</h1>
     <p class="hero-sub">
       Snap or drop a pile of receipts. They're read on your device: the
       printed text, plus any brand logos you've taught it. You review the

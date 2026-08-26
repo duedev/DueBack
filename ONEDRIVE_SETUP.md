@@ -30,7 +30,7 @@ hosted resource; there is nothing to pay for or keep running.
      below.)
    - **Redirect URI:** choose platform **Single-page application (SPA)** —
      this is the setting that matters most (see Troubleshooting) — and enter
-     your deployed app URL, e.g. `https://you.github.io/ReimbursementsF5/`.
+     your deployed app URL, e.g. `https://dueback.duanehamilton.net/`.
 3. Register, then on the **Overview** page copy the
    **Application (client) ID** — a GUID. That's the only secret-free value
    the build needs.
@@ -38,7 +38,8 @@ hosted resource; there is nothing to pay for or keep running.
    the app is served from, exactly as the browser sees it:
    - `http://localhost:5173/` (local dev)
    - `http://localhost:4173/` (vite preview, optional)
-   - your production URL (with the trailing slash it actually resolves to)
+   - your production URL, with the trailing slash it actually resolves to
+     (for this deployment: `https://dueback.duanehamilton.net/`)
 
    The app sends `location.origin + pathname` (with any trailing
    `index.html` stripped) as the redirect URI, so the registered value must
@@ -73,7 +74,7 @@ VITE_ONEDRIVE_TENANT=common
 
 # Override the computed redirect URI (rarely needed — e.g. an embed setup
 # where the app's own address isn't what you registered).
-VITE_ONEDRIVE_REDIRECT_URI=https://your-registered-url.example/
+VITE_ONEDRIVE_REDIRECT_URI=https://dueback.duanehamilton.net/
 ```
 
 ## 3. Use it

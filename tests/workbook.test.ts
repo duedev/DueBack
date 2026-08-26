@@ -8,6 +8,7 @@ import {
   IMG_ROW_PT,
 } from "../src/export/workbook.ts";
 import { rowPtToPx } from "../src/export/anchor.ts";
+import { APP_URL } from "../src/config/constants.ts";
 import type { Batch, Receipt, Category } from "../src/types.ts";
 
 function receipt(f: {
@@ -207,15 +208,16 @@ test("no app-generated notes reach the report; credits sit at the top", async ()
       });
     });
   });
-  // The generation credit + repo link moved from the footer to the header
-  // rows beside the employee info.
+  // The generation credit + site link moved from the footer to the header
+  // rows beside the employee info. The link is the product site (APP_URL),
+  // so a workbook handed to an office points at the app, not the repo.
   const summary = wb.getWorksheet("Summary")!;
   const gen = String(summary.getCell(2, 5).value ?? "");
   assert.match(gen, /^Generated .* by DueBack$/, gen);
   const link = summary.getCell(3, 5).value as { hyperlink?: string } | null;
   assert.ok(
-    link && typeof link === "object" && /github\.com\/duedev/.test(link.hyperlink ?? ""),
-    "repo link at the top",
+    link && typeof link === "object" && link.hyperlink === APP_URL,
+    "site link at the top",
   );
 });
 
