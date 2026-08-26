@@ -70,6 +70,9 @@ export interface Field<T> {
   bbox?: BBox;
   /** True once a human has confirmed/edited the value in review. */
   edited?: boolean;
+  /** True when the box was DRAWN by hand in review — automatic relocation
+   *  (`locateValue`) must never move a human-placed box. */
+  manualBox?: boolean;
 }
 
 /** Flat daily allowance added to the report on top of the receipts:

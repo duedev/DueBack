@@ -130,6 +130,7 @@
   .c-actions {
     display: flex;
     align-items: center;
+    justify-content: flex-end; /* the send action reads from the right edge */
     gap: 0.8rem;
     flex-wrap: wrap;
   }

@@ -61,6 +61,38 @@
     ),
   );
 
+  // ---- Grid view: receipts grouped by category, each group toggleable ----
+  let hiddenCats = $state<Set<string>>(
+    new Set(
+      (() => {
+        try {
+          const raw = localStorage.getItem("board.hiddenCats");
+          return raw ? (JSON.parse(raw) as string[]) : [];
+        } catch {
+          return [];
+        }
+      })(),
+    ),
+  );
+  $effect(() =>
+    localStorage.setItem("board.hiddenCats", JSON.stringify([...hiddenCats])),
+  );
+  function toggleCat(c: string): void {
+    const next = new Set(hiddenCats);
+    if (next.has(c)) next.delete(c);
+    else next.add(c);
+    hiddenCats = next;
+  }
+  const catGroups = $derived.by(() => {
+    const m = new Map<string, Receipt[]>();
+    for (const r of sorted) {
+      const c = r.category.value;
+      if (!m.has(c)) m.set(c, []);
+      m.get(c)!.push(r);
+    }
+    return [...m.entries()].map(([cat, items]) => ({ cat, items }));
+  });
+
   let cameraInput = $state<HTMLInputElement | null>(null);
 
   function onCameraPicked(e: Event): void {
@@ -154,11 +186,38 @@
       </div>
 
       {#if view === "grid"}
-        <div class="grid">
-          {#each sorted as r (r.id)}
-            <Card receipt={r} />
-          {/each}
-        </div>
+        {#if catGroups.length > 1}
+          <div class="cat-filter" role="group" aria-label="Categories shown">
+            {#each catGroups as g (g.cat)}
+              <button
+                class="chip cat-chip"
+                class:off={hiddenCats.has(g.cat)}
+                aria-pressed={!hiddenCats.has(g.cat)}
+                title={hiddenCats.has(g.cat) ? "Show this category" : "Hide this category"}
+                onclick={() => toggleCat(g.cat)}
+              >
+                {g.cat} <span class="cat-n">{g.items.length}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+        {#each catGroups as g (g.cat)}
+          {#if !hiddenCats.has(g.cat)}
+            <section class="cat-group">
+              {#if catGroups.length > 1}
+                <header class="cat-head">
+                  <span>{g.cat}</span>
+                  <span class="lane-count">{g.items.length}</span>
+                </header>
+              {/if}
+              <div class="grid">
+                {#each g.items as r (r.id)}
+                  <Card receipt={r} />
+                {/each}
+              </div>
+            </section>
+          {/if}
+        {/each}
       {:else}
         <div class="kanban">
           {#each lanes as lane (lane.key)}
@@ -387,6 +446,42 @@
     padding: 0.6rem;
     min-height: 8rem;
   }
+  /* Grid view: category groups + show/hide chips. */
+  .cat-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: -0.4rem 0 0.2rem;
+  }
+  .cat-chip {
+    cursor: pointer;
+  }
+  .cat-chip:hover {
+    border-color: var(--accent-line);
+  }
+  .cat-chip.off {
+    opacity: 0.5;
+    text-decoration: line-through;
+  }
+  .cat-n {
+    font-weight: 500;
+    color: var(--ink-faint);
+  }
+  .cat-group {
+    display: grid;
+    gap: 0.6rem;
+  }
+  .cat-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font: 700 0.8rem/1 var(--font-ui);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    padding: 0.25rem 0.3rem 0;
+  }
+
   .lane-head {
     display: flex;
     align-items: center;

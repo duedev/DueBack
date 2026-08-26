@@ -110,19 +110,24 @@
     };
     const newDate = date && isValidIso(date) && saneYear(date) ? date : r.date.value;
     const newAmount = amt !== null ? safeAmount(amt) : r.amount.value;
+    // Boxes (and their hand-drawn flag) survive every save.
+    const keepBox = (f: Field<unknown>) => ({
+      ...(f.bbox ? { bbox: f.bbox } : {}),
+      ...(f.manualBox ? { manualBox: true } : {}),
+    });
     return {
-      vendor: { value: newVendor, confidence: 1, edited: true, ...(r.vendor.bbox ? { bbox: r.vendor.bbox } : {}) },
+      vendor: { value: newVendor, confidence: 1, edited: true, ...keepBox(r.vendor) },
       date: {
         value: newDate,
         confidence: 1,
         edited: true,
-        ...(r.date.bbox ? { bbox: r.date.bbox } : {}),
+        ...keepBox(r.date),
       },
       amount: {
         value: newAmount,
         confidence: 1,
         edited: true,
-        ...(r.amount.bbox ? { bbox: r.amount.bbox } : {}),
+        ...keepBox(r.amount),
       },
       currency: "USD", // USD-only app — a save normalizes any legacy value
       category: { value: category, confidence: 1, edited: true },
@@ -160,7 +165,9 @@
       const f = patch[kind] as Field<string | number> | undefined;
       if (!f) continue;
       const prev = r[kind].bbox;
-      if (lines.length > 0 && f.value) {
+      if (f.manualBox) {
+        // A hand-drawn box is ground truth — relocation must never move it.
+      } else if (lines.length > 0 && f.value) {
         const hit = locateValue(lines, kind, f.value);
         if (hit) f.bbox = hit.bbox;
         else if (f.edited) delete f.bbox;
@@ -248,6 +255,8 @@
     if (target) {
       app.reviewId = target.id;
     } else {
+      // The sweep is over — every receipt reviewed. Worth a moment.
+      void import("./confetti.ts").then((m) => m.celebrate());
       app.toast("All caught up. Every receipt reviewed.", "ok");
       close();
     }
@@ -273,6 +282,11 @@
     const tag = (e.target as HTMLElement)?.tagName;
     const typing = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
     if (e.key === "Escape") {
+      // Escape backs out of draw mode first; a second press closes.
+      if (drawField) {
+        cancelDraw();
+        return;
+      }
       close();
       return;
     }
@@ -341,6 +355,70 @@
     (current?.flags ?? []).filter((f) => !FLAG_FIELD[f.code]),
   );
 
+  // ---- Manual box drawing -------------------------------------------------
+  // "Mark on image": pick a field, drag a rectangle on the receipt, and that
+  // becomes the field's box — highlighted, re-baked into the annotated copy,
+  // and protected from automatic relocation (Field.manualBox).
+  type DrawField = "vendor" | "date" | "amount";
+  let drawField = $state<DrawField | null>(null);
+  let dragStart: { x: number; y: number } | null = null;
+  let dragRect = $state<BBox | null>(null);
+
+  /** Pointer position normalized to the receipt image's frame. */
+  function normPoint(e: PointerEvent): { x: number; y: number } | null {
+    const img = imgEl;
+    if (!img) return null;
+    const rect = img.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)),
+    };
+  }
+
+  function drawDown(e: PointerEvent): void {
+    if (!drawField) return;
+    const p = normPoint(e);
+    if (!p) return;
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragStart = p;
+    dragRect = { x: p.x, y: p.y, w: 0, h: 0 };
+  }
+
+  function drawMove(e: PointerEvent): void {
+    if (!drawField || !dragStart) return;
+    const p = normPoint(e);
+    if (!p) return;
+    dragRect = {
+      x: Math.min(dragStart.x, p.x),
+      y: Math.min(dragStart.y, p.y),
+      w: Math.abs(p.x - dragStart.x),
+      h: Math.abs(p.y - dragStart.y),
+    };
+  }
+
+  async function drawUp(): Promise<void> {
+    const field = drawField;
+    const box = dragRect;
+    dragStart = null;
+    dragRect = null;
+    drawField = null;
+    // A sub-1% smear is a slip, not a box.
+    if (!field || !box || !current || box.w < 0.01 || box.h < 0.005) return;
+    const patch = patchFromForm(current);
+    const f = patch[field] as Field<string | number>;
+    f.bbox = box;
+    f.manualBox = true;
+    await applyPatch(current, patch);
+  }
+
+  function cancelDraw(): void {
+    dragStart = null;
+    dragRect = null;
+    drawField = null;
+  }
+
   const markers = $derived.by(() => {
     const r = current;
     if (!r) return [];
@@ -387,7 +465,17 @@
       <div class="m-body">
         <div class="m-image">
           {#if imageUrl}
-            <div class="imgwrap">
+            <!-- svelte-ignore a11y_no_static_element_interactions -- the
+                 pointer handlers only serve the draw-a-box mode; keyboard
+                 users reach the same result via the field inputs. -->
+            <div
+              class="imgwrap"
+              class:drawing={!!drawField}
+              onpointerdown={drawDown}
+              onpointermove={drawMove}
+              onpointerup={() => void drawUp()}
+              onpointercancel={cancelDraw}
+            >
               <img
                 bind:this={imgEl}
                 src={imageUrl}
@@ -404,6 +492,18 @@
                       <span>{m.label}</span>
                     </div>
                   {/each}
+                  {#if dragRect}
+                    <div
+                      class="marker draw-rect m-{drawField}"
+                      style="left:{dragRect.x * 100}%;top:{dragRect.y * 100}%;width:{dragRect.w * 100}%;height:{dragRect.h * 100}%"
+                    ></div>
+                  {/if}
+                </div>
+              {/if}
+              {#if drawField}
+                <div class="draw-hint">
+                  Drag a box around the {drawField === "amount" ? "total" : drawField}
+                  · Esc cancels
                 </div>
               {/if}
             </div>
@@ -423,7 +523,16 @@
           {/snippet}
 
           <div class="frow f-vendor">
-            <label for="rv-vendor">Vendor</label>
+            <div class="lrow">
+              <label for="rv-vendor">Vendor</label>
+              <button
+                type="button"
+                class="draw-btn"
+                class:active={drawField === "vendor"}
+                onclick={() => (drawField = drawField === "vendor" ? null : "vendor")}
+                title="Draw a box on the receipt around the vendor name"
+              >▣ mark on image</button>
+            </div>
             <input id="rv-vendor" type="text" bind:value={vendor} onchange={save} />
             {@render fieldFlags("vendor")}
             {#if imgLoaded && current.vendor.bbox}
@@ -434,7 +543,16 @@
           </div>
 
           <div class="frow f-date">
-            <label for="rv-date">Date</label>
+            <div class="lrow">
+              <label for="rv-date">Date</label>
+              <button
+                type="button"
+                class="draw-btn"
+                class:active={drawField === "date"}
+                onclick={() => (drawField = drawField === "date" ? null : "date")}
+                title="Draw a box on the receipt around the date"
+              >▣ mark on image</button>
+            </div>
             <input id="rv-date" type="date" bind:value={date} onchange={save} />
             {@render fieldFlags("date")}
             {#if imgLoaded && current.date.bbox}
@@ -445,7 +563,16 @@
           </div>
 
           <div class="frow f-amount">
-            <label for="rv-amount">Amount</label>
+            <div class="lrow">
+              <label for="rv-amount">Amount</label>
+              <button
+                type="button"
+                class="draw-btn"
+                class:active={drawField === "amount"}
+                onclick={() => (drawField = drawField === "amount" ? null : "amount")}
+                title="Draw a box on the receipt around the grand total"
+              >▣ mark on image</button>
+            </div>
             <input
               id="rv-amount"
               type="number"
@@ -633,6 +760,57 @@
   }
   .f-amount input {
     border-left: 3px solid var(--ok);
+  }
+  .lrow {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+  .lrow label {
+    margin-bottom: 0;
+  }
+  .draw-btn {
+    border: 0;
+    background: none;
+    font: 600 0.72rem/1 var(--font-ui);
+    color: var(--ink-faint);
+    cursor: pointer;
+    padding: 0.15rem 0.3rem;
+    border-radius: 6px;
+  }
+  .draw-btn:hover {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .draw-btn.active {
+    color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent-line);
+  }
+  .imgwrap.drawing {
+    cursor: crosshair;
+    touch-action: none; /* the drag must not scroll the page */
+  }
+  .imgwrap.drawing img {
+    -webkit-user-drag: none;
+    user-select: none;
+  }
+  .draw-rect {
+    border-style: dashed;
+  }
+  .draw-hint {
+    position: absolute;
+    left: 50%;
+    bottom: 0.6rem;
+    translate: -50% 0;
+    font: 600 0.75rem/1 var(--font-ui);
+    color: var(--accent-ink);
+    background: color-mix(in srgb, var(--accent) 88%, transparent);
+    padding: 0.4rem 0.7rem;
+    border-radius: var(--radius-pill);
+    pointer-events: none;
+    white-space: nowrap;
   }
   .callout {
     margin-top: 0.15rem;

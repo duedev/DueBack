@@ -43,7 +43,7 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + **Lora** for display; Lo
 | `src/store/` | `db.ts` (IndexedDB v1: batches/receipts/jobs/blobs/brands/kv), `repo.ts` (the one read/write + notify seam; deletes record kv pending-delete entries for sync), `sync.ts` (Supabase mirror: LWW on `updatedAt` BOTH ways — pull via `syncMerge.remoteAction`, push via migration 0004's `lww_guard` trigger; deletes propagate as `deleted_at` tombstones consumed from kv `sync.pendingDeletes` and pushed before upserts and before the first pull; realtime on receipts+batches+brand_logos; uploaded-blob memory is per-account kv `sync.uploadedBlobs.<uid>`), `syncMerge.ts` (pure Node-tested sync decisions: LWW/tombstone action, pending-delete log, batch adoption), `jobs.ts` (saved job name⇄number pairs in kv `jobs.saved`, local-only; pure list helpers are Node-tested) |
 | `src/supabase/` | `client.ts` (null unless `VITE_SUPABASE_URL/ANON_KEY`), `auth.ts`, `aiProxy.ts` |
 | `src/onedrive/` | Optional "Save to OneDrive" (no SDK, hidden unless `VITE_ONEDRIVE_CLIENT_ID`; ONEDRIVE_SETUP.md): `core.ts` (pure, Node-tested: PKCE, auth URL, token mapping, Graph upload w/ injectable fetch), `store.ts` (env + localStorage tokens), `popup.ts` (OAuth-popup relay, called by `main.ts` before mount), `index.ts` (connect popup / refresh / `uploadReport` → `Apps/DueBack`) |
-| `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark — dark is a warm ladder anchored on `#12100e`, the PWA chrome color), `state.svelte.ts` (the one reactive bridge; `applyTheme` also syncs the theme-color meta pair), `App/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle`, `BrandLogo.svelte` (the receipt+return-arrow mark — same glyph as `public/icons/favicon.svg`, keep in sync; used by both headers and the footer); `Landing.svelte` is the marketing orchestrator over `landing/` (Hero/How/Time/Logo/Workbook/Account/Contact partials + `landing.css` shared vocabulary) — hash-routed into five "pages" (Home/How/Workbook/Your data/Help) with a Nerd-mode toggle (`landing/prefs.svelte.ts`, kv-free localStorage) revealing `.db-nerd` engineering notes |
+| `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark — dark is a warm ladder anchored on `#12100e`, the PWA chrome color), `state.svelte.ts` (the one reactive bridge; `applyTheme` also syncs the theme-color meta pair), `App/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle`, `BrandLogo.svelte` (the receipt+return-arrow mark — same glyph as `public/icons/favicon.svg`, keep in sync; used by both headers and the footer); `Landing.svelte` is the marketing orchestrator over `landing/` (Hero/How/Time/Logo/Workbook/Account/Contact partials + `landing.css` shared vocabulary) — hash-routed into six "pages" (Home/How/Workbook/Your data/Help/Contact) with a Nerd-mode toggle (`landing/prefs.svelte.ts`, kv-free localStorage) revealing `.db-nerd` engineering notes |
 | `src/export/` | `zip.ts` (dependency-free ZIP for the images download), `printPdf.ts` (dependency-free print packet: receipts 2-up on Letter with the employee/job header, Node-tested; ExportBar downloads it WITH the workbook — kv `report.printPacket`, default ON), `anchor.ts` (px→EMU drawing anchors — the one place image geometry is computed), `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells hyperlink to per-receipt anchors on the category image sheets; anchors precomputed via `blockRows` — keep in sync with the image-block layout; no flat "All Receipts" sheet — the Summary IS the receipt table; **single source of truth**: category-sheet amounts are the stored values, Summary amount cells reference them, Insights KPIs/tables are COUNT/MAX/SUMIF formulas over Summary — edit one amount and everything re-foots; optional allowance lines — per diem (`Batch.perDiem`, `util/perdiem.ts`) and phone service (`Batch.phoneService`, `util/phone.ts`) — sit between the sections and the TOTAL; Insights = executive dashboard of KPI tiles + 5 charts, **`WorkbookOptions.insights` defaults off at the API; the ExportBar toggle defaults ON (kv `report.insights`)**), `charts.ts` (Chart.js→PNG; native xlsx charts are NOT possible with ExcelJS — the PNGs are the deliberate trade), `insights.ts`, `csv.ts`, `images.ts` |
 | `supabase/` | `migrations/0001_core.sql` (tables+RLS+storage+realtime), `0002_pgvector.sql` (optional), `0003_ai_limits.sql` (`ai_usage` per-user daily AI counts, service-role only), `0004_sync_integrity.sql` (`deleted_at` tombstones, `lww_guard` trigger, composite `(user_id, id)` PKs, realtime for batches/brand_logos), `functions/ai-extract` (POLICED key-holding proxy: model allowlist `AI_ALLOWED_MODELS`, max_tokens cap, per-user daily limit `AI_DAILY_LIMIT`; pure policy in `policy.ts`, Node-tested), `functions/logo-search` |
 | `scripts/` | `vendor-tesseract.mjs` (prebuild), `vendor-paddle.mjs` (opt-in), `export_vendor_db.py` (regenerates vendorDb.extra.json from `../Reimbursements/vendor_db.py`), `gen-icons.mjs` |
@@ -180,15 +180,27 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   `applyPatch` re-bakes the annotated copy), and logged for training.
 - **Landing layout invariants:** the hero fills the first screen
   (`min-height: calc(100dvh - 4.8rem)`) so Why-DueBack sits below the fold,
-  with a scroll cue that fades once `scrollY > 60`; the primary CTA sits
-  RIGHT of the secondary; the nav has NO "Open the app" (the hero's
-  back-to-receipts button is the returning-user path, e2e-pinned); the How
-  page orders Time → How → Logo so the two animated sections don't sit
-  adjacent; How steps open on hover (`onmouseenter`, click still toggles);
-  the workbook page/tab is named "Excel workbook"; `.next-link` is
-  right-aligned via margin-left auto; the footer is the three-column
-  brand/Product/Project block; the logo-recognition mock shows the fictional
-  Corner Bistro cup logo, not placeholder text.
+  with a scroll cue that fades once `scrollY > 60`; the hero puts the
+  GRAPHIC LEFT and copy right (stacked mobile flips copy first via order);
+  the primary CTA sits RIGHT of the secondary; the nav has NO "Open the
+  app" (the hero's back-to-receipts button is the returning-user path,
+  e2e-pinned); the How page orders How → Time → features → Logo so the two
+  animated sections don't sit adjacent and the page leads with its
+  namesake; How steps open on hover (`onmouseenter`, click still toggles);
+  the workbook page/tab is named "Excel workbook" and its mock uses the
+  REAL color scheme (semantic field colors on values, actual sheet-tab
+  colors on category dots — `CATEGORY_META` colors were rescued from
+  vendor-blue/date-purple/amount-green collisions); the page heading reads
+  "checked and filed"; `.next-link` is right-aligned; every page-foot
+  carries the `.cta-mini` "Got a pile of receipts?" card; the footer is
+  the brand/Product/Project block with NO legal line, its Roadmap link
+  nerd-gated; **future content is nerd-gated** (`db-nerd-only`: the
+  #account Drive section, the boosters privacy card, the Drive/OneDrive
+  FAQ entry — with Nerd mode off the site only shows what exists); the
+  Your-data page has an SVG graphic (receipt in a browser window + shield,
+  dashed line to a padlocked cloud); Contact is its own page (06) and the
+  Help page is FAQ + roadmap only; the logo-recognition mock shows the
+  fictional Corner Bistro cup logo, not placeholder text.
 - **Board views:** Workspace has a Grid/Kanban toggle + sort select
   (localStorage `board.view`/`board.sort`); kanban lanes are status groups.
   Default sort is **category, then date**. A needs-review card shows its
@@ -289,11 +301,22 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   receipt per page — the pipeline's `decode()` first-page path only remains
   for PDF blobs stored by older versions. A scanner PDF used to become a
   single receipt of page 1, silently dropping the rest.
-- **Generate downloads TWO files by default**: the workbook and the print
-  packet PDF (`export/printPdf.ts`, kv `report.printPacket`, only an
-  explicit false turns it off; e2e pins both downloads). The packet is for
-  offices that staple paper copies: two receipts per Letter page, the
-  employee/job header on every page, captions with file name + amount.
+- **Generate downloads up to THREE files**: the workbook, the print packet
+  PDF (kv `report.printPacket`, default ON), and the images ZIP (kv
+  `report.imagesZip`, default OFF — it replaced the old button; the CSV
+  button is gone entirely, `export/csv.ts` survives only for the tuning
+  bundle). The packet (`export/printPdf.ts`, Node-tested) crops each
+  receipt to its vendor→total strip when all three boxes are known
+  (`receiptStrip`; hand-drawn boxes count) and column-flow-packs the strips
+  (`layoutPrintPages`) so several fit a Letter page; each image carries its
+  own file-name/amount/job caption (a batch can span jobs) and the
+  employee header tops every page.
+- **ReviewModal has draw-a-box mode**: "▣ mark on image" per field arms a
+  drag on the receipt that writes the field's bbox with `Field.manualBox`,
+  which `applyPatch`'s relocation must never move (and `patchFromForm`
+  must carry through saves). The completed review sweep fires
+  `ui/confetti.ts` (canvas burst, reduced-motion no-op). Grid view groups
+  by category with show/hide chips (localStorage `board.hiddenCats`).
 - **The Insights sheet defaults ON in the UI, OFF at the API.** The report-bar
   toggle defaults to checked (kv `report.insights`; only an explicit false
   turns it off) and the e2e pins that. `buildWorkbook`'s own

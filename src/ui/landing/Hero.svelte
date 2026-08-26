@@ -23,52 +23,6 @@
 </script>
 
 <header class="wrap hero">
-  <div class="hero-copy">
-    <h1>Receipts in.<br />Report out.</h1>
-    <p class="hero-sub">
-      Snap or drop a pile of receipts. They're read on your device: the
-      printed text, plus any brand logos you've taught it. You review the
-      flagged ones in seconds, and out comes a polished Excel workbook your
-      office will actually accept.
-    </p>
-    <!-- Primary action sits on the RIGHT: the reading eye lands there last,
-         where the "go" button belongs. -->
-    <div class="hero-ctas">
-      {#if app.receipts.length > 0}
-        <button class="btn btn-lg" onclick={() => app.enter()}>
-          Back to your receipts ({app.receipts.length})
-        </button>
-      {:else}
-        <a class="btn btn-lg" href="#how">See how it works</a>
-      {/if}
-      <button class="btn btn-primary btn-lg" onclick={onAdd}>
-        Add receipts
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 16V4m0 0 4.5 4.5M12 4 7.5 8.5M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2" />
-        </svg>
-      </button>
-    </div>
-    <p class="hero-drop">…or just drag receipts anywhere onto this page.</p>
-    <p class="hero-note">
-      <strong>Runs entirely in your browser. Your receipts never leave your
-      device.</strong>
-    </p>
-    <ul class="hero-stats" aria-label="Key facts">
-      <li class="stat">
-        <span class="stat-n">$0</span>
-        <span class="stat-l">per receipt</span>
-      </li>
-      <li class="stat">
-        <span class="stat-n">~1 min</span>
-        <span class="stat-l">pile to finished report</span>
-      </li>
-      <li class="stat">
-        <span class="stat-n">On-device</span>
-        <span class="stat-l">receipts stay in your browser</span>
-      </li>
-    </ul>
-  </div>
-
   <!-- The product story as a strip: a receipt is scanned, the read fields
        pop onto an approved card, and the workbook total re-foots. Pure CSS,
        no images; one shared 8s clock sequences the stages. -->
@@ -134,6 +88,52 @@
     </div>
   </div>
 
+  <div class="hero-copy">
+    <h1>Receipts in.<br />Report out.</h1>
+    <p class="hero-sub">
+      Snap or drop a pile of receipts. They're read on your device: the
+      printed text, plus any brand logos you've taught it. You review the
+      flagged ones in seconds, and out comes a polished Excel workbook your
+      office will actually accept.
+    </p>
+    <!-- Primary action sits on the RIGHT: the reading eye lands there last,
+         where the "go" button belongs. -->
+    <div class="hero-ctas">
+      {#if app.receipts.length > 0}
+        <button class="btn btn-lg" onclick={() => app.enter()}>
+          Back to your receipts ({app.receipts.length})
+        </button>
+      {:else}
+        <a class="btn btn-lg" href="#how">See how it works</a>
+      {/if}
+      <button class="btn btn-primary btn-lg" onclick={onAdd}>
+        Add receipts
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 16V4m0 0 4.5 4.5M12 4 7.5 8.5M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2" />
+        </svg>
+      </button>
+    </div>
+    <p class="hero-drop">…or just drag receipts anywhere onto this page.</p>
+    <p class="hero-note">
+      <strong>Runs entirely in your browser. Your receipts never leave your
+      device.</strong>
+    </p>
+    <ul class="hero-stats" aria-label="Key facts">
+      <li class="stat">
+        <span class="stat-n">$0</span>
+        <span class="stat-l">per receipt</span>
+      </li>
+      <li class="stat">
+        <span class="stat-n">~1 min</span>
+        <span class="stat-l">pile to finished report</span>
+      </li>
+      <li class="stat">
+        <span class="stat-n">On-device</span>
+        <span class="stat-l">receipts stay in your browser</span>
+      </li>
+    </ul>
+  </div>
+
   <!-- Scroll cue: the hero fills the first screen, so a soft accent arrow
        says there's more; it fades away once scrolling starts. -->
   <button
@@ -153,7 +153,7 @@
   .hero {
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
     align-items: center;
     gap: 3rem;
     padding: 3rem 0 4rem;
@@ -215,6 +215,10 @@
     .hero {
       grid-template-columns: 1fr;
       padding-top: 2.5rem;
+    }
+    /* Stacked: the pitch reads before the animation. */
+    .hero-visual {
+      order: 2;
     }
   }
   @media (max-width: 560px) {

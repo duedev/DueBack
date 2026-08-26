@@ -1,4 +1,4 @@
-<section id="account" class="wrap account">
+<section id="account" class="wrap account db-nerd-only">
   <p class="section-label">Google account &amp; storage</p>
   <div class="head-row">
     <h2>Drop receipts in Drive. A workbook shows up.</h2>
