@@ -10,11 +10,21 @@
 //   {SUPABASE_URL}/functions/v1/ai-extract
 // and sending the user's Supabase access token as the bearer key.
 //
+// The payload is policed, not passed through verbatim: only allowlisted models
+// (the server key would otherwise pay for ANY model a curl-wielding user
+// names), a capped max_tokens, and a per-user daily request limit counted in
+// the ai_usage table (migration 0003) — the client's spendCapUsd is advisory.
+//
 // Secrets (supabase secrets set):
-//   OPENROUTER_API_KEY  — the server-held key
-// Built-ins provided by the platform: SUPABASE_URL, SUPABASE_ANON_KEY.
+//   OPENROUTER_API_KEY — the server-held key
+//   AI_ALLOWED_MODELS  — optional comma-separated model allowlist
+//                        (default: the client's free router, "openrouter/free")
+//   AI_DAILY_LIMIT     — optional per-user daily request cap (default 200)
+// Built-ins provided by the platform: SUPABASE_URL, SUPABASE_ANON_KEY,
+// SUPABASE_SERVICE_ROLE_KEY.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { allowedModels, capMaxTokens, dailyLimit } from "./policy.ts";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const MAX_BODY_BYTES = 8 * 1024 * 1024; // images are downscaled client-side
@@ -52,9 +62,42 @@ Deno.serve(async (req) => {
   const key = Deno.env.get("OPENROUTER_API_KEY");
   if (!key) return json(503, { error: "OPENROUTER_API_KEY secret not set" });
 
-  // 2. Bounded passthrough of the chat-completions payload.
+  // 2. Bounded, policed chat-completions payload.
   const raw = await req.arrayBuffer();
   if (raw.byteLength > MAX_BODY_BYTES) return json(413, { error: "body too large" });
+  let body: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(raw));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("not an object");
+    }
+    body = parsed;
+  } catch {
+    return json(400, { error: "invalid JSON body" });
+  }
+
+  const allowed = allowedModels(Deno.env.get("AI_ALLOWED_MODELS"));
+  const model = typeof body.model === "string" ? body.model : "";
+  if (!allowed.includes(model)) {
+    return json(403, { error: `model "${model}" is not allowed by this deployment` });
+  }
+  body.max_tokens = capMaxTokens(body.max_tokens);
+
+  // 3. Per-user daily cap, counted server-side in ai_usage (service role —
+  // the table's RLS denies clients so counts can't be forged or read).
+  const admin = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+  const { data: used, error: usageErr } = await admin.rpc("ai_increment_usage", {
+    p_user: userRes.user.id,
+  });
+  if (usageErr) {
+    return json(503, { error: `usage tracking unavailable: ${usageErr.message}` });
+  }
+  if ((used ?? 0) > dailyLimit(Deno.env.get("AI_DAILY_LIMIT"))) {
+    return json(429, { error: "daily AI request limit reached" });
+  }
 
   const upstream = await fetch(OPENROUTER_URL, {
     method: "POST",
@@ -64,11 +107,11 @@ Deno.serve(async (req) => {
       "http-referer": "https://github.com/duedev/ReimbursementsF5",
       "x-title": "Reimbursements F5",
     },
-    body: raw,
+    body: JSON.stringify(body),
   });
 
-  const body = await upstream.text();
-  return new Response(body, {
+  const resBody = await upstream.text();
+  return new Response(resBody, {
     status: upstream.status,
     headers: { "content-type": "application/json", ...CORS },
   });
