@@ -71,7 +71,7 @@
   </div>
 
   <aside class="db-nerd" aria-label="Technical details">
-    <span class="db-nerd-tag">nerd note · a workbook that re-foots itself</span>
+    <span class="db-nerd-tag">nerd note · the file re-foots itself</span>
     <p>
       The category sheets hold the stored amounts; the Summary references them
       with live formulas and the Insights tiles are COUNT/SUMIF over the

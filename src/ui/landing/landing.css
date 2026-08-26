@@ -19,6 +19,19 @@
   margin-bottom: 1.6rem;
 }
 
+/* -- anchor landings --------------------------------------------------------
+   The nav is sticky, so a plain scrollIntoView puts an anchored section's
+   top underneath it ("links land lower than the section"). Every id target
+   clears the nav height; the mobile value covers the two-row nav. */
+.landing [id] {
+  scroll-margin-top: 4.6rem;
+}
+@media (max-width: 860px) {
+  .landing [id] {
+    scroll-margin-top: 8rem;
+  }
+}
+
 /* -- "paper" mock surfaces (receipts, approved cards, mini sheets) ---------
    Border-first elevation: hairline + the lightest shadow tier only. */
 .landing .paper {

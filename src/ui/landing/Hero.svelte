@@ -9,12 +9,6 @@
 <header class="wrap hero">
   <div class="hero-copy">
     <h1>Receipts in.<br />Report out.</h1>
-    <p class="hero-sub">
-      Snap or drop a pile of receipts. They're read on your device: the
-      printed text, plus any brand logos you've taught it. You review the
-      flagged ones in seconds, and out comes a polished Excel workbook your
-      office will actually accept.
-    </p>
     <div class="hero-ctas">
       <button class="btn btn-primary btn-lg" onclick={onAdd}>
         Add receipts
@@ -123,21 +117,16 @@
     grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
     align-items: center;
     gap: 3rem;
-    padding: 4.5rem 0 5rem;
+    padding: 4rem 0 4.5rem;
   }
   .hero-copy h1 {
     font-size: clamp(2.5rem, 5.4vw, 4rem);
-  }
-  .hero-sub {
-    font-size: 1.14rem;
-    color: var(--ink-soft);
-    max-width: 34rem;
   }
   .hero-ctas {
     display: flex;
     flex-wrap: wrap;
     gap: 0.8rem;
-    margin: 1.6rem 0 1rem;
+    margin: 1.8rem 0 1rem;
   }
   /* Advertises the page-wide drop target (Landing.svelte owns the
      listeners); pointless on touch devices, so hidden there. */
@@ -196,18 +185,23 @@
     }
   }
 
-  /* ---- hero visual: receipt → approved card → workbook ---- */
+  /* ---- hero visual: receipt → approved card → workbook ----
+     One fixed-width column so all three papers and both arrows share the
+     same edges — mixed widths centered against each other read as
+     misalignment (the "funny spacing" report). */
   .hero-visual {
+    width: min(330px, 100%);
+    justify-self: center;
     display: grid;
-    gap: 0.65rem;
+    gap: 0.7rem;
     justify-items: center;
   }
 
   .receipt {
     position: relative;
-    width: min(240px, 100%);
-    padding: 0.95rem 0.85rem;
-    font: 500 0.66rem/1.45 var(--font-mono);
+    width: 100%;
+    padding: 0.95rem 1rem;
+    font: 500 0.68rem/1.5 var(--font-mono);
     overflow: hidden;
   }
   .r-vendor {
@@ -303,7 +297,7 @@
   }
 
   .approved {
-    width: min(330px, 100%);
+    width: 100%;
     padding: 0.75rem 0.9rem;
     font: 500 0.75rem/1.4 var(--font-ui);
   }
@@ -352,7 +346,7 @@
   }
 
   .book {
-    width: min(330px, 100%);
+    width: 100%;
     overflow: hidden;
     font: 500 0.72rem/1.4 var(--font-ui);
   }

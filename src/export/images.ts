@@ -13,9 +13,15 @@ export async function thumbnail(
   blob: Blob,
   maxEdge = 520,
   quality = 0.72,
+  fit: "edge" | "width" = "edge",
 ): Promise<Thumb> {
   const bmp = await createImageBitmap(blob);
-  const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
+  // "edge" caps the long edge (downloads, previews). "width" caps the width
+  // only: the workbook embeds display every receipt at a fixed column width,
+  // and a portrait receipt capped by its (long) height encodes far fewer
+  // horizontal pixels than the column shows — blurry at any zoom.
+  const limit = fit === "width" ? bmp.width : Math.max(bmp.width, bmp.height);
+  const scale = Math.min(1, maxEdge / limit);
   const w = Math.max(1, Math.round(bmp.width * scale));
   const h = Math.max(1, Math.round(bmp.height * scale));
   const canvas = document.createElement("canvas");
