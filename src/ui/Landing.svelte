@@ -16,6 +16,30 @@
 
   let fileInput = $state<HTMLInputElement | null>(null);
 
+  /** Svelte action: track the pointer inside a CTA card so its ::after aura
+      (a soft accent glow) follows the mouse. Hover-only by CSS. */
+  function aura(node: HTMLElement): { destroy(): void } {
+    const move = (e: PointerEvent): void => {
+      const r = node.getBoundingClientRect();
+      node.style.setProperty("--aura-x", `${e.clientX - r.left}px`);
+      node.style.setProperty("--aura-y", `${e.clientY - r.top}px`);
+    };
+    node.addEventListener("pointermove", move);
+    return {
+      destroy() {
+        node.removeEventListener("pointermove", move);
+      },
+    };
+  }
+
+  /** Nerd mode earns an entrance: a brief green binary-bits rain when it
+      turns ON (never on the way out; reduced-motion no-op inside). */
+  function nerdToggle(): void {
+    const turningOn = !prefs.nerd;
+    prefs.toggleNerd();
+    if (turningOn) void import("./landing/binaryBits.ts").then((m) => m.binaryBurst());
+  }
+
   function pick(): void {
     fileInput?.click();
   }
@@ -190,10 +214,10 @@
 />
 
 {#snippet ctaMini()}
-  <div class="card cta-mini">
+  <div class="card cta-mini" use:aura>
     <div class="cm-copy">
       <strong>Got a pile of receipts?</strong>
-      <span class="muted">You're about a minute from a finished report.</span>
+      <span class="muted">You're about a minute away from a finished report.</span>
     </div>
     <button class="btn btn-primary" onclick={pick}>Add receipts</button>
   </div>
@@ -233,7 +257,7 @@
           class="nerd-toggle"
           aria-label="Nerd mode"
           aria-pressed={prefs.nerd}
-          onclick={() => prefs.toggleNerd()}
+          onclick={nerdToggle}
           title="Reveal the engineering margin notes"
         >
           <span class="nt-mark" aria-hidden="true">&#123;&nbsp;&#125;</span>
@@ -315,7 +339,7 @@
     </section>
 
     <section class="wrap last-cta">
-      <div class="card cta-card">
+      <div class="card cta-card" use:aura>
         <h2>Got a pile of receipts?</h2>
         <p>You're about a minute away from a finished report.</p>
         <button class="btn btn-primary btn-lg" onclick={pick}>Add receipts</button>
@@ -383,10 +407,10 @@
   <div class="lpage" hidden={page !== "workbook"}>
     <header class="wrap page-head">
       <p class="page-no">03 · The Excel workbook</p>
-      <h2 class="page-title">The deliverable, in detail.</h2>
+      <h2 class="page-title">What you hand in, in detail.</h2>
       <p class="page-deck">
-        What lands in your download folder, and why your office will take it
-        without a second look.
+        What lands in your download folder, and why your office will be
+        thrilled.
       </p>
     </header>
 
@@ -406,14 +430,13 @@
       <p class="page-no">04 · Your data</p>
       <h2 class="page-title">Where things live, and when they move.</h2>
       <p class="page-deck">
-        The default is simple: nothing leaves your device. Everything beyond
-        that is opt-in, labeled, and explained here.
+        The default is simple: nothing leaves your device.
       </p>
     </header>
 
     <section id="privacy" class="wrap privacy">
       <p class="section-label">Privacy</p>
-      <h2>Local first. Cloud only when you say so.</h2>
+      <h2>Local first.</h2>
       <div class="priv-cols">
         <div class="card priv">
           <h4>The default path: nothing ever leaves this device</h4>
@@ -421,13 +444,11 @@
             <strong>Images stay in your browser's storage.</strong> OCR, logo
             recognition, extraction and the Excel build all run on your
             hardware. Close the tab and it's still there; clear it and it's
-            gone. The hosted site counts visits anonymously (Cloudflare Web
-            Analytics, no cookies). Your receipts and their contents are never
-            part of that.
+            gone.
           </p>
         </div>
         <figure class="priv-art" aria-hidden="true">
-          <svg viewBox="0 0 330 200" fill="none">
+          <svg viewBox="0 0 205 200" fill="none">
             <!-- your browser window -->
             <rect x="12" y="14" width="176" height="154" rx="12" stroke="var(--line-strong)" stroke-width="1.5" fill="var(--bg-raised)" />
             <circle cx="31" cy="31" r="3" fill="var(--err)" opacity="0.5" />
@@ -446,15 +467,18 @@
               <path d="M19 0 l17 6.5 v13 c0 10.5 -7.5 19 -17 23.5 c-9.5 -4.5 -17 -13 -17 -23.5 v-13 z" fill="var(--accent)" />
               <path d="M11 20 l6.5 6.5 L29 13.5" stroke="var(--accent-ink)" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" />
             </g>
-            <!-- the cloud is dashed, padlocked, and off to the side -->
-            <path d="M200 90 h42" stroke="var(--ink-faint)" stroke-width="2" stroke-dasharray="5 6" />
-            <g transform="translate(246 62)">
-              <path d="M20 44 h-4 a14 14 0 1 1 3 -27.7 a18 18 0 0 1 34.6 5.2 a12.5 12.5 0 0 1 -3.4 22.5 z" stroke="var(--ink-faint)" stroke-width="2" />
-              <rect x="16" y="24" width="18" height="14" rx="3.5" fill="var(--ink-faint)" />
-              <path d="M20 24 v-3 a5 5 0 0 1 10 0 v3" stroke="var(--ink-faint)" stroke-width="2.6" />
-            </g>
-            <text x="273" y="128" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">locked until</text>
-            <text x="273" y="141" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">you opt in</text>
+            <!-- Saved for later use (when the cloud boosters ship): the
+                 dashed padlocked cloud that used to sit right of the window
+                 in a 330-wide viewBox —
+                 <path d="M200 90 h42" stroke="var(--ink-faint)" stroke-width="2" stroke-dasharray="5 6" />
+                 <g transform="translate(246 62)">
+                   <path d="M20 44 h-4 a14 14 0 1 1 3 -27.7 a18 18 0 0 1 34.6 5.2 a12.5 12.5 0 0 1 -3.4 22.5 z" stroke="var(--ink-faint)" stroke-width="2" />
+                   <rect x="16" y="24" width="18" height="14" rx="3.5" fill="var(--ink-faint)" />
+                   <path d="M20 24 v-3 a5 5 0 0 1 10 0 v3" stroke="var(--ink-faint)" stroke-width="2.6" />
+                 </g>
+                 <text x="273" y="128" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">locked until</text>
+                 <text x="273" y="141" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">you opt in</text>
+            -->
             <text x="100" y="188" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">everything happens here</text>
           </svg>
         </figure>
@@ -572,11 +596,6 @@
   <div class="lpage" hidden={page !== "contact"}>
     <header class="wrap page-head">
       <p class="page-no">06 · Contact</p>
-      <h2 class="page-title">A direct line to the developer.</h2>
-      <p class="page-deck">
-        No ticket system and no support queue: the form below opens an email
-        straight to the person who built this.
-      </p>
     </header>
 
     <ContactSection />
@@ -867,6 +886,32 @@
   .cm-copy .muted {
     font-size: 0.88rem;
   }
+  /* The soft accent aura that trails the pointer over a CTA card. */
+  .cta-mini,
+  .cta-card {
+    position: relative;
+    overflow: hidden;
+  }
+  .cta-mini::after,
+  .cta-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    background: radial-gradient(
+      240px circle at var(--aura-x, 50%) var(--aura-y, 50%),
+      color-mix(in srgb, var(--accent) 16%, transparent),
+      transparent 72%
+    );
+  }
+  @media (hover: hover) {
+    .cta-mini:hover::after,
+    .cta-card:hover::after {
+      opacity: 1;
+    }
+  }
   .next-link {
     margin-left: auto; /* the forward path reads from the right edge */
     font: 600 0.92rem/1 var(--font-ui);
@@ -978,7 +1023,7 @@
   .priv-art svg {
     width: 100%;
     height: auto;
-    max-width: 24rem;
+    max-width: 15rem;
     justify-self: center;
     font-family: var(--font-ui);
   }

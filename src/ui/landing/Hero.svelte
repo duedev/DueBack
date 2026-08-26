@@ -161,6 +161,11 @@
        pitch alone; the next section arrives by scrolling, cued below. */
     min-height: calc(100dvh - 4.8rem);
   }
+  .hero-copy {
+    /* Centered within its column — the copy hugged the column's left edge
+       and read as drifting toward the page center. */
+    justify-self: center;
+  }
   .hero-copy h1 {
     font-size: clamp(2.5rem, 5.4vw, 4rem);
   }

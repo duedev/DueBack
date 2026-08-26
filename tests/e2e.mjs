@@ -468,9 +468,7 @@ async function main() {
       await page.locator(".opt", { hasText: "Insights sheet" }).locator("input").isChecked(),
       "Insights toggle defaults to on",
     );
-    // The images ZIP is an option now, off by default — turn it on so this
-    // run exercises all three deliverables in one Generate.
-    await page.getByText("Receipt images (ZIP)", { exact: true }).click();
+
     const dlDir = await mkdtemp(join(tmpdir(), "reimb-"));
     // Job number was left blank on purpose: generating must first raise the
     // blank-details prompt, and "Generate anyway" proceeds.
@@ -478,20 +476,18 @@ async function main() {
     const blankDialog = page.getByRole("dialog", { name: "Missing report details" });
     await blankDialog.waitFor({ timeout: 5000 });
     check(true, "blank job number raises the missing-details prompt");
-    // Generating now yields THREE files (the images ZIP toggle was ticked
-    // above): workbook, print packet PDF, and the images archive. Collect
-    // them all before validating any.
+    // Generating yields TWO files: the workbook and (default-on) the print
+    // packet PDF. Collect both before validating either.
     const downloads = [];
     const onDownload = (d) => downloads.push(d);
     page.on("download", onDownload);
     await page.getByRole("button", { name: "Generate anyway" }).click();
-    for (let i = 0; i < 240 && downloads.length < 3; i++) {
+    for (let i = 0; i < 240 && downloads.length < 2; i++) {
       await page.waitForTimeout(500);
     }
     page.off("download", onDownload);
     const download = downloads.find((d) => d.suggestedFilename().endsWith(".xlsx"));
     const packetDl = downloads.find((d) => d.suggestedFilename().endsWith(".pdf"));
-    const zipDl = downloads.find((d) => d.suggestedFilename().endsWith(".zip"));
     check(!!download, "generate downloads the workbook");
     check(
       !!packetDl && /^Receipt_Packet_Ada_Lovelace_\d{8}\.pdf$/.test(packetDl.suggestedFilename()),
@@ -569,15 +565,6 @@ async function main() {
       `every embedded image was measured — receipts and charts (got ${imagesChecked})`,
     );
 
-    // 7b. The images ZIP that downloaded with the workbook holds every image.
-    check(!!zipDl, "images ZIP downloads with the workbook when toggled on");
-    const zipPath = join(dlDir, zipDl.suggestedFilename());
-    await zipDl.saveAs(zipPath);
-    const zipBytes = await (await import("node:fs/promises")).readFile(zipPath);
-    check(
-      zipBytes[0] === 0x50 && zipBytes[1] === 0x4b && /^Receipts_.*\.zip$/.test(zipDl.suggestedFilename()),
-      `images zip downloads (${zipDl.suggestedFilename()}, ${zipBytes.length} bytes)`,
-    );
 
     // 7c. Multi-page PDF: every page becomes its own receipt — the scanner
     // workflow (processing only page 1 silently dropped the rest).

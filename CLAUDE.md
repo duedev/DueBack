@@ -197,10 +197,15 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   nerd-gated; **future content is nerd-gated** (`db-nerd-only`: the
   #account Drive section, the boosters privacy card, the Drive/OneDrive
   FAQ entry — with Nerd mode off the site only shows what exists); the
-  Your-data page has an SVG graphic (receipt in a browser window + shield,
-  dashed line to a padlocked cloud); Contact is its own page (06) and the
-  Help page is FAQ + roadmap only; the logo-recognition mock shows the
-  fictional Corner Bistro cup logo, not placeholder text.
+  Your-data page has an SVG graphic (receipt in a browser window + shield;
+  the padlocked-cloud half is parked in a comment until the cloud boosters
+  ship); Contact is its own page (06, no page title — the section's own
+  heading carries it) and the Help page is FAQ + roadmap only; the hero
+  copy is centered in its column (`justify-self`); the CTA cards carry a
+  pointer-following accent aura (`use:aura`, hover-only); turning Nerd
+  mode ON fires `landing/binaryBits.ts` (green binary rain, reduced-motion
+  no-op); the logo-recognition mock shows the fictional Corner Bistro cup
+  logo, not placeholder text.
 - **Board views:** Workspace has a Grid/Kanban toggle + sort select
   (localStorage `board.view`/`board.sort`); kanban lanes are status groups.
   Default sort is **category, then date**. A needs-review card shows its
@@ -301,22 +306,32 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   receipt per page — the pipeline's `decode()` first-page path only remains
   for PDF blobs stored by older versions. A scanner PDF used to become a
   single receipt of page 1, silently dropping the rest.
-- **Generate downloads up to THREE files**: the workbook, the print packet
-  PDF (kv `report.printPacket`, default ON), and the images ZIP (kv
-  `report.imagesZip`, default OFF — it replaced the old button; the CSV
-  button is gone entirely, `export/csv.ts` survives only for the tuning
-  bundle). The packet (`export/printPdf.ts`, Node-tested) crops each
+- **Generate downloads the workbook + print packet PDF** (kv
+  `report.printPacket`, default ON); kv `report.bundleZip` zips them into
+  ONE download instead. The images-ZIP option is HIDDEN for now (card
+  commented out in ExportBar, `includeZip` forced false; wiring + kv
+  `report.imagesZip` remain). The CSV button is gone entirely
+  (`export/csv.ts` survives only for the tuning bundle). "Preview packet"
+  opens the PDF in a new tab — the window MUST open synchronously in the
+  click (popup blockers), then navigate to the blob URL. The options row is
+  TWO labeled fieldsets: allowances that add to the total (per diem, phone)
+  vs what the download contains (insights, print packet, bundle). The packet (`export/printPdf.ts`, Node-tested) crops each
   receipt to its vendor→total strip when all three boxes are known
   (`receiptStrip`; hand-drawn boxes count) and column-flow-packs the strips
   (`layoutPrintPages`) so several fit a Letter page; each image carries its
   own file-name/amount/job caption (a batch can span jobs) and the
   employee header tops every page.
-- **ReviewModal has draw-a-box mode**: "▣ mark on image" per field arms a
-  drag on the receipt that writes the field's bbox with `Field.manualBox`,
-  which `applyPatch`'s relocation must never move (and `patchFromForm`
-  must carry through saves). The completed review sweep fires
-  `ui/confetti.ts` (canvas burst, reduced-motion no-op). Grid view groups
-  by category with show/hide chips (localStorage `board.hiddenCats`).
+- **ReviewModal has draw-a-box mode**: "▣ mark on image" per field
+  (color-coded to the field) arms a drag on the receipt that writes the
+  field's bbox with `Field.manualBox`, which `applyPatch`'s relocation must
+  never move (and `patchFromForm` must carry through saves). The drawn rect
+  MUST be `$state.snapshot`-ed before entering the patch — a $state proxy
+  makes IndexedDB's structuredClone throw and the box silently never
+  persists. The box also autofills its field via `extract.readValueInBox`
+  (stored `ocrLines` inside the box; Node-tested). The completed review
+  sweep fires `ui/confetti.ts` (multi-volley canvas burst, reduced-motion
+  no-op). Grid view groups by category with show/hide chips (localStorage
+  `board.hiddenCats`).
 - **The Insights sheet defaults ON in the UI, OFF at the API.** The report-bar
   toggle defaults to checked (kv `report.insights`; only an explicit false
   turns it off) and the e2e pins that. `buildWorkbook`'s own
