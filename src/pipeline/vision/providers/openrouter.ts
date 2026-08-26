@@ -35,7 +35,7 @@ export function usesFreeRouting(model: string): boolean {
 export function createOpenRouterProvider(init: ProviderInit): VisionProvider {
   return {
     id: "openrouter",
-    async extract(image, ctx) {
+    async extract(image) {
       const { base64, mediaType } = await blobToBase64(image);
       const url = `${init.baseUrl || "https://openrouter.ai/api/v1"}/chat/completions`;
       const free = usesFreeRouting(init.model);
@@ -54,7 +54,7 @@ export function createOpenRouterProvider(init: ProviderInit): VisionProvider {
           {
             role: "user",
             content: [
-              { type: "text", text: userInstruction(ctx.currencyDefault) },
+              { type: "text", text: userInstruction() },
               { type: "image_url", image_url: { url: dataUrl(base64, mediaType) } },
             ],
           },

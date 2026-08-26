@@ -59,6 +59,18 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
 - **Svelte $state proxies can't enter IndexedDB** — `structuredClone` throws on
   them. Unwrap with `$state.snapshot(...)` before any `repo` write that carries
   objects from reactive state (see `ReviewModal.patchFromForm`).
+- **The app is USD-only.** Nothing detects or selects a currency: extraction
+  and the vision tier always emit `currency: "USD"` (the field stays on
+  `Receipt` for the stored-data shape; a ReviewModal save normalizes legacy
+  values), `formatMoney` takes no currency, and the workbook always renders
+  `$`. Don't add per-receipt currency back without a product decision.
+- **Horizontal touch-panning is clipped at the root** (`html, body`
+  `overflow-x: clip` + `hidden` fallback, theme.css) — any element poking past
+  the viewport otherwise lets mobile swipes drag the page sideways. It's a
+  backstop: fix real offenders too (the landing nav compacts below 560px —
+  wordmark and Nerd-mode label hide — because brand + actions genuinely
+  didn't fit a phone). Wide content that should scroll gets its own
+  `overflow-x: auto` container.
 - **Money parsing is US-first and deliberately strict** (`util/money.ts` +
   `MONEY_SRC` in `extract.ts`): a single dot with 3 decimals is a *decimal*
   ("$3.499/gal", "11.204 GAL"), never thousands grouping — the permissive form

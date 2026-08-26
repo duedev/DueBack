@@ -1,11 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  parseAmount,
-  safeAmount,
-  detectCurrency,
-  excelMoneyFormat,
-} from "../src/util/money.ts";
+import { parseAmount, safeAmount, formatMoney } from "../src/util/money.ts";
 
 test("parseAmount: US formatting", () => {
   assert.equal(parseAmount("$1,234.56"), 1234.56);
@@ -34,15 +29,10 @@ test("safeAmount clamps non-finite and negative", () => {
   assert.equal(safeAmount(10.005), 10.01);
 });
 
-test("detectCurrency from symbol or code", () => {
-  assert.equal(detectCurrency("Total £10.00"), "GBP");
-  assert.equal(detectCurrency("EUR 5.00"), "EUR");
-  assert.equal(detectCurrency("plain 5.00", "CAD"), "CAD");
-});
-
-test("excelMoneyFormat picks a symbol", () => {
-  assert.equal(excelMoneyFormat("USD"), "$#,##0.00");
-  assert.equal(excelMoneyFormat("EUR"), "€#,##0.00");
+test("formatMoney renders US dollars (the app is USD-only)", () => {
+  assert.equal(formatMoney(1234.5), "$1,234.50");
+  assert.equal(formatMoney(0), "$0.00");
+  assert.equal(formatMoney(-5), "$0.00"); // safeAmount clamps negatives
 });
 
 test("parseAmount: 3-decimal unit prices/quantities are decimals, not thousands", () => {

@@ -29,7 +29,7 @@
     if (receipt.status === "done" || receipt.status === "needs_review") {
       const amount =
         receipt.amount.value > 0
-          ? formatMoney(receipt.amount.value, receipt.currency)
+          ? formatMoney(receipt.amount.value)
           : "no amount";
       const vendor = receipt.vendor.value || "Unknown vendor";
       return `${status} — ${vendor}, ${amount}, ${receipt.fileName}`;
@@ -66,7 +66,7 @@
         </span>
         <strong class="amount">
           {receipt.amount.value > 0
-            ? formatMoney(receipt.amount.value, receipt.currency)
+            ? formatMoney(receipt.amount.value)
             : "—"}
         </strong>
       </div>

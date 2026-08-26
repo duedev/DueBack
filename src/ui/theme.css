@@ -167,6 +167,18 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+/* Kill sideways panning on touch: any element poking past the viewport
+   otherwise lets a swipe drag the whole page horizontally. `clip` blocks the
+   pan without creating a scroll container (position:sticky keeps working);
+   `hidden` is the fallback where clip is unsupported. Wide content that
+   should scroll does so in its own overflow-x:auto container. */
+html,
+body {
+  overflow-x: hidden;
+  overflow-x: clip;
+  overscroll-behavior-x: none;
+}
+
 body {
   margin: 0;
   font-family: var(--font-ui);

@@ -21,8 +21,8 @@ export function perDiemAmount(pd: PerDiem | undefined | null): number {
 }
 
 /** "5 days × $75.00/day" — the human-readable breakdown for report rows. */
-export function perDiemLabel(pd: PerDiem, currency = "USD"): string {
+export function perDiemLabel(pd: PerDiem): string {
   const days = safePerDiemDays(pd.days);
   const unit = days === 1 ? "day" : "days";
-  return `${days} ${unit} × ${formatMoney(safeAmount(pd.rate), currency)}/day`;
+  return `${days} ${unit} × ${formatMoney(safeAmount(pd.rate))}/day`;
 }

@@ -1,26 +1,6 @@
 // Money parsing/formatting. Input hardening (§11): never let a non-finite or
 // absurd amount through — it would poison totals and the export.
 
-const CURRENCY_SYMBOLS: Record<string, string> = {
-  $: "USD",
-  "£": "GBP",
-  "€": "EUR",
-  "¥": "JPY",
-  "₹": "INR",
-  "C$": "CAD",
-  "A$": "AUD",
-};
-
-/** Detect a currency from a symbol or code present in text. */
-export function detectCurrency(text: string, fallback = "USD"): string {
-  const code = text.match(/\b(USD|EUR|GBP|JPY|CAD|AUD|CHF|INR|CNY|MXN)\b/);
-  if (code && code[1]) return code[1];
-  for (const [sym, cur] of Object.entries(CURRENCY_SYMBOLS)) {
-    if (text.includes(sym)) return cur;
-  }
-  return fallback;
-}
-
 /**
  * Parse a human/OCR money string into a finite number of major units.
  * Handles "$1,234.56", "1.234,56" (EU), "USD 12.00", trailing "-", etc.
@@ -83,35 +63,9 @@ export function safeAmount(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-const fmtCache = new Map<string, Intl.NumberFormat>();
+// The app is USD-only: every amount renders as US dollars.
+const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
-export function formatMoney(n: number, currency = "USD"): string {
-  const safe = safeAmount(n);
-  let fmt = fmtCache.get(currency);
-  if (!fmt) {
-    try {
-      fmt = new Intl.NumberFormat("en-US", { style: "currency", currency });
-    } catch {
-      fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-    }
-    fmtCache.set(currency, fmt);
-  }
-  return fmt.format(safe);
-}
-
-/** Excel number format string for a currency code (best effort). */
-export function excelMoneyFormat(currency = "USD"): string {
-  const sym: Record<string, string> = {
-    USD: "$",
-    CAD: "$",
-    AUD: "$",
-    MXN: "$",
-    GBP: "£",
-    EUR: "€",
-    JPY: "¥",
-    CNY: "¥",
-    INR: "₹",
-  };
-  const s = sym[currency] ?? "";
-  return `${s}#,##0.00`;
+export function formatMoney(n: number): string {
+  return usdFmt.format(safeAmount(n));
 }

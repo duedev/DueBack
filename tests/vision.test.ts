@@ -20,14 +20,13 @@ test("a clean model response maps to a high-confidence extraction", () => {
     date: "2026-03-14",
     amount: 8.99,
     tax: 0.74,
-    currency: "usd",
     category: "Meals",
   });
   assert.equal(ex.vendor.value, "Blue Bottle Coffee");
   assert.equal(ex.amount.value, 8.99);
   assert.equal(ex.tax.value, 0.74);
   assert.equal(ex.date.value, "2026-03-14");
-  assert.equal(ex.currency, "USD"); // normalized to upper-case
+  assert.equal(ex.currency, "USD"); // USD-only app
   assert.equal(ex.category.value, "Meals");
   assert.ok(ex.confidence >= 0.8); // all fields present ⇒ auto-done
   assert.ok(!ex.flags.some((f) => f.code === "no_amount"));
@@ -55,7 +54,6 @@ test("a missing total is an error and forces review", () => {
     date: "2026-01-02",
     amount: 0,
     tax: 0,
-    currency: "EUR",
     category: "Other",
   });
   assert.ok(ex.amount.value <= 0);

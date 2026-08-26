@@ -16,7 +16,6 @@ export interface VisionFields {
   date: string;
   amount: number;
   tax: number;
-  currency?: string;
   category?: string;
 }
 
@@ -30,12 +29,8 @@ export interface VisionExtraction {
   model: string;
 }
 
-export interface VisionContext {
-  currencyDefault: string;
-}
-
 /** One provider behind the seam. `extract` does the network round-trip. */
 export interface VisionProvider {
   readonly id: ProviderId;
-  extract(image: Blob, ctx: VisionContext): Promise<VisionExtraction>;
+  extract(image: Blob): Promise<VisionExtraction>;
 }
