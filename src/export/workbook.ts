@@ -42,21 +42,11 @@ const NOTE_YELLOW = "FFFEF9C3"; // subtotal band
 const FOOT_GRAY = "FF8A93A6"; // footer text
 const WHITE = "FFFFFFFF";
 
-/** Pastel accent behind each receipt's header band on its image sheet. */
-const CATEGORY_TINTS: Partial<Record<Category, string>> = {
-  Fuel: "FFFFF3CC",
-  Materials: "FFD4FAE8",
-  "Office Supplies": "FFF0FDF4",
-  "Meals": "FFFFE4E6",
-  Travel: "FFE0F2FE",
-  Lodging: "FFEDE9FF",
-  "Ground Transportation": "FFDBEAFE",
-  "Software & Subscriptions": "FFF3E8FF",
-  "Utilities & Phone": "FFECFEFF",
-  "Shipping & Postage": "FFFEF3C7",
-  "Professional Services": "FFE2E8F0",
-  Other: "FFEDE9FF",
-};
+/** Fill behind each receipt's file-name band on its image sheet. NEUTRAL on
+ *  purpose: color is reserved for the coded fields (vendor blue, date purple,
+ *  amount green) and the category's own band at the top — a pastel here read
+ *  as a fourth code that meant nothing. */
+const RECEIPT_BAND_FILL = "FFF1F2F4";
 
 /** Accounting number format ("$  1,234.56", dash for zero) like the original.
  *  USD-only: every sheet renders dollars. */
@@ -631,7 +621,7 @@ function buildImageSheet(
   tableHeaderRow(ws, 2, 10);
   ws.getRow(2).height = 28;
 
-  const tint = CATEGORY_TINTS[cat] ?? "FFEDE9FF";
+  const tint = RECEIPT_BAND_FILL;
   const fmt = acctFormat();
   const geom = geometryOf(ws);
   let r = 3;

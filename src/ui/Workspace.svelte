@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from "./state.svelte.ts";
+  import BrandLogo from "./BrandLogo.svelte";
   import Dropzone from "./Dropzone.svelte";
   import Card from "./Card.svelte";
   import ThemeToggle from "./ThemeToggle.svelte";
@@ -79,8 +80,7 @@
         title="Back to the home page"
         aria-label="Back to the home page"
       >
-        <span class="brand-mark">DB</span>
-        <span class="brand-name">DueBack</span>
+        <BrandLogo size={28} />
       </button>
       {#if total > 0}
         <div class="progress" aria-label="Processing progress">
@@ -238,7 +238,7 @@
     color: inherit;
     font: inherit;
   }
-  .brand:hover .brand-name {
+  .brand:hover :global(.bl-name) {
     color: var(--accent);
   }
   .clear-all {
@@ -246,16 +246,6 @@
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-  }
-  .brand-mark {
-    font: 600 0.85rem/1 var(--font-display);
-    color: var(--accent-ink);
-    background: var(--accent);
-    border-radius: 8px;
-    padding: 0.35rem 0.45rem;
-  }
-  .brand-name {
-    font: 650 0.95rem/1 var(--font-ui);
   }
   .progress {
     display: flex;
@@ -278,7 +268,7 @@
       flex-wrap: wrap;
       gap: 0.35rem 0.6rem;
     }
-    .brand-name {
+    .brand :global(.bl-name) {
       display: none;
     }
     .clear-all .ca-label {

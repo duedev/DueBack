@@ -1,9 +1,8 @@
 import "@fontsource-variable/inter";
-// The "full" build carries every Fraunces axis (opsz/SOFT/WONK, not just
-// weight): the wght-only build bakes the display-end letterforms, whose
-// flamboyant lowercase f read as a glitch in headings. theme.css pins
-// headings at a calmer optical size.
-import "@fontsource-variable/fraunces/full.css";
+// Lora: warm bookish serif for headings. Replaced Fraunces, whose display
+// letterforms (the flamboyant lowercase f in particular) kept reading as a
+// rendering glitch in product feedback.
+import "@fontsource-variable/lora";
 import "./ui/theme.css";
 import { mount } from "svelte";
 import App from "./ui/App.svelte";

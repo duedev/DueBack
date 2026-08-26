@@ -1,9 +1,17 @@
+<script lang="ts">
+  // Steps open on hover and stay open (reading shouldn't require a click);
+  // clicking the summary still toggles, so a click can close one again.
+  function openOnHover(e: MouseEvent): void {
+    (e.currentTarget as HTMLDetailsElement).open = true;
+  }
+</script>
+
 <section id="how" class="wrap how">
   <p class="section-label">How it works</p>
   <h2>Three steps. About a minute.</h2>
   <ol class="steps">
     <li>
-      <details class="card step" open>
+      <details class="card step" onmouseenter={openOnHover}>
         <summary>
           <span class="step-n">1</span>
           <span class="step-head">
@@ -30,7 +38,7 @@
       </details>
     </li>
     <li>
-      <details class="card step">
+      <details class="card step" onmouseenter={openOnHover}>
         <summary>
           <span class="step-n">2</span>
           <span class="step-head">
@@ -56,11 +64,11 @@
       </details>
     </li>
     <li>
-      <details class="card step">
+      <details class="card step" onmouseenter={openOnHover}>
         <summary>
           <span class="step-n">3</span>
           <span class="step-head">
-            <span class="step-title">Download the workbook</span>
+            <span class="step-title">Download the Excel workbook</span>
             <span class="step-deck">
               One click builds a themed Excel report, plus a CSV and an images
               ZIP if you need them.

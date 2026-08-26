@@ -2,6 +2,7 @@
   import { tick } from "svelte";
   import { app } from "./state.svelte.ts";
   import ThemeToggle from "./ThemeToggle.svelte";
+  import BrandLogo from "./BrandLogo.svelte";
   import Hero from "./landing/Hero.svelte";
   import HowSection from "./landing/HowSection.svelte";
   import TimeSection from "./landing/TimeSection.svelte";
@@ -91,7 +92,7 @@
   const TABS: { id: PageId; hash: string; label: string }[] = [
     { id: "home", hash: "home", label: "Home" },
     { id: "how", hash: "how", label: "How it works" },
-    { id: "workbook", hash: "workbook", label: "The workbook" },
+    { id: "workbook", hash: "workbook", label: "Excel workbook" },
     { id: "data", hash: "privacy", label: "Your data" },
     { id: "help", hash: "faq", label: "Help" },
   ];
@@ -200,9 +201,8 @@
   <!-- ======================= nav / page tabs ======================= -->
   <div class="nav-bar">
     <nav class="wrap nav" aria-label="Site">
-      <a class="brand" href="#home">
-        <span class="brand-mark">DB</span>
-        <span class="brand-name">DueBack</span>
+      <a class="brand" href="#home" aria-label="DueBack home">
+        <BrandLogo size={30} />
       </a>
       <div class="nav-tabs">
         {#each TABS as t (t.id)}
@@ -226,7 +226,6 @@
           <span class="nt-label">Nerd mode</span>
         </button>
         <ThemeToggle />
-        <button class="btn" onclick={() => app.enter()}>Open the app</button>
       </div>
     </nav>
   </div>
@@ -277,12 +276,12 @@
         </a>
         <a class="card glance-card" href="#workbook">
           <span class="g-n">3</span>
-          <span class="g-title">Download the workbook</span>
+          <span class="g-title">Download the Excel workbook</span>
           <span class="g-deck">
             One click builds a themed Excel report with live totals and the
             receipt images embedded, plus a CSV if you need one.
           </span>
-          <span class="g-more">See the workbook →</span>
+          <span class="g-more">See the Excel workbook →</span>
         </a>
       </div>
       <p class="trust-line">
@@ -324,8 +323,8 @@
       </p>
     </header>
 
-    <HowSection />
     <TimeSection />
+    <HowSection />
     <LogoSection />
 
     <section id="features" class="wrap features">
@@ -359,7 +358,7 @@
 
     <div class="wrap page-foot">
       <button class="btn btn-primary" onclick={pick}>Add receipts</button>
-      <a class="next-link" href="#workbook">Next: The workbook →</a>
+      <a class="next-link" href="#workbook">Next: The Excel workbook →</a>
     </div>
   </div>
 
@@ -368,7 +367,7 @@
        ================================================================= -->
   <div class="lpage" hidden={page !== "workbook"}>
     <header class="wrap page-head">
-      <p class="page-no">03 · The workbook</p>
+      <p class="page-no">03 · The Excel workbook</p>
       <h2 class="page-title">The deliverable, in detail.</h2>
       <p class="page-deck">
         What lands in your download folder, and why your office will take it
@@ -522,16 +521,38 @@
     </div>
   </div>
 
-  <footer class="wrap foot">
-    <span>DueBack</span>
-    <span class="foot-sep">·</span>
-    <a href="https://github.com/duedev/DueBack" rel="noopener">GitHub</a>
-    <span class="foot-sep">·</span>
-    <span>MIT license</span>
-    <span class="foot-sep">·</span>
-    <span>
-      Built by one person. Feedback goes straight to the developer.
-    </span>
+  <footer class="foot">
+    <div class="wrap foot-in">
+      <div class="foot-brand">
+        <a class="foot-logo" href="#home" aria-label="DueBack home">
+          <BrandLogo size={32} />
+        </a>
+        <p>
+          Receipts in. Report out. Read on your device, filed into an Excel
+          workbook your office will accept.
+        </p>
+      </div>
+      <nav class="foot-col" aria-label="Product pages">
+        <h4>Product</h4>
+        <a href="#how">How it works</a>
+        <a href="#workbook">The Excel workbook</a>
+        <a href="#privacy">Your data</a>
+        <a href="#faq">Help &amp; FAQ</a>
+      </nav>
+      <nav class="foot-col" aria-label="Project links">
+        <h4>Project</h4>
+        <a href="https://github.com/duedev/DueBack" rel="noopener">GitHub</a>
+        <a href="#contact">Contact</a>
+        <a href="#roadmap">Roadmap</a>
+      </nav>
+    </div>
+    <div class="wrap foot-legal">
+      <span>MIT license</span>
+      <span class="foot-sep">·</span>
+      <span>No account, no tracking of your receipts</span>
+      <span class="foot-sep">·</span>
+      <span>Built by one person. Feedback goes straight to the developer.</span>
+    </div>
   </footer>
 </div>
 
@@ -610,20 +631,8 @@
   .brand {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
     text-decoration: none;
     color: inherit;
-  }
-  .brand-mark {
-    font: 600 1rem/1 var(--font-display);
-    color: var(--accent-ink);
-    background: var(--accent);
-    border-radius: 9px;
-    padding: 0.45rem 0.55rem;
-  }
-  .brand-name {
-    font: 650 1.02rem/1 var(--font-ui);
-    letter-spacing: -0.01em;
   }
   .nav-tabs {
     display: flex;
@@ -718,15 +727,11 @@
     .nav {
       gap: 0.6rem;
     }
-    .brand-name {
+    .brand :global(.bl-name) {
       display: none;
     }
     .nerd-toggle .nt-label {
       display: none;
-    }
-    .nav-actions .btn {
-      font-size: 0.85rem;
-      padding: 0.55rem 0.8rem;
     }
   }
 
@@ -783,6 +788,7 @@
     padding: 0.4rem 0 3.4rem;
   }
   .next-link {
+    margin-left: auto; /* the forward path reads from the right edge */
     font: 600 0.92rem/1 var(--font-ui);
     color: var(--accent);
     text-decoration: none;
@@ -994,16 +1000,75 @@
     margin-bottom: 1.4rem;
   }
 
+  /* ---- footer: brand + link columns over a legal line ---- */
   .foot {
+    border-top: 1px solid var(--line);
+    background: var(--bg-sunken);
+    margin-top: 2rem;
+  }
+  .foot-in {
+    display: grid;
+    grid-template-columns: minmax(240px, 1.4fr) repeat(2, minmax(140px, 1fr));
+    gap: 2rem;
+    padding: 2.4rem 0 1.6rem;
+  }
+  .foot-brand {
+    display: grid;
+    gap: 0.8rem;
+    align-content: start;
+    justify-items: start;
+  }
+  .foot-logo {
+    text-decoration: none;
+    color: inherit;
+  }
+  .foot-brand p {
+    margin: 0;
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+    max-width: 24rem;
+  }
+  .foot-col {
+    display: grid;
+    gap: 0.5rem;
+    align-content: start;
+    justify-items: start;
+  }
+  .foot-col h4 {
+    font: 700 0.75rem/1 var(--font-ui);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 0.3rem;
+  }
+  .foot-col a {
+    font-size: 0.92rem;
+    color: var(--ink-soft);
+    text-decoration: none;
+  }
+  .foot-col a:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+  .foot-legal {
     display: flex;
     flex-wrap: wrap;
     gap: 0.6rem;
     align-items: center;
-    padding: 1.6rem 0 2.2rem;
-    color: var(--ink-soft);
-    font-size: 0.88rem;
+    border-top: 1px solid var(--line);
+    padding: 1rem 0 1.6rem;
+    color: var(--ink-faint);
+    font-size: 0.82rem;
   }
   .foot-sep {
     opacity: 0.5;
+  }
+  @media (max-width: 700px) {
+    .foot-in {
+      grid-template-columns: 1fr 1fr;
+    }
+    .foot-brand {
+      grid-column: 1 / -1;
+    }
   }
 </style>

@@ -6,7 +6,7 @@ import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mkdtemp, access } from "node:fs/promises";
+import { mkdtemp, access, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { deflateRawSync, crc32 } from "node:zlib";
 import sharp from "sharp";
@@ -475,10 +475,36 @@ async function main() {
     const blankDialog = page.getByRole("dialog", { name: "Missing report details" });
     await blankDialog.waitFor({ timeout: 5000 });
     check(true, "blank job number raises the missing-details prompt");
-    const [download] = await Promise.all([
-      page.waitForEvent("download", { timeout: 60000 }),
-      page.getByRole("button", { name: "Generate anyway" }).click(),
-    ]);
+    // Generating now yields TWO files: the workbook and (default-on) the
+    // print packet PDF. Collect both before validating either.
+    const downloads = [];
+    const onDownload = (d) => downloads.push(d);
+    page.on("download", onDownload);
+    await page.getByRole("button", { name: "Generate anyway" }).click();
+    for (let i = 0; i < 240 && downloads.length < 2; i++) {
+      await page.waitForTimeout(500);
+    }
+    page.off("download", onDownload);
+    const download = downloads.find((d) => d.suggestedFilename().endsWith(".xlsx"));
+    const packetDl = downloads.find((d) => d.suggestedFilename().endsWith(".pdf"));
+    check(!!download, "generate downloads the workbook");
+    check(
+      !!packetDl && /^Receipt_Packet_Ada_Lovelace_\d{8}\.pdf$/.test(packetDl.suggestedFilename()),
+      `print packet PDF downloads alongside (got ${packetDl?.suggestedFilename()})`,
+    );
+    if (packetDl) {
+      const pdfPath = join(dlDir, packetDl.suggestedFilename());
+      await packetDl.saveAs(pdfPath);
+      const pdfRaw = (await readFile(pdfPath)).toString("latin1");
+      check(
+        pdfRaw.startsWith("%PDF-1.4") && /\/Subtype \/Image/.test(pdfRaw),
+        "print packet is a real PDF with embedded receipt images",
+      );
+      check(
+        pdfRaw.includes("Receipt packet - Ada Lovelace"),
+        "print packet header carries the employee and job",
+      );
+    }
     const xlsxPath = join(dlDir, download.suggestedFilename());
     await download.saveAs(xlsxPath);
     log("downloaded", download.suggestedFilename());
