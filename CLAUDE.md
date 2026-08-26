@@ -4,9 +4,9 @@
 
 ## What this is
 
-**DueBack** (repo `ReimbursementsF5`, formerly "Reimbursements F5") — a
-browser-only receipt → reimbursement-report app. `APP_NAME` in
-`src/config/constants.ts` is the single product-name source; the IndexedDB
+**DueBack** (repo `duedev/DueBack`, formerly "Reimbursements F5"; deployed at
+`dueback.duanehamilton.net`) — a browser-only receipt → reimbursement-report
+app. `APP_NAME` in `src/config/constants.ts` is the single product-name source; the IndexedDB
 name stays `reimbursements-f5` so existing users keep their data.
 Receipts are read **on-device** (OCR + visual logo recognition), reviewed in a
 keyboard sweep, and exported as a themed multi-sheet Excel workbook. Local-first
@@ -14,8 +14,7 @@ keyboard sweep, and exported as a themed multi-sheet Excel workbook. Local-first
 server-keyed AI assist. Static build, embeddable (Carrd), PWA.
 
 Rebuilt from scratch from the Python app in `../Reimbursements` (see its
-`CLAUDE.md`); the extraction *ideas/data* are ported, not the code. Intended to
-be transplanted to `duedev/ReimbursementsF5`.
+`CLAUDE.md`); the extraction *ideas/data* are ported, not the code.
 
 ## Stack
 
@@ -91,7 +90,11 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   render, and `getByRole` cannot see hidden elements, so Home must be the
   default page. Nerd mode stamps `.nerd-on` on `.landing`; the `.db-nerd`
   notes and their reduced-motion end-state live in `landing.css` (global
-  vocabulary, partials contribute plain markup).
+  vocabulary, partials contribute plain markup). The WHOLE landing is a drop
+  target: window-level drag listeners in `Landing.svelte` (guarded on the
+  drag carrying Files) raise a pointer-events-none `.drop-veil` and route the
+  drop through the same `addFiles` path as the pickers — the e2e pins veil,
+  ingest, and clear.
 - **Landing motion:** shared keyframes live in `landing/landing.css` (global,
   `db-`prefixed) because Svelte can't share scoped keyframes across
   components; section-local keyframes stay scoped (same `db-` names). Every

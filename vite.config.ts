@@ -35,7 +35,7 @@ export default defineConfig({
         name: "DueBack",
         short_name: "DueBack",
         description:
-          "Receipts in. Reimbursement report out. On-device OCR + logo recognition, polished Excel export, optional cloud sync.",
+          "Receipts in. Report out. On-device OCR + logo recognition, polished Excel export, optional cloud sync.",
         theme_color: "#12100e",
         background_color: "#12100e",
         display: "standalone",

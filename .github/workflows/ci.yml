@@ -19,7 +19,13 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
+      # npm ci skips install scripts: the only script that reaches the network is
+      # onnxruntime-node's binary download (a transitive dep of the browser-only
+      # transformers.js that no Node/CI path ever loads — it flaked CI with
+      # ETIMEDOUT). Every other scripted dep (esbuild, sharp, tesseract.js) ships
+      # its platform binaries as optionalDependencies, and the vendor-tesseract
+      # prebuild is an npm *run* script, unaffected by --ignore-scripts.
+      - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm test
       - run: npm run testkit --if-present
@@ -33,9 +39,10 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      # --ignore-scripts for the same reason as the test job (also makes the
+      # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD guard moot; the browser is installed
+      # explicitly on the next line).
+      - run: npm ci --ignore-scripts
       - run: npx playwright install chromium --with-deps
       - run: npm run build
       - run: node tests/e2e.mjs # spawns `vite preview` itself

@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import type { Batch, Receipt, Category } from "../types.ts";
-import { APP_NAME } from "../config/constants.ts";
+import { APP_NAME, APP_URL } from "../config/constants.ts";
 import { CATEGORIES, CATEGORY_META } from "../config/categories.ts";
 import { safeAmount } from "../util/money.ts";
 import { perDiemAmount, perDiemLabel } from "../util/perdiem.ts";
@@ -489,7 +489,7 @@ function buildSummarySheet(
   gen.alignment = { horizontal: "right", vertical: "middle" };
   ws.mergeCells(3, 5, 3, 6);
   const src = ws.getCell(3, 5);
-  src.value = { text: "github.com/duedev/ReimbursementsF5", hyperlink: "https://github.com/duedev/ReimbursementsF5" };
+  src.value = { text: "dueback.duanehamilton.net", hyperlink: APP_URL };
   src.font = { size: 9, color: { argb: LINK_BLUE }, underline: true };
   src.alignment = { horizontal: "right", vertical: "middle" };
 

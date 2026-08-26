@@ -41,7 +41,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # --ignore-scripts: see ci.yml — avoids onnxruntime-node's flaky binary
+      # download (transitive, browser-only transformers.js; never loaded here).
+      - run: npm ci --ignore-scripts
       - run: npm test # a red unit suite must not deploy
       - run: npm run build # prebuild vendors Tesseract core + language data
       - uses: actions/configure-pages@v5

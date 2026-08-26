@@ -104,8 +104,8 @@ Deno.serve(async (req) => {
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${key}`,
-      "http-referer": "https://github.com/duedev/ReimbursementsF5",
-      "x-title": "Reimbursements F5",
+      "http-referer": "https://dueback.duanehamilton.net",
+      "x-title": "DueBack",
     },
     body: JSON.stringify(body),
   });

@@ -43,8 +43,9 @@ logo search. Skip it until you have thousands of taught brands.
 
 In **Authentication → Providers**:
 - **Email** (magic links) works out of the box.
-- **Google**: add your OAuth client id/secret. Add your deployed origin (and
-  any Carrd page that embeds the app) to the **redirect URLs**.
+- **Google**: add your OAuth client id/secret. Add your deployed origin (for
+  this deployment `https://dueback.duanehamilton.net`) and any Carrd page that
+  embeds the app to the **redirect URLs**.
 
 ## 4. Edge Functions (the server-keyed AI assist)
 

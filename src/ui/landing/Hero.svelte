@@ -8,7 +8,7 @@
 
 <header class="wrap hero">
   <div class="hero-copy">
-    <h1>Receipts in.<br />Reimbursement report out.</h1>
+    <h1>Receipts in.<br />Report out.</h1>
     <p class="hero-sub">
       Snap or drop a pile of receipts. They're read on your device: the
       printed text, plus any brand logos you've taught it. You review the
@@ -30,6 +30,7 @@
         <a class="btn btn-lg" href="#how">See how it works</a>
       {/if}
     </div>
+    <p class="hero-drop">…or just drag receipts anywhere onto this page.</p>
     <p class="hero-note">
       <strong>Runs entirely in your browser — your receipts never leave your
       device.</strong>
@@ -137,6 +138,18 @@
     flex-wrap: wrap;
     gap: 0.8rem;
     margin: 1.6rem 0 1rem;
+  }
+  /* Advertises the page-wide drop target (Landing.svelte owns the
+     listeners); pointless on touch devices, so hidden there. */
+  .hero-drop {
+    font-size: 0.9rem;
+    color: var(--ink-soft);
+    margin: -0.4rem 0 0.9rem;
+  }
+  @media (hover: none) and (pointer: coarse) {
+    .hero-drop {
+      display: none;
+    }
   }
   .hero-note {
     font-size: 0.95rem;

@@ -3,6 +3,8 @@
 // this is a tiny, opt-in tier in a zero-dependency client PWA, and keeping all
 // three providers on one uniform shape avoids bundling multiple SDKs.
 
+import { APP_URL } from "../../../config/constants.ts";
+
 export interface ProviderInit {
   apiKey: string;
   model: string;
@@ -29,7 +31,7 @@ export function dataUrl(base64: string, mediaType: string): string {
 
 /** A referer/title pair OpenRouter likes for attribution; harmless elsewhere. */
 export function appOrigin(): string {
-  return typeof location !== "undefined" ? location.origin : "https://reimbursements.online";
+  return typeof location !== "undefined" ? location.origin : APP_URL;
 }
 
 /** Read a response body for an error message without throwing. */
