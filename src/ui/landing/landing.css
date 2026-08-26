@@ -67,6 +67,67 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, #147246 45%, transparent);
 }
 
+/* -- nerd notes --------------------------------------------------------------
+   Engineering margin notes, hidden until the nav's Nerd-mode toggle stamps
+   .nerd-on on .landing. Global on purpose: partials drop in plain
+   `<aside class="db-nerd">` markup and this file owns the look. The
+   reduced-motion end-state lives HERE (not per partial) because the reveal
+   animation is part of this shared vocabulary, and the theme.css kill-switch
+   would otherwise freeze notes at their 0% (hidden) frame. */
+.landing .db-nerd {
+  display: none;
+  margin-top: 1.5rem;
+  max-width: 46rem;
+  padding: 0.95rem 1.2rem 1rem 1.3rem;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-m) var(--radius-m) 0;
+  background: var(--bg-sunken);
+}
+.landing.nerd-on .db-nerd {
+  display: block;
+  animation: db-nerd-in 0.35s ease-out both;
+}
+.landing .db-nerd-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font: 600 0.7rem/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 0.55rem;
+}
+.landing .db-nerd-tag::before {
+  content: "{ }";
+  letter-spacing: 0;
+}
+.landing .db-nerd p {
+  font: 500 0.86rem/1.6 var(--font-ui);
+  color: var(--ink-soft);
+  margin: 0 0 0.55rem;
+}
+.landing .db-nerd p:last-child {
+  margin-bottom: 0;
+}
+.landing .db-nerd strong {
+  color: var(--ink);
+}
+@keyframes db-nerd-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing.nerd-on .db-nerd {
+    animation: none;
+  }
+}
+
 /* ============================================================================
    Shared keyframes (global names). One unhurried 8s clock drives the hero
    strip: the scan line sweeps first, each highlight appears only AFTER the
