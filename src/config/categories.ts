@@ -33,14 +33,14 @@ export const CATEGORY_META: Record<Category, { color: string; emoji: string }> =
   {
     "Meals": { color: "FFF97316", emoji: "🍽️" },
     Travel: { color: "FF0EA5E9", emoji: "✈️" },
-    Lodging: { color: "FF8B5CF6", emoji: "🏨" },
+    Lodging: { color: "FFDB2777", emoji: "🏨" },
     "Ground Transportation": { color: "FF06B6D4", emoji: "🚕" },
     Fuel: { color: "FFEF4444", emoji: "⛽" },
     Materials: { color: "FFD97706", emoji: "🧱" },
-    "Office Supplies": { color: "FF10B981", emoji: "📎" },
-    "Software & Subscriptions": { color: "FF6366F1", emoji: "💻" },
+    "Office Supplies": { color: "FFEAB308", emoji: "📎" },
+    "Software & Subscriptions": { color: "FF9F1239", emoji: "💻" },
     "Utilities & Phone": { color: "FF14B8A6", emoji: "📶" },
-    "Shipping & Postage": { color: "FFA855F7", emoji: "📦" },
+    "Shipping & Postage": { color: "FF65A30D", emoji: "📦" },
     "Professional Services": { color: "FF64748B", emoji: "🧾" },
     Other: { color: "FF94A3B8", emoji: "🗂️" },
   };

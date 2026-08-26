@@ -147,6 +147,14 @@
     void repo.setSetting(INSIGHTS_KEY, includeInsights);
   }
 
+  // ---- Images ZIP (an option like the rest; off unless wanted) -------------
+  const ZIP_KEY = "report.imagesZip";
+  let includeZip = $state(false);
+  void repo.getSetting<boolean>(ZIP_KEY).then((v) => (includeZip = v === true));
+  function saveZipPref(): void {
+    void repo.setSetting(ZIP_KEY, includeZip);
+  }
+
   // ---- Print packet (on by default: offices staple paper copies) -----------
   const PRINT_KEY = "report.printPacket";
   let includePrint = $state(true);
@@ -155,22 +163,32 @@
     void repo.setSetting(PRINT_KEY, includePrint);
   }
 
-  /** Letter-size PDF of the receipt images, two per page with the
-   *  employee/job header — what actually goes to the office printer. */
+  /** Letter-size PDF of the receipt images — what actually goes to the
+   *  office printer. Receipts whose vendor/date/total boxes are all known
+   *  (including hand-drawn ones) are cropped to that strip, so several fit
+   *  a page; each image carries its own job caption because a batch can
+   *  serve more than one job. */
   async function buildPrintPacket(): Promise<Blob | null> {
-    const { buildPrintPdf } = await import("../export/printPdf.ts");
-    const { thumbnail } = await import("../export/images.ts");
+    const { buildPrintPdf, receiptStrip } = await import("../export/printPdf.ts");
+    const { thumbnail, stripThumbnail } = await import("../export/images.ts");
+    const jobLabel = [jobName.trim(), jobNumber.trim() ? `#${jobNumber.trim()}` : ""]
+      .filter(Boolean)
+      .join(" ");
     const imgs: import("../export/printPdf.ts").PrintImage[] = [];
     for (const r of exportable) {
       const blob = await repo.getBlob(r.annotatedKey ?? r.cleanedKey ?? r.fileKey);
       if (!blob) continue;
-      const t = await thumbnail(blob, 1400, 0.8);
+      const strip = receiptStrip([r.vendor.bbox, r.date.bbox, r.amount.bbox]);
+      const t = strip
+        ? await stripThumbnail(blob, strip.y0, strip.y1, 1400, 0.8)
+        : await thumbnail(blob, 1400, 0.8);
       imgs.push({
         jpeg: new Uint8Array(t.buffer),
         width: t.width,
         height: t.height,
         name: r.fileName,
         amount: formatMoney(safeAmount(r.amount.value)),
+        ...(jobLabel ? { job: jobLabel } : {}),
       });
     }
     if (imgs.length === 0) return null;
@@ -276,6 +294,7 @@
           app.toast("Couldn't build the print packet; the workbook is fine.", "warn");
         }
       }
+      if (includeZip) await exportImagesZip();
       app.toast(`Workbook ready: ${result.count} receipts.`, "ok");
     } catch (err) {
       app.toast(
@@ -330,14 +349,6 @@
     } finally {
       odSaving = false;
     }
-  }
-
-  async function exportCsvFile(): Promise<void> {
-    const { toCsv, csvFileName } = await import("../export/csv.ts");
-    const csv = toCsv(app.receipts);
-    // UTF-8 BOM so Excel opens it cleanly.
-    const blob = new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" });
-    download(blob, csvFileName({ jobName, employee }));
   }
 
   function reviewAll(): void {
@@ -519,8 +530,19 @@
         <span>Print packet (PDF)</span>
       </label>
       <span class="muted small">
-        Downloads with the workbook: receipts two per letter page, labeled
-        with employee and job, sized for legible printing.
+        Downloads with the workbook: receipts cropped to their key lines and
+        packed onto letter pages, labeled per receipt, sized for legible
+        printing.
+      </span>
+    </div>
+
+    <div class="opt" class:open={includeZip}>
+      <label class="check">
+        <input type="checkbox" bind:checked={includeZip} onchange={saveZipPref} />
+        <span>Receipt images (ZIP)</span>
+      </label>
+      <span class="muted small">
+        Also downloads every receipt image, compressed, in one archive.
       </span>
     </div>
   </div>
@@ -543,22 +565,6 @@
         Review flagged ({flagged.length})
       </button>
     {/if}
-    <button
-      class="btn"
-      onclick={exportCsvFile}
-      disabled={exportable.length === 0}
-      title="Download the receipt rows as a plain CSV file for expense-system imports"
-    >
-      CSV
-    </button>
-    <button
-      class="btn"
-      onclick={() => void exportImagesZip()}
-      disabled={zipping || exportable.length === 0}
-      title="Download every receipt image, compressed, in one archive"
-    >
-      {zipping ? "Packaging…" : "Images (.zip)"}
-    </button>
     {#if oneDriveOn}
       <button
         class="btn btn-ghost"

@@ -88,13 +88,14 @@
      the e2e's landing assertions (hero h1, #contact form, the single file
      input) hold on first render. Old section anchors keep working: each is
      mapped to the page that now hosts it. */
-  type PageId = "home" | "how" | "workbook" | "data" | "help";
+  type PageId = "home" | "how" | "workbook" | "data" | "help" | "contact";
   const TABS: { id: PageId; hash: string; label: string }[] = [
     { id: "home", hash: "home", label: "Home" },
     { id: "how", hash: "how", label: "How it works" },
     { id: "workbook", hash: "workbook", label: "Excel workbook" },
     { id: "data", hash: "privacy", label: "Your data" },
     { id: "help", hash: "faq", label: "Help" },
+    { id: "contact", hash: "contact", label: "Contact" },
   ];
   const PAGE_FOR_HASH: Record<string, PageId> = {
     home: "home",
@@ -106,9 +107,9 @@
     privacy: "data",
     account: "data",
     faq: "help",
-    contact: "help",
     help: "help",
     roadmap: "help",
+    contact: "contact",
   };
 
   let page = $state<PageId>("home");
@@ -142,18 +143,20 @@
       page === "home" || !tab ? baseTitle : `${tab.label} · ${baseTitle}`;
   });
 
-  const faqs = [
+  // Entries marked `nerd` describe future work and only render with Nerd
+  // mode on — a visitor with the toggle off sees only what exists today.
+  const faqs: { q: string; a: string; nerd?: boolean }[] = [
     {
       q: "Is it really free?",
-      a: "Yes. Receipts are read on your device with open-source OCR, so there is no per-receipt charge, no trial and no account. Optional boosters like an AI second opinion and cloud sync are rolling out separately and will always be off by default.",
+      a: "Yes. Receipts are read on your device with open-source OCR, so there is no per-receipt charge, no trial and no account.",
     },
     {
       q: "Where do my receipts go?",
-      a: "Nowhere, by default. Images are stored in your browser and processed on your device. Once the sign-in booster reaches you, syncing to your own private cloud workspace will be an explicit choice, and the AI booster only ever sends the receipts you allow to the model you pick.",
+      a: "Nowhere. Images are stored in your browser and processed on your device. Close the tab and they're still there; clear your browser data and they're gone. Nothing is uploaded.",
     },
     {
       q: "What do I hand to my office?",
-      a: "A polished multi-sheet Excel workbook: a summary that foots with real formulas, per-category sheets with the receipt images embedded and an insights dashboard. There is also a CSV if your system prefers imports.",
+      a: "A polished multi-sheet Excel workbook: a summary that foots with real formulas, per-category sheets with the receipt images embedded and an insights dashboard. A print packet PDF of the receipts downloads alongside for offices that keep paper copies.",
     },
     {
       q: "What kinds of files work?",
@@ -165,7 +168,8 @@
     },
     {
       q: "Can it watch a Google Drive or OneDrive folder?",
-      a: "Not yet. Both are on the roadmap: automatic Drive-folder scanning that keeps a workbook current, and saving reports straight to OneDrive. Flip on Nerd mode in the top bar to see the full roadmap on this page.",
+      a: "Not yet. Both are on the roadmap: automatic Drive-folder scanning that keeps a workbook current, and saving reports straight to OneDrive. The full roadmap is right below this FAQ.",
+      nerd: true,
     },
     {
       q: "What is Nerd mode?",
@@ -184,6 +188,16 @@
   aria-hidden="true"
   tabindex="-1"
 />
+
+{#snippet ctaMini()}
+  <div class="card cta-mini">
+    <div class="cm-copy">
+      <strong>Got a pile of receipts?</strong>
+      <span class="muted">You're about a minute from a finished report.</span>
+    </div>
+    <button class="btn btn-primary" onclick={pick}>Add receipts</button>
+  </div>
+{/snippet}
 
 <div class="landing" class:nerd-on={prefs.nerd}>
   {#if dragging}
@@ -315,7 +329,7 @@
   <div class="lpage" hidden={page !== "how"}>
     <header class="wrap page-head">
       <p class="page-no">02 · How it works</p>
-      <h2 class="page-title">From glovebox pile to filed and checked.</h2>
+      <h2 class="page-title">From glovebox pile to checked and filed.</h2>
       <p class="page-deck">
         The three steps in detail: what you can throw at it, how the review
         keeps you honest, and how merchants that only sign with a logo still
@@ -323,9 +337,8 @@
       </p>
     </header>
 
-    <TimeSection />
     <HowSection />
-    <LogoSection />
+    <TimeSection />
 
     <section id="features" class="wrap features">
       <p class="section-label">What's inside</p>
@@ -356,8 +369,10 @@
       </div>
     </section>
 
+    <LogoSection />
+
     <div class="wrap page-foot">
-      <button class="btn btn-primary" onclick={pick}>Add receipts</button>
+      {@render ctaMini()}
       <a class="next-link" href="#workbook">Next: The Excel workbook →</a>
     </div>
   </div>
@@ -378,7 +393,7 @@
     <WorkbookSection />
 
     <div class="wrap page-foot">
-      <button class="btn btn-primary" onclick={pick}>Add receipts</button>
+      {@render ctaMini()}
       <a class="next-link" href="#privacy">Next: Your data →</a>
     </div>
   </div>
@@ -411,17 +426,49 @@
             part of that.
           </p>
         </div>
-        <div class="card priv">
+        <figure class="priv-art" aria-hidden="true">
+          <svg viewBox="0 0 330 200" fill="none">
+            <!-- your browser window -->
+            <rect x="12" y="14" width="176" height="154" rx="12" stroke="var(--line-strong)" stroke-width="1.5" fill="var(--bg-raised)" />
+            <circle cx="31" cy="31" r="3" fill="var(--err)" opacity="0.5" />
+            <circle cx="43" cy="31" r="3" fill="var(--gold)" opacity="0.5" />
+            <circle cx="55" cy="31" r="3" fill="var(--ok)" opacity="0.5" />
+            <line x1="13" y1="43" x2="187" y2="43" stroke="var(--line)" stroke-width="1.5" />
+            <!-- the receipt, living inside it -->
+            <g transform="translate(58 58)">
+              <path d="M0 88 V6 a6 6 0 0 1 6 -6 h46 a6 6 0 0 1 6 6 v82 l-14.5 -9 -14.5 9 -14.5 -9 -14.5 9 z" fill="var(--bg)" stroke="var(--line-strong)" stroke-width="1.5" />
+              <line x1="11" y1="19" x2="47" y2="19" stroke="var(--cat-3)" stroke-width="4.5" stroke-linecap="round" />
+              <line x1="11" y1="34" x2="39" y2="34" stroke="var(--cat-4)" stroke-width="4.5" stroke-linecap="round" />
+              <line x1="11" y1="49" x2="44" y2="49" stroke="var(--ok)" stroke-width="4.5" stroke-linecap="round" />
+            </g>
+            <!-- shield: it stays put -->
+            <g transform="translate(152 118)">
+              <path d="M19 0 l17 6.5 v13 c0 10.5 -7.5 19 -17 23.5 c-9.5 -4.5 -17 -13 -17 -23.5 v-13 z" fill="var(--accent)" />
+              <path d="M11 20 l6.5 6.5 L29 13.5" stroke="var(--accent-ink)" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" />
+            </g>
+            <!-- the cloud is dashed, padlocked, and off to the side -->
+            <path d="M200 90 h42" stroke="var(--ink-faint)" stroke-width="2" stroke-dasharray="5 6" />
+            <g transform="translate(246 62)">
+              <path d="M20 44 h-4 a14 14 0 1 1 3 -27.7 a18 18 0 0 1 34.6 5.2 a12.5 12.5 0 0 1 -3.4 22.5 z" stroke="var(--ink-faint)" stroke-width="2" />
+              <rect x="16" y="24" width="18" height="14" rx="3.5" fill="var(--ink-faint)" />
+              <path d="M20 24 v-3 a5 5 0 0 1 10 0 v3" stroke="var(--ink-faint)" stroke-width="2.6" />
+            </g>
+            <text x="273" y="128" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">locked until</text>
+            <text x="273" y="141" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">you opt in</text>
+            <text x="100" y="188" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">everything happens here</text>
+          </svg>
+        </figure>
+        <div class="card priv db-nerd-only">
           <h4>Optional boosters</h4>
           <p class="priv-flow">
             <span class="chip">AI second opinion</span>
             <a class="chip" href="#account">cloud sync</a>
           </p>
           <p>
-            These are rolling out now; see the roadmap under Help with Nerd
-            mode on. Once enabled, the AI assist sends low-confidence receipts
-            to the model you configure, and signing in syncs your batches to
-            your own private workspace behind row-level security. Both will
+            These are rolling out now; the roadmap under Help tracks them.
+            Once enabled, the AI assist sends low-confidence receipts to the
+            model you configure, and signing in syncs your batches to your
+            own private workspace behind row-level security. Both will
             always be opt-in and <strong>off by default</strong>.
           </p>
         </div>
@@ -447,7 +494,7 @@
     <AccountSection />
 
     <div class="wrap page-foot">
-      <button class="btn btn-primary" onclick={pick}>Add receipts</button>
+      {@render ctaMini()}
       <a class="next-link" href="#faq">Next: Help →</a>
     </div>
   </div>
@@ -458,17 +505,17 @@
   <div class="lpage" hidden={page !== "help"}>
     <header class="wrap page-head">
       <p class="page-no">05 · Help</p>
-      <h2 class="page-title">Questions, answered. And a direct line.</h2>
+      <h2 class="page-title">Questions, answered.</h2>
       <p class="page-deck">
-        The short answers first; if yours isn't here, the form below goes
-        straight to the developer.
+        The short answers first. Need more? The Contact page is a direct
+        line to the developer.
       </p>
     </header>
 
     <section id="faq" class="wrap faq">
       <p class="section-label">FAQ</p>
       <h2>Questions, answered.</h2>
-      {#each faqs as f (f.q)}
+      {#each faqs.filter((f) => !f.nerd || prefs.nerd) as f (f.q)}
         <details class="card qa">
           <summary>{f.q}</summary>
           <p>{f.a}</p>
@@ -513,10 +560,29 @@
       </p>
     </section>
 
+    <div class="wrap page-foot">
+      {@render ctaMini()}
+      <a class="next-link" href="#contact">Next: Contact →</a>
+    </div>
+  </div>
+
+  <!-- =================================================================
+       PAGE · Contact
+       ================================================================= -->
+  <div class="lpage" hidden={page !== "contact"}>
+    <header class="wrap page-head">
+      <p class="page-no">06 · Contact</p>
+      <h2 class="page-title">A direct line to the developer.</h2>
+      <p class="page-deck">
+        No ticket system and no support queue: the form below opens an email
+        straight to the person who built this.
+      </p>
+    </header>
+
     <ContactSection />
 
     <div class="wrap page-foot">
-      <button class="btn btn-primary" onclick={pick}>Add receipts</button>
+      {@render ctaMini()}
       <a class="next-link" href="#home">Back to the start →</a>
     </div>
   </div>
@@ -529,7 +595,7 @@
         </a>
         <p>
           Receipts in. Report out. Read on your device, filed into an Excel
-          workbook your office will accept.
+          workbook your office will love.
         </p>
       </div>
       <nav class="foot-col" aria-label="Product pages">
@@ -543,15 +609,8 @@
         <h4>Project</h4>
         <a href="https://github.com/duedev/DueBack" rel="noopener">GitHub</a>
         <a href="#contact">Contact</a>
-        <a href="#roadmap">Roadmap</a>
+        {#if prefs.nerd}<a href="#roadmap">Roadmap</a>{/if}
       </nav>
-    </div>
-    <div class="wrap foot-legal">
-      <span>MIT license</span>
-      <span class="foot-sep">·</span>
-      <span>No account, no tracking of your receipts</span>
-      <span class="foot-sep">·</span>
-      <span>Built by one person. Feedback goes straight to the developer.</span>
     </div>
   </footer>
 </div>
@@ -787,6 +846,27 @@
     flex-wrap: wrap;
     padding: 0.4rem 0 3.4rem;
   }
+  /* The end-of-page ask: the same "Got a pile of receipts?" call to action
+     on every page, compact enough not to shout. */
+  .cta-mini {
+    flex: 1 1 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 1.05rem 1.3rem;
+  }
+  .cm-copy {
+    display: grid;
+    gap: 0.1rem;
+  }
+  .cm-copy strong {
+    font: 600 1.05rem/1.3 var(--font-display);
+  }
+  .cm-copy .muted {
+    font-size: 0.88rem;
+  }
   .next-link {
     margin-left: auto; /* the forward path reads from the right edge */
     font: 600 0.92rem/1 var(--font-ui);
@@ -887,6 +967,20 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: 1rem;
+    align-items: stretch;
+  }
+  .priv-art {
+    margin: 0;
+    display: grid;
+    align-content: center;
+    padding: 0.6rem 0.4rem;
+  }
+  .priv-art svg {
+    width: 100%;
+    height: auto;
+    max-width: 24rem;
+    justify-self: center;
+    font-family: var(--font-ui);
   }
   .priv {
     padding: 1.4rem;
@@ -1010,7 +1104,7 @@
     display: grid;
     grid-template-columns: minmax(240px, 1.4fr) repeat(2, minmax(140px, 1fr));
     gap: 2rem;
-    padding: 2.4rem 0 1.6rem;
+    padding: 2.4rem 0 2.6rem;
   }
   .foot-brand {
     display: grid;
@@ -1049,19 +1143,6 @@
   .foot-col a:hover {
     color: var(--accent);
     text-decoration: underline;
-  }
-  .foot-legal {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-    align-items: center;
-    border-top: 1px solid var(--line);
-    padding: 1rem 0 1.6rem;
-    color: var(--ink-faint);
-    font-size: 0.82rem;
-  }
-  .foot-sep {
-    opacity: 0.5;
   }
   @media (max-width: 700px) {
     .foot-in {
