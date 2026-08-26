@@ -8,6 +8,13 @@ import { phoneServiceAmount, phoneServiceLabel } from "../util/phone.ts";
 import { computeInsights, type Insights } from "./insights.ts";
 import { thumbnail } from "./images.ts";
 import {
+  imageAnchor,
+  sheetGeometry,
+  rowPtToPx,
+  DEFAULT_ROW_PT,
+  type SheetGeometry,
+} from "./anchor.ts";
+import {
   categoryChartImage,
   dailyChartImage,
   vendorsChartImage,
@@ -90,12 +97,28 @@ const FIELD_TINTS = {
   amount: { fill: "FFD8F0E3", ink: "FF116A43" },
 } as const;
 
-const IMG_DISPLAY_W = 380; // ≈ column A at width 55
-const IMG_ROW_PT = 14; // height of each image carrier row
+export const IMG_DISPLAY_W = 380; // ≈ column A at width 55 (385 px)
+/** Height of each image carrier row. 14.25pt is 19px EXACTLY — Excel lays
+ *  drawings out on a whole-pixel row grid, so a row height that isn't a
+ *  multiple of 0.75pt makes a tall receipt drift (14pt "is" 18.67px in the
+ *  model but 19px on screen: ~1.75% over 41 rows). */
+export const IMG_ROW_PT = 14.25;
+export const IMG_INSET_PX = 4; // gutter between the image and its cell's edge
 
-/** Excel column-width units → px (Calibri 11: px ≈ width·7 + 5 padding). */
-function colUnitsToPx(w: number): number {
-  return Math.round(w * 7 + 5);
+/** Carrier rows one receipt image needs. The ONE definition: the Summary's
+ *  hyperlink anchors, its amount references and the image sheet itself must
+ *  agree row for row, and they only do while they share this. */
+export function imageRows(img: { h: number } | undefined): number {
+  return img ? Math.max(1, Math.ceil(img.h / rowPtToPx(IMG_ROW_PT))) : 1;
+}
+
+/** The sheet's rendered cell sizes, for image anchoring. Non-creating reads:
+ *  asking ExcelJS for a column/row it hasn't got would materialize one. */
+function geometryOf(ws: ExcelJS.Worksheet): SheetGeometry {
+  return sheetGeometry({
+    colWidthUnits: (col) => (ws.columns ?? [])[col]?.width,
+    rowHeightPt: (row) => ws.findRow(row + 1)?.height,
+  });
 }
 
 // ── Column autofit (ExcelJS has none) ────────────────────────────────────────
@@ -240,7 +263,7 @@ export async function buildWorkbook(
     for (const rec of g.rows) {
       anchors.set(rec.id, { sheet, row: row + 1 }); // the 4pt anchor row
       const img = imageByReceipt.get(rec.id);
-      const imgRows = img ? Math.max(1, Math.ceil((img.h * 0.75) / IMG_ROW_PT)) : 1;
+      const imgRows = imageRows(img);
       amountRefs.set(rec.id, `'${sheet}'!F${row + 2 + imgRows}`); // the data row
       row += blockRows(img);
     }
@@ -266,8 +289,8 @@ export async function buildWorkbook(
 
 /** Rows one receipt block occupies on its image sheet:
  *  header band + 4pt anchor + image carrier rows + data row + spacer. */
-function blockRows(img: EmbeddedImage | undefined): number {
-  const imgRows = img ? Math.max(1, Math.ceil((img.h * 0.75) / IMG_ROW_PT)) : 1;
+export function blockRows(img: EmbeddedImage | undefined): number {
+  const imgRows = imageRows(img);
   return 1 + 1 + imgRows + 1 + 1;
 }
 
@@ -617,6 +640,7 @@ function buildImageSheet(
 
   const tint = CATEGORY_TINTS[cat] ?? "FFEDE9FF";
   const fmt = acctFormat(currency);
+  const geom = geometryOf(ws);
   let r = 3;
   rows.forEach((rec, i) => {
     // Receipt header band
@@ -636,26 +660,32 @@ function buildImageSheet(
 
     // Image carrier rows
     const img = images.get(rec.id);
-    const imgRows = img ? Math.max(1, Math.ceil((img.h * 0.75) / IMG_ROW_PT)) : 1;
+    const imgRows = imageRows(img);
+    // Size the carrier rows FIRST: the anchor math measures the rows it
+    // spans, and an unsized row would measure as Excel's 15pt default.
+    for (let k = 0; k < imgRows; k++) {
+      ws.getRow(r + k).height = IMG_ROW_PT;
+    }
     if (img) {
       // twoCellAnchor (tl + br): iOS Quick Look and Apple Numbers skip
-      // oneCellAnchor (tl + ext) images entirely. The bottom-right corner is
-      // derived from the same pixel math the carrier rows use, so desktop
-      // Excel renders identically.
+      // oneCellAnchor (tl + ext) images entirely. Both corners come from the
+      // sheet's real px geometry (anchor.ts), so the image renders at exactly
+      // its display size — a fractional {col} would be rescaled by ExcelJS's
+      // width×10000 model and come out ~6.75× too narrow.
+      // Inset horizontally only: the carrier rows are sized to the image's
+      // own height, so a top gutter would push its bottom edge into the data
+      // row. The 4pt anchor row above the image is the gap.
+      const range = imageAnchor(
+        { col: 0, row: r - 1, x: IMG_INSET_PX, y: 0, w: img.w, h: img.h },
+        geom,
+      );
       ws.addImage(img.id, {
-        tl: { col: 0.05, row: r - 1 + 0.05 },
-        br: {
-          col: 0.05 + img.w / colUnitsToPx(55),
-          row: r - 1 + 0.05 + (img.h * 0.75) / IMG_ROW_PT,
-        },
+        ...range,
         editAs: "oneCell",
       } as Parameters<typeof ws.addImage>[1]);
     } else {
       ws.getCell(r, 1).value = "(image unavailable)";
       ws.getCell(r, 1).font = { italic: true, size: 9, color: { argb: FOOT_GRAY } };
-    }
-    for (let k = 0; k < imgRows; k++) {
-      ws.getRow(r + k).height = IMG_ROW_PT;
     }
     r += imgRows;
 
@@ -701,7 +731,11 @@ function buildInsightsSheet(
     },
   });
   const COLS = 12;
-  const widths = [22, 12, 14, 2, 18, 13, 13, 13, 13, 13, 13, 13];
+  // Real px: [154, 84, 98, 14, 126, 91×6, 105]. The two-up grid has to CONTAIN
+  // a chart (900px × SCALE = 558px): columns 0–5 give 567px, and the trailing
+  // column is widened so columns 6–11 give 560px — with 13 there they gave
+  // 546 and the right-hand chart hung past the band.
+  const widths = [22, 12, 14, 2, 18, 13, 13, 13, 13, 13, 13, 15];
   widths.forEach((w, i) => (ws.getColumn(i + 1).width = w));
 
   bandRow(ws, 1, COLS, "Insights", { bg: TITLE_DARK, size: 16, height: 30, align: "center" });
@@ -789,19 +823,10 @@ function buildInsightsSheet(
     [charts.daily, charts.cumulative],
     [charts.vendors, null],
   ];
-  // twoCellAnchor for the same iOS Quick Look / Numbers reason as the
-  // receipt images: the bottom-right corner walks the actual column widths.
-  const colAtPx = (startCol: number, px: number): number => {
-    let i = startCol;
-    let rem = px;
-    for (;;) {
-      const wpx = colUnitsToPx(widths[i] ?? 9);
-      if (rem <= wpx) return i + rem / wpx;
-      rem -= wpx;
-      i++;
-    }
-  };
-  const DEFAULT_ROW_PX = 20; // 15pt default row height
+  // twoCellAnchor for the same iOS Quick Look / Numbers reason as the receipt
+  // images, and the same px-exact anchor math (anchor.ts) so a chart keeps
+  // its rendered aspect ratio instead of losing part of its last column.
+  const geom = geometryOf(ws);
   let r = 8;
   for (const [left, right] of pairs) {
     let rowsUsed = 0;
@@ -814,11 +839,12 @@ function buildInsightsSheet(
       const w = Math.round(img.width * SCALE);
       const h = Math.round(img.height * SCALE);
       ws.addImage(id, {
-        tl: { col, row: r - 1 },
-        br: { col: colAtPx(col, w), row: r - 1 + h / DEFAULT_ROW_PX },
+        ...imageAnchor({ col, row: r - 1, x: 0, y: 0, w, h }, geom),
         editAs: "oneCell",
       } as Parameters<typeof ws.addImage>[1]);
-      rowsUsed = Math.max(rowsUsed, Math.ceil(h / 19) + 2);
+      // Chart rows are unsized, so they render at the default height — the
+      // same number the anchor walk uses.
+      rowsUsed = Math.max(rowsUsed, Math.ceil(h / rowPtToPx(DEFAULT_ROW_PT)) + 2);
     }
     r += rowsUsed;
   }

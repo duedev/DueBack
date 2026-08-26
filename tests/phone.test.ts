@@ -6,6 +6,7 @@ import {
   normalizeMonths,
   phoneServiceAmount,
   phoneServiceLabel,
+  phoneServiceRate,
 } from "../src/util/phone.ts";
 import { PHONE_SERVICE_MONTHLY_USD } from "../src/config/constants.ts";
 
@@ -18,7 +19,7 @@ test("normalizeMonths filters junk, dedupes and sorts", () => {
   );
 });
 
-test("phoneServiceAmount is the fixed rate × selected months", () => {
+test("phoneServiceAmount is the default rate × selected months", () => {
   assert.equal(phoneServiceAmount(undefined), 0);
   assert.equal(phoneServiceAmount({ enabled: false, months: ["2026-01"] }), 0);
   assert.equal(phoneServiceAmount({ enabled: true, months: [] }), 0);
@@ -63,5 +64,44 @@ test("phoneServiceLabel reads naturally", () => {
   assert.equal(
     phoneServiceLabel({ enabled: true, months: ["2026-06"] }),
     "1 month × $63.00/month (Jun 2026)",
+  );
+});
+
+// ── an adjustable monthly rate, defaulting to the constant ──────────────────
+
+test("phoneServiceRate defaults, honours a set rate, and rejects garbage", () => {
+  const months = ["2026-01"];
+  // A batch stored before the rate was adjustable carries none.
+  assert.equal(phoneServiceRate({ enabled: true, months }), PHONE_SERVICE_MONTHLY_USD);
+  assert.equal(phoneServiceRate(undefined), PHONE_SERVICE_MONTHLY_USD);
+  assert.equal(phoneServiceRate({ enabled: true, months, rate: 85 }), 85);
+  assert.equal(phoneServiceRate({ enabled: true, months, rate: 42.555 }), 42.56);
+  // An explicit zero is a real choice, not a missing value.
+  assert.equal(phoneServiceRate({ enabled: true, months, rate: 0 }), 0);
+  // Junk out of a synced payload falls back rather than poisoning the total.
+  for (const rate of [NaN, Infinity, -10, "70" as unknown as number]) {
+    assert.equal(
+      phoneServiceRate({ enabled: true, months, rate }),
+      PHONE_SERVICE_MONTHLY_USD,
+      String(rate),
+    );
+  }
+});
+
+test("the amount follows the batch's own rate", () => {
+  const months = ["2026-01", "2026-02", "2026-03"];
+  assert.equal(phoneServiceAmount({ enabled: true, months, rate: 80 }), 240);
+  assert.equal(phoneServiceAmount({ enabled: true, months, rate: 0 }), 0);
+  // No rate stored → still the default, so existing reports don't move.
+  assert.equal(
+    phoneServiceAmount({ enabled: true, months }),
+    3 * PHONE_SERVICE_MONTHLY_USD,
+  );
+});
+
+test("the report label quotes the rate actually used", () => {
+  assert.equal(
+    phoneServiceLabel({ enabled: true, months: ["2026-01", "2026-02"], rate: 79.5 }),
+    "2 months × $79.50/month (Jan–Feb 2026)",
   );
 });

@@ -45,7 +45,7 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + Fraunces).
 | `src/supabase/` | `client.ts` (null unless `VITE_SUPABASE_URL/ANON_KEY`), `auth.ts`, `aiProxy.ts` |
 | `src/onedrive/` | Optional "Save to OneDrive" (no SDK, hidden unless `VITE_ONEDRIVE_CLIENT_ID`; ONEDRIVE_SETUP.md): `core.ts` (pure, Node-tested: PKCE, auth URL, token mapping, Graph upload w/ injectable fetch), `store.ts` (env + localStorage tokens), `popup.ts` (OAuth-popup relay, called by `main.ts` before mount), `index.ts` (connect popup / refresh / `uploadReport` → `Apps/DueBack`) |
 | `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark — dark is a warm ladder anchored on `#12100e`, the PWA chrome color), `state.svelte.ts` (the one reactive bridge; `applyTheme` also syncs the theme-color meta pair), `App/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle`; `Landing.svelte` is the marketing orchestrator over `landing/` (Hero/How/Time/Logo/Workbook/Account/Contact partials + `landing.css` shared vocabulary) |
-| `src/export/` | `zip.ts` (dependency-free ZIP for the images download), `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells hyperlink to per-receipt anchors on the category image sheets; anchors precomputed via `blockRows` — keep in sync with the image-block layout; no flat "All Receipts" sheet — the Summary IS the receipt table; **single source of truth**: category-sheet amounts are the stored values, Summary amount cells reference them, Insights KPIs/tables are COUNT/MAX/SUMIF formulas over Summary — edit one amount and everything re-foots; optional allowance lines — per diem (`Batch.perDiem`, `util/perdiem.ts`) and phone service (`Batch.phoneService`, `util/phone.ts`) — sit between the sections and the TOTAL; Insights = executive dashboard of KPI tiles + 5 charts, **opt-in via `WorkbookOptions.insights`, default off**), `charts.ts` (Chart.js→PNG; native xlsx charts are NOT possible with ExcelJS — the PNGs are the deliberate trade), `insights.ts`, `csv.ts`, `images.ts` |
+| `src/export/` | `zip.ts` (dependency-free ZIP for the images download), `anchor.ts` (px→EMU drawing anchors — the one place image geometry is computed), `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells hyperlink to per-receipt anchors on the category image sheets; anchors precomputed via `blockRows` — keep in sync with the image-block layout; no flat "All Receipts" sheet — the Summary IS the receipt table; **single source of truth**: category-sheet amounts are the stored values, Summary amount cells reference them, Insights KPIs/tables are COUNT/MAX/SUMIF formulas over Summary — edit one amount and everything re-foots; optional allowance lines — per diem (`Batch.perDiem`, `util/perdiem.ts`) and phone service (`Batch.phoneService`, `util/phone.ts`) — sit between the sections and the TOTAL; Insights = executive dashboard of KPI tiles + 5 charts, **opt-in via `WorkbookOptions.insights`, default off**), `charts.ts` (Chart.js→PNG; native xlsx charts are NOT possible with ExcelJS — the PNGs are the deliberate trade), `insights.ts`, `csv.ts`, `images.ts` |
 | `supabase/` | `migrations/0001_core.sql` (tables+RLS+storage+realtime), `0002_pgvector.sql` (optional), `functions/ai-extract` (key-holding chat-completions proxy), `functions/logo-search` |
 | `scripts/` | `vendor-tesseract.mjs` (prebuild), `vendor-paddle.mjs` (opt-in), `export_vendor_db.py` (regenerates vendorDb.extra.json from `../Reimbursements/vendor_db.py`), `gen-icons.mjs` |
 | `tests/` | node:test via tsx; `testkit/` = the fixed 9-challenge accuracy gate (+ logo case); `e2e.mjs` + `screenshots.mjs` (Playwright vs `vite preview`) |
@@ -134,6 +134,30 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   `vendor_unclear` — forces `needs_review` via `extract.forcesManualReview()`.
   Tips (TIP_RE) widen footing's expectations; per-gallon price lines are
   excluded from reconcile's `allMax`.
+- **Sheet geometry has exactly two conversions, both in `export/anchor.ts`:**
+  a stored column width → px is ECMA-376 §18.3.1.13
+  (`trunc(((256·w + trunc(128/7))/256)·7)`, so 55 → **385** px and the default
+  9.140625 → 64) — the `w·7+5` form converts Excel's *UI character count*, and
+  ExcelJS writes `column.width` verbatim into `<col width>`, so using it
+  overstated every column by 5 px. Row points → px **snaps to whole pixels**
+  (Excel's dialog: "14.25 (19 pixels)"); `IMG_ROW_PT` is 14.25 for exactly
+  that reason — an unaligned row height drifts ~1.75% over a 40-row receipt.
+- **`imageRows()` is the one definition of a receipt's carrier rows.** The
+  Summary's `#` hyperlink anchors, its amount references (`'Sheet'!F…`) and
+  the image sheet each need the same row count; it used to live as three
+  copies of `ceil(h*0.75/IMG_ROW_PT)`. Node tests can't catch a desync through
+  `buildWorkbook` (no canvas → no images → always the 1-row branch), so
+  `tests/workbook.test.ts` asserts the block contract on the helpers directly.
+- **Image anchors are native EMU (`export/anchor.ts`), never a fractional
+  `{col}`.** ExcelJS converts a fractional column with `colWidth = width ×
+  10000` EMU (lib/doc/anchor.js) while a rendered column is its real px ×
+  9525 — for column A at width 55 that is 550,000 vs 3,667,125 EMU, so an
+  image sized as a fraction of the column rendered **6.75× too narrow** (the
+  "skinny receipts" report; heights were fine because that fraction is a row
+  *count*). `imageAnchor()` walks the sheet's real column widths/row heights
+  and hands ExcelJS `nativeCol/nativeColOff/...`, which `CellPositionXform`
+  writes through verbatim. Carrier rows must be sized BEFORE the anchor is
+  computed — an unsized row measures as Excel's 15pt default.
 - **Workbook images use twoCellAnchor (tl + br), never tl + ext** — iOS Quick
   Look and Apple Numbers skip oneCellAnchor images entirely (the "images don't
   render on iPhone" report). br is derived from the same px math as the
@@ -146,7 +170,8 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   none): merged band cells are skipped, notes wrap in a capped column
   (`NOTES_WRAP_CHARS` drives row heights). Insights keeps FIXED widths — the
   two-up chart grid anchors images at column offsets 0/6, so autofitting there
-  would overlap the charts. Chart text renders ~26px (titles 34px) because the
+  would overlap the charts; the trailing column is widened (15, not 13) so
+  columns 6–11 actually contain a 558px chart. Chart text renders ~26px (titles 34px) because the
   900px canvases embed at 0.62 scale (≈ 16px / 21px on-sheet).
 - **Receipts are renamed post-extraction** to `{cat}_{MM-DD-YY}_{vendor}.ext`
   (`util/rename.ts`, the original app's convention); the upload's name survives
@@ -157,10 +182,13 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   sections and the TOTAL, which foots them. Insights KPIs stay receipt
   analytics on purpose (allowances would skew Avg/Receipt and Largest), and
   the CSV stays raw receipt rows. An allowances-only workbook (0 receipts) is
-  legal. Phone service is a fixed rate (`PHONE_SERVICE_MONTHLY_USD`,
-  constants.ts) × user-picked "YYYY-MM" months (`util/phone.ts` validates;
-  ExportBar's picker is a ‹ year › pager with 12 chips — any month of any
-  year, deliberately uncapped).
+  legal. Phone service is a per-batch monthly rate (`PhoneService.rate`,
+  **default** `PHONE_SERVICE_MONTHLY_USD` = 63) × user-picked "YYYY-MM" months
+  (`util/phone.ts` validates; ExportBar's picker is a $-per-month field plus a
+  ‹ year › pager with 12 chips — any month of any year, deliberately
+  uncapped). `phoneServiceRate()` is the one place the default lives: a batch
+  saved before the rate was adjustable (or one carrying junk from a synced
+  payload) still reimburses at 63, while an explicit 0 stays 0.
 - **ZIPs are expanded at intake too** (`addFiles` → `pipeline/unzip.ts`, lazily
   imported — `looksLikeZip` lives in `util/files.ts` so asking the question
   doesn't pull the reader into the main chunk). Entries run back through the

@@ -126,6 +126,8 @@ export const PROCESSING = {
 
 export const CURRENCY_DEFAULT = "USD";
 
-/** Phone-service reimbursement: a fixed monthly rate — the report option
- *  multiplies it by the months the user selects (util/phone.ts). */
+/** Phone-service reimbursement: the DEFAULT monthly rate — the report option
+ *  multiplies it by the months the user selects (util/phone.ts). The rate is
+ *  editable per batch (`PhoneService.rate`); this is what an untouched — or a
+ *  pre-existing — batch reimburses. */
 export const PHONE_SERVICE_MONTHLY_USD = 63;
