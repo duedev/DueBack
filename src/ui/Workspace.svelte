@@ -93,12 +93,13 @@
           <button
             class="btn btn-ghost clear-all"
             onclick={() => app.clearAll()}
+            aria-label="Delete all receipts"
             title="Delete all receipts"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
             </svg>
-            Delete all
+            <span class="ca-label">Delete all</span>
           </button>
         {/if}
         <button
@@ -261,6 +262,26 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
+  }
+  /* Phone widths: the header must fit the viewport — with the root
+     overflow-x clip an overflowing row wouldn't pan, it would put Settings
+     and the theme toggle permanently off-screen. The wordmark and the
+     Delete-all label give way (aria-labels keep the names) and anything
+     still too wide wraps to a second row instead of widening the page. */
+  @media (max-width: 560px) {
+    .ws-head-in {
+      flex-wrap: wrap;
+      gap: 0.35rem 0.6rem;
+    }
+    .brand-name {
+      display: none;
+    }
+    .clear-all .ca-label {
+      display: none;
+    }
+    .progress {
+      font-size: 0.82rem;
+    }
   }
 
   .ws-main {

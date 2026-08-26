@@ -32,6 +32,19 @@ test("a clean model response maps to a high-confidence extraction", () => {
   assert.ok(!ex.flags.some((f) => f.code === "no_amount"));
 });
 
+test("a stray currency field from a model is ignored — extraction is USD-only", () => {
+  // The schema no longer asks for a currency, but a model may still send one.
+  const ex = visionToExtraction({
+    vendor: "Cafe Berlin",
+    date: "2026-03-14",
+    amount: 19.9,
+    tax: 0,
+    currency: "EUR",
+    category: "Meals",
+  });
+  assert.equal(ex.currency, "USD");
+});
+
 test("string amounts and non-ISO dates are coerced/flagged", () => {
   const ex = visionToExtraction({
     vendor: "Shell",

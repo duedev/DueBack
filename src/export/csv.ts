@@ -44,7 +44,9 @@ export function toCsv(receipts: Receipt[]): string {
         r.date.value,
         r.vendor.value,
         safeAmount(r.amount.value).toFixed(2),
-        r.currency,
+        // USD-only app: pinned so a legacy row that still stores another code
+        // can't contradict the workbook, which always renders $.
+        "USD",
         Math.round(r.confidence * 100),
         statusOf(r),
         notesOf(r),
