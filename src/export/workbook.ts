@@ -195,21 +195,26 @@ export async function buildWorkbook(
   wb.created = new Date();
   wb.properties.date1904 = false;
 
-  // Embed each receipt image once (encoded 2× the display size so it stays
-  // sharp when printed); reused by id across sheets.
+  // Embed each receipt image once, displayed at column A's full width so
+  // every receipt is readable in place, no zooming. Width-fit encoding at 2×
+  // the display width keeps that sharp: the old long-EDGE cap left a
+  // portrait receipt with ~half the horizontal pixels the column shows, and
+  // the old `min(scale, 1)` never scaled a narrow one UP, so tall receipts
+  // rendered as a skinny strip beside their column. Reused by id across
+  // sheets.
   const imageByReceipt = new Map<string, EmbeddedImage>();
   for (const r of rows) {
     const key = r.annotatedKey ?? r.cleanedKey ?? r.fileKey;
     const blob = await getBlob(key);
     if (!blob) continue;
     try {
-      const t = await thumbnail(blob, IMG_DISPLAY_W * 2, 0.8);
+      const t = await thumbnail(blob, IMG_DISPLAY_W * 2, 0.8, "width");
       const id = wb.addImage({ buffer: t.buffer, extension: t.ext });
-      const scale = Math.min(IMG_DISPLAY_W / t.width, 1);
+      const scale = IMG_DISPLAY_W / t.width;
       imageByReceipt.set(r.id, {
         id,
-        w: Math.round(t.width * scale),
-        h: Math.round(t.height * scale),
+        w: IMG_DISPLAY_W,
+        h: Math.max(1, Math.round(t.height * scale)),
       });
     } catch {
       /* skip image on failure — the row still exports */

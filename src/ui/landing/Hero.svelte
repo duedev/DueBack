@@ -23,6 +23,46 @@
 </script>
 
 <header class="wrap hero">
+  <div class="hero-copy">
+    <h1>Receipts in.<br />Report out.</h1>
+    <!-- Primary action sits on the RIGHT: the reading eye lands there last,
+         where the "go" button belongs. -->
+    <div class="hero-ctas">
+      {#if app.receipts.length > 0}
+        <button class="btn btn-lg" onclick={() => app.enter()}>
+          Back to your receipts ({app.receipts.length})
+        </button>
+      {:else}
+        <a class="btn btn-lg" href="#how">See how it works</a>
+      {/if}
+      <button class="btn btn-primary btn-lg" onclick={onAdd}>
+        Add receipts
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 16V4m0 0 4.5 4.5M12 4 7.5 8.5M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2" />
+        </svg>
+      </button>
+    </div>
+    <p class="hero-drop">…or just drag receipts anywhere onto this page.</p>
+    <p class="hero-note">
+      <strong>Runs entirely in your browser. Your receipts never leave your
+      device.</strong>
+    </p>
+    <ul class="hero-stats" aria-label="Key facts">
+      <li class="stat">
+        <span class="stat-n">$0</span>
+        <span class="stat-l">per receipt</span>
+      </li>
+      <li class="stat">
+        <span class="stat-n">~1 min</span>
+        <span class="stat-l">pile to finished report</span>
+      </li>
+      <li class="stat">
+        <span class="stat-n">On-device</span>
+        <span class="stat-l">receipts stay in your browser</span>
+      </li>
+    </ul>
+  </div>
+
   <!-- The product story as a strip: a receipt is scanned, the read fields
        pop onto an approved card, and the workbook total re-foots. Pure CSS,
        no images; one shared 8s clock sequences the stages. -->
@@ -88,52 +128,6 @@
     </div>
   </div>
 
-  <div class="hero-copy">
-    <h1>Receipts in.<br />Report out.</h1>
-    <p class="hero-sub">
-      Snap or drop a pile of receipts. They're read on your device: the
-      printed text, plus any brand logos you've taught it. You review the
-      flagged ones in seconds, and out comes a polished Excel workbook your
-      office will actually accept.
-    </p>
-    <!-- Primary action sits on the RIGHT: the reading eye lands there last,
-         where the "go" button belongs. -->
-    <div class="hero-ctas">
-      {#if app.receipts.length > 0}
-        <button class="btn btn-lg" onclick={() => app.enter()}>
-          Back to your receipts ({app.receipts.length})
-        </button>
-      {:else}
-        <a class="btn btn-lg" href="#how">See how it works</a>
-      {/if}
-      <button class="btn btn-primary btn-lg" onclick={onAdd}>
-        Add receipts
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 16V4m0 0 4.5 4.5M12 4 7.5 8.5M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2" />
-        </svg>
-      </button>
-    </div>
-    <p class="hero-drop">…or just drag receipts anywhere onto this page.</p>
-    <p class="hero-note">
-      <strong>Runs entirely in your browser. Your receipts never leave your
-      device.</strong>
-    </p>
-    <ul class="hero-stats" aria-label="Key facts">
-      <li class="stat">
-        <span class="stat-n">$0</span>
-        <span class="stat-l">per receipt</span>
-      </li>
-      <li class="stat">
-        <span class="stat-n">~1 min</span>
-        <span class="stat-l">pile to finished report</span>
-      </li>
-      <li class="stat">
-        <span class="stat-n">On-device</span>
-        <span class="stat-l">receipts stay in your browser</span>
-      </li>
-    </ul>
-  </div>
-
   <!-- Scroll cue: the hero fills the first screen, so a soft accent arrow
        says there's more; it fades away once scrolling starts. -->
   <button
@@ -153,7 +147,7 @@
   .hero {
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
     align-items: center;
     gap: 3rem;
     padding: 3rem 0 4rem;
@@ -161,24 +155,14 @@
        pitch alone; the next section arrives by scrolling, cued below. */
     min-height: calc(100dvh - 4.8rem);
   }
-  .hero-copy {
-    /* Centered within its column — the copy hugged the column's left edge
-       and read as drifting toward the page center. */
-    justify-self: center;
-  }
   .hero-copy h1 {
     font-size: clamp(2.5rem, 5.4vw, 4rem);
-  }
-  .hero-sub {
-    font-size: 1.14rem;
-    color: var(--ink-soft);
-    max-width: 34rem;
   }
   .hero-ctas {
     display: flex;
     flex-wrap: wrap;
     gap: 0.8rem;
-    margin: 1.6rem 0 1rem;
+    margin: 1.8rem 0 1rem;
   }
   /* Advertises the page-wide drop target (Landing.svelte owns the
      listeners); pointless on touch devices, so hidden there. */
@@ -220,10 +204,7 @@
     .hero {
       grid-template-columns: 1fr;
       padding-top: 2.5rem;
-    }
-    /* Stacked: the pitch reads before the animation. */
-    .hero-visual {
-      order: 2;
+      min-height: auto; /* stacked layout: let content set the height */
     }
   }
   @media (max-width: 560px) {
@@ -241,18 +222,23 @@
     }
   }
 
-  /* ---- hero visual: receipt → approved card → workbook ---- */
+  /* ---- hero visual: receipt → approved card → workbook ----
+     One fixed-width column so all three papers and both arrows share the
+     same edges — mixed widths centered against each other read as
+     misalignment (the "funny spacing" report). */
   .hero-visual {
+    width: min(330px, 100%);
+    justify-self: center;
     display: grid;
-    gap: 0.65rem;
+    gap: 0.7rem;
     justify-items: center;
   }
 
   .receipt {
     position: relative;
-    width: min(240px, 100%);
-    padding: 0.95rem 0.85rem;
-    font: 500 0.66rem/1.45 var(--font-mono);
+    width: 100%;
+    padding: 0.95rem 1rem;
+    font: 500 0.68rem/1.5 var(--font-mono);
     overflow: hidden;
   }
   .r-vendor {
@@ -348,7 +334,7 @@
   }
 
   .approved {
-    width: min(330px, 100%);
+    width: 100%;
     padding: 0.75rem 0.9rem;
     font: 500 0.75rem/1.4 var(--font-ui);
   }
@@ -397,7 +383,7 @@
   }
 
   .book {
-    width: min(330px, 100%);
+    width: 100%;
     overflow: hidden;
     font: 500 0.72rem/1.4 var(--font-ui);
   }
@@ -488,9 +474,6 @@
     }
   }
   @media (max-width: 900px) {
-    .hero {
-      min-height: auto; /* stacked layout: let content set the height */
-    }
     .scroll-cue {
       display: none;
     }

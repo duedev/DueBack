@@ -43,7 +43,7 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + **Lora** for display; Lo
 | `src/store/` | `db.ts` (IndexedDB v1: batches/receipts/jobs/blobs/brands/kv), `repo.ts` (the one read/write + notify seam; deletes record kv pending-delete entries for sync), `sync.ts` (Supabase mirror: LWW on `updatedAt` BOTH ways — pull via `syncMerge.remoteAction`, push via migration 0004's `lww_guard` trigger; deletes propagate as `deleted_at` tombstones consumed from kv `sync.pendingDeletes` and pushed before upserts and before the first pull; realtime on receipts+batches+brand_logos; uploaded-blob memory is per-account kv `sync.uploadedBlobs.<uid>`), `syncMerge.ts` (pure Node-tested sync decisions: LWW/tombstone action, pending-delete log, batch adoption), `jobs.ts` (saved job name⇄number pairs in kv `jobs.saved`, local-only; pure list helpers are Node-tested) |
 | `src/supabase/` | `client.ts` (null unless `VITE_SUPABASE_URL/ANON_KEY`), `auth.ts`, `aiProxy.ts` |
 | `src/onedrive/` | Optional "Save to OneDrive" (no SDK, hidden unless `VITE_ONEDRIVE_CLIENT_ID`; ONEDRIVE_SETUP.md): `core.ts` (pure, Node-tested: PKCE, auth URL, token mapping, Graph upload w/ injectable fetch), `store.ts` (env + localStorage tokens), `popup.ts` (OAuth-popup relay, called by `main.ts` before mount), `index.ts` (connect popup / refresh / `uploadReport` → `Apps/DueBack`) |
-| `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark — dark is a warm ladder anchored on `#12100e`, the PWA chrome color), `state.svelte.ts` (the one reactive bridge; `applyTheme` also syncs the theme-color meta pair), `App/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle`, `BrandLogo.svelte` (the receipt+return-arrow mark — same glyph as `public/icons/favicon.svg`, keep in sync; used by both headers and the footer); `Landing.svelte` is the marketing orchestrator over `landing/` (Hero/How/Time/Logo/Workbook/Account/Contact partials + `landing.css` shared vocabulary) — hash-routed into six "pages" (Home/How/Workbook/Your data/Help/Contact) with a Nerd-mode toggle (`landing/prefs.svelte.ts`, kv-free localStorage) revealing `.db-nerd` engineering notes |
+| `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark — dark is a warm ladder anchored on `#12100e`, the PWA chrome color), `state.svelte.ts` (the one reactive bridge; `applyTheme` also syncs the theme-color meta pair), `App/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle`, `BrandLogo.svelte` (the receipt+return-arrow mark — same glyph as `public/icons/favicon.svg`, keep in sync; used by both headers and the footer); `Landing.svelte` is the marketing orchestrator over `landing/` (Hero/How/Logo/Workbook/Contact partials + `landing.css` shared vocabulary) — ONE scrolling page with a sticky anchor nav (scroll-spy highlights the section in view), a nerd-only Roadmap section, and a Nerd-mode toggle (`landing/prefs.svelte.ts`, kv-free localStorage) revealing `.db-nerd` engineering notes |
 | `src/export/` | `zip.ts` (dependency-free ZIP for the images download), `printPdf.ts` (dependency-free print packet: receipts 2-up on Letter with the employee/job header, Node-tested; ExportBar downloads it WITH the workbook — kv `report.printPacket`, default ON), `anchor.ts` (px→EMU drawing anchors — the one place image geometry is computed), `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells hyperlink to per-receipt anchors on the category image sheets; anchors precomputed via `blockRows` — keep in sync with the image-block layout; no flat "All Receipts" sheet — the Summary IS the receipt table; **single source of truth**: category-sheet amounts are the stored values, Summary amount cells reference them, Insights KPIs/tables are COUNT/MAX/SUMIF formulas over Summary — edit one amount and everything re-foots; optional allowance lines — per diem (`Batch.perDiem`, `util/perdiem.ts`) and phone service (`Batch.phoneService`, `util/phone.ts`) — sit between the sections and the TOTAL; Insights = executive dashboard of KPI tiles + 5 charts, **`WorkbookOptions.insights` defaults off at the API; the ExportBar toggle defaults ON (kv `report.insights`)**), `charts.ts` (Chart.js→PNG; native xlsx charts are NOT possible with ExcelJS — the PNGs are the deliberate trade), `insights.ts`, `csv.ts`, `images.ts` |
 | `supabase/` | `migrations/0001_core.sql` (tables+RLS+storage+realtime), `0002_pgvector.sql` (optional), `0003_ai_limits.sql` (`ai_usage` per-user daily AI counts, service-role only), `0004_sync_integrity.sql` (`deleted_at` tombstones, `lww_guard` trigger, composite `(user_id, id)` PKs, realtime for batches/brand_logos), `functions/ai-extract` (POLICED key-holding proxy: model allowlist `AI_ALLOWED_MODELS`, max_tokens cap, per-user daily limit `AI_DAILY_LIMIT`; pure policy in `policy.ts`, Node-tested), `functions/logo-search` |
 | `scripts/` | `vendor-tesseract.mjs` (prebuild), `vendor-paddle.mjs` (opt-in), `export_vendor_db.py` (regenerates vendorDb.extra.json from `../Reimbursements/vendor_db.py`), `gen-icons.mjs` |
@@ -101,27 +101,37 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   screenshots drive it via `.first()`; Hero and the final CTA trigger it
   through the `onAdd` prop / `pick()`. The hero h1 must keep matching
   `/Receipts in/` (both test suites wait on it).
-- **The landing is one document routed into five "pages" by the hash**
-  (`#how`, `#workbook`, `#privacy`→Your data, `#faq`/`#contact`/`#roadmap`→Help;
-  old section anchors map to their host page and still scroll to the section).
-  **`#process` belongs to the WORKSPACE**: App.svelte stamps it while
-  `showWorkspace` (replaceState, no history spam), deep-links into the app,
-  and `goHome()` clears it synchronously BEFORE the surface swap so the
-  landing router can't read the stale hash and bounce back in. The roadmap
-  section is Nerd-mode-only (`.db-nerd-only` in landing.css, same gate as
-  the margin notes); the contact form defaults the tuning-bundle checkbox ON
-  and its button reads "Send email" with the mail-app explainer in a title
-  tooltip.
-  All pages STAY MOUNTED — inactive ones get the `hidden` attribute, never
-  unmount — because the e2e asserts `#contact form` and the hero h1 at first
-  render, and `getByRole` cannot see hidden elements, so Home must be the
-  default page. Nerd mode stamps `.nerd-on` on `.landing`; the `.db-nerd`
-  notes and their reduced-motion end-state live in `landing.css` (global
-  vocabulary, partials contribute plain markup). The WHOLE landing is a drop
+- **The landing is ONE scrolling page; the hash is only an anchor** (nav:
+  `#how`, `#workbook`, `#faq`, `#contact`; scroll-spy lights the active
+  link). Every hash the multi-page eras handed out still lands via
+  `ANCHOR_FOR_HASH` (`#privacy`/`#account` → their FAQ `<details>`, popped
+  open before scrolling; `#time`/`#features` → `#how`; `#help` → `#faq`;
+  `#roadmap` → the nerd-only roadmap; `#home` → top) — keep old links
+  working when sections move; nerd-gated targets fall back to a visible
+  host (`VISIBLE_FALLBACK`: account→privacy, roadmap→faq) when the toggle
+  is off. **`#process` belongs to the WORKSPACE**: App.svelte stamps it
+  while `showWorkspace` (replaceState, no history spam), deep-links into
+  the app, and `goHome()` clears it synchronously BEFORE the surface swap
+  so the landing router can't read the stale hash and bounce back in.
+  Anchor landings clear the sticky nav via `scroll-margin-top` on
+  `.landing [id]` in `landing.css` (bigger value under 860px for the
+  two-row nav) — without it sections start underneath the nav. Everything
+  stays mounted and visible (nerd-gated pieces excepted), so the e2e's
+  first-render asserts (`#contact form`, hero h1) hold. The roadmap section
+  and the in-progress boosters/Drive FAQ entries are Nerd-mode-only
+  (`.db-nerd-only` in landing.css / `nerd`-flagged faq entries — same gate
+  as the margin notes); the contact form defaults the tuning-bundle
+  checkbox ON and its button reads "Send email" with the mail-app explainer
+  in a title tooltip. Nerd mode stamps `.nerd-on` on `.landing`; the
+  `.db-nerd` notes and their reduced-motion end-state live in `landing.css`
+  (global vocabulary, partials contribute plain markup). The WHOLE landing
+  is a drop
   target: window-level drag listeners in `Landing.svelte` (guarded on the
   drag carrying Files) raise a pointer-events-none `.drop-veil` and route the
   drop through the same `addFiles` path as the pickers — the e2e pins veil,
-  ingest, and clear.
+  ingest, and clear. The Your-data page was condensed into the FAQ, and the
+  old How-page extras were folded into the three steps (the time-race card
+  is HowSection's sticky rail; the features trio became step body copy).
 - **Landing motion:** shared keyframes live in `landing/landing.css` (global,
   `db-`prefixed) because Svelte can't share scoped keyframes across
   components; section-local keyframes stay scoped (same `db-` names). Every
@@ -143,9 +153,12 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   inks in dark). The global `:focus-visible` no longer forces a border-radius;
   controls inside `overflow:hidden` containers (Workspace `.seg-btn`, FAQ/How
   `summary`) draw INSET focus rings locally because the outside halo clips.
-- **#account's Drive-folder flow is marketing for a planned feature** — keep
-  the "Planned"/"coming soon" badges and future tense until it ships; the
-  sign-in/private-workspace/brand-sync claims are the shipped part.
+- **The Drive-folder story is marketing for planned/in-progress work** — it
+  lives in the nerd-gated FAQ entries ("What about cloud sync and the AI
+  assist?", anchored `#account`, and "Can it watch a Google Drive or
+  OneDrive folder?") and the roadmap; keep the future tense until each
+  piece ships. With Nerd mode off the page claims only the local-first
+  story that exists today.
 - **`npm run e2e` is the real-OCR accuracy gate** — four image receipts (easy
   coffee, fuel with per-gallon pricing + FUEL TOTAL, split-label TOTAL, a
   skewed scan) plus a 2-page PDF run through actual Tesseract in Chromium with
@@ -180,32 +193,34 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   `applyPatch` re-bakes the annotated copy), and logged for training.
 - **Landing layout invariants:** the hero fills the first screen
   (`min-height: calc(100dvh - 4.8rem)`) so Why-DueBack sits below the fold,
-  with a scroll cue that fades once `scrollY > 60`; the hero puts the
-  GRAPHIC LEFT and copy right (stacked mobile flips copy first via order);
-  the primary CTA sits RIGHT of the secondary; the nav has NO "Open the
-  app" (the hero's back-to-receipts button is the returning-user path,
-  e2e-pinned); the How page orders How → Time → features → Logo so the two
-  animated sections don't sit adjacent and the page leads with its
-  namesake; How steps open on hover (`onmouseenter`, click still toggles);
-  the workbook page/tab is named "Excel workbook" and its mock uses the
-  REAL color scheme (semantic field colors on values, actual sheet-tab
-  colors on category dots — `CATEGORY_META` colors were rescued from
-  vendor-blue/date-purple/amount-green collisions); the page heading reads
-  "checked and filed"; `.next-link` is right-aligned; every page-foot
-  carries the `.cta-mini` "Got a pile of receipts?" card; the footer is
-  the brand/Product/Project block with NO legal line, its Roadmap link
-  nerd-gated; **future content is nerd-gated** (`db-nerd-only`: the
-  #account Drive section, the boosters privacy card, the Drive/OneDrive
-  FAQ entry — with Nerd mode off the site only shows what exists); the
-  Your-data page has an SVG graphic (receipt in a browser window + shield;
-  the padlocked-cloud half is parked in a comment until the cloud boosters
-  ship); Contact is its own page (06, no page title — the section's own
-  heading carries it) and the Help page is FAQ + roadmap only; the hero
-  copy is centered in its column (`justify-self`); the CTA cards carry a
-  pointer-following accent aura (`use:aura`, hover-only); turning Nerd
-  mode ON fires `landing/binaryBits.ts` (green binary rain, reduced-motion
-  no-op); the logo-recognition mock shows the fictional Corner Bistro cup
-  logo, not placeholder text.
+  with a scroll cue that fades once `scrollY > 60`; the hero puts COPY LEFT
+  and the animated strip right, with the strip's three papers and arrows
+  sharing ONE width (`.hero-visual` is a fixed-width column — mixed widths
+  centered against each other read as misalignment, the "right side looks
+  funny" report), and there is NO hero sub-paragraph (the Why section
+  carries the pitch); the primary CTA sits RIGHT of the secondary; the nav
+  has NO "Open the app" (the hero's back-to-receipts button is the
+  returning-user path, e2e-pinned); the page flows hero → why → How (the
+  three steps with the time-race card as a sticky rail, feature-trio copy
+  folded into step bodies) → Logo → Workbook → CTA → FAQ → roadmap →
+  Contact; How steps open on hover (`onmouseenter`, click still toggles;
+  step 1 starts open so touch users see one expanded); the workbook nav
+  link and step 3 say "Excel workbook" while the section label is "The
+  deliverable" (one "workbook" per heading stack — the old tab/page-no/
+  title/label pile said it four times); the workbook mock uses the REAL
+  color scheme (semantic field colors on values, actual sheet-tab colors on
+  category dots — `CATEGORY_META` colors were rescued from vendor-blue/
+  date-purple/amount-green collisions); ONE `.cta-card` "Got a pile of
+  receipts?" (aura-tracked via `use:aura`, hover-only) sits between
+  Workbook and FAQ; the footer is the brand/Product/Project block with NO
+  legal line, its Roadmap link nerd-gated; **future content is nerd-gated**
+  (`nerd`-flagged FAQ entries — boosters/#account and Drive/OneDrive — plus
+  the `db-nerd-only` roadmap; with Nerd mode off the site only shows what
+  exists); the old Your-data privacy graphic retired when that page
+  condensed into the FAQ; turning Nerd mode ON fires
+  `landing/binaryBits.ts` (green binary rain, reduced-motion no-op); the
+  logo-recognition mock shows the fictional Corner Bistro cup logo, not
+  placeholder text.
 - **Board views:** Workspace has a Grid/Kanban toggle + sort select
   (localStorage `board.view`/`board.sort`); kanban lanes are status groups.
   Default sort is **category, then date**. A needs-review card shows its
@@ -254,6 +269,14 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   render on iPhone" report). br is derived from the same px math as the
   carrier rows (col px ≈ width·7+5). Quick Look also never activates internal
   hyperlinks — that part is preview-inherent, not fixable in the file.
+- **Every embedded receipt displays at `IMG_DISPLAY_W` (380px), filling
+  column A** — scaled UP as well as down, so receipts read without zooming
+  (a narrow portrait receipt used to render as a strip). Its `thumbnail()`
+  call uses the `"width"` fit: the default long-EDGE cap gave a portrait
+  receipt ~half the horizontal pixels the column displays (blurry); the
+  images-ZIP path keeps the edge fit. Display height derives from the
+  encode's aspect, and `imageRows` sizes the carrier band from that height —
+  a very long receipt just gets more rows.
 - **Contact form (Landing #contact)** opens a prefilled mailto: draft to
   contact@duanehamilton.net; mailto can't attach files, so the "attach tuning
   bundle" checkbox downloads the ZIP and the draft asks the sender to attach it.

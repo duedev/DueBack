@@ -1,14 +1,11 @@
 <script lang="ts">
-  import { tick } from "svelte";
   import { app } from "./state.svelte.ts";
   import ThemeToggle from "./ThemeToggle.svelte";
   import BrandLogo from "./BrandLogo.svelte";
   import Hero from "./landing/Hero.svelte";
   import HowSection from "./landing/HowSection.svelte";
-  import TimeSection from "./landing/TimeSection.svelte";
   import LogoSection from "./landing/LogoSection.svelte";
   import WorkbookSection from "./landing/WorkbookSection.svelte";
-  import AccountSection from "./landing/AccountSection.svelte";
   import ContactSection from "./landing/ContactSection.svelte";
   import { prefs } from "./landing/prefs.svelte.ts";
   import { LIMITS } from "../config/constants.ts";
@@ -105,78 +102,109 @@
     };
   });
 
-  /* ---- the "pages" -------------------------------------------------------
-     One document, five pages: the hash is the router, so every page is a
-     real URL and back/forward work. All pages STAY MOUNTED (hidden, not
-     removed) — the contact form keeps its draft across page switches, and
-     the e2e's landing assertions (hero h1, #contact form, the single file
-     input) hold on first render. Old section anchors keep working: each is
-     mapped to the page that now hosts it. */
-  type PageId = "home" | "how" | "workbook" | "data" | "help" | "contact";
-  const TABS: { id: PageId; hash: string; label: string }[] = [
-    { id: "home", hash: "home", label: "Home" },
-    { id: "how", hash: "how", label: "How it works" },
-    { id: "workbook", hash: "workbook", label: "Excel workbook" },
-    { id: "data", hash: "privacy", label: "Your data" },
-    { id: "help", hash: "faq", label: "Help" },
-    { id: "contact", hash: "contact", label: "Contact" },
+  /* ---- one page, anchored -------------------------------------------------
+     The landing is a single scrolling document: the nav links are plain
+     anchors, and every hash the five-page era (or older) ever handed out
+     still lands on the section that hosts that content today. A hash that
+     points at a FAQ <details> pops it open before scrolling; a hash whose
+     target is Nerd-mode-only falls back to its visible host when the toggle
+     is off. The sticky nav's height is cleared by scroll-margin-top
+     (landing.css). #process is NOT ours: it deep-links into the workspace
+     (App.svelte stamps it while the workspace shows). */
+  const NAV = [
+    { id: "how", label: "How it works" },
+    { id: "workbook", label: "Excel workbook" },
+    { id: "faq", label: "FAQ" },
+    { id: "contact", label: "Contact" },
   ];
-  const PAGE_FOR_HASH: Record<string, PageId> = {
-    home: "home",
+  /** legacy hash → the id hosting it today ("" = top of page) */
+  const ANCHOR_FOR_HASH: Record<string, string> = {
+    home: "",
     how: "how",
     features: "how",
     time: "how",
-    logos: "how",
+    logos: "logos",
     workbook: "workbook",
-    privacy: "data",
-    account: "data",
-    faq: "help",
-    help: "help",
-    roadmap: "help",
+    privacy: "privacy",
+    account: "account",
+    faq: "faq",
+    help: "faq",
+    roadmap: "roadmap",
     contact: "contact",
   };
+  /** Nerd-gated targets: where the link lands with the toggle off. */
+  const VISIBLE_FALLBACK: Record<string, string> = {
+    account: "privacy",
+    roadmap: "faq",
+  };
 
-  let page = $state<PageId>("home");
-  const baseTitle = document.title;
-
-  async function applyHash(): Promise<void> {
+  function applyHash(initial = false): void {
     const raw = location.hash.replace(/^#\/?/, "");
+    if (!raw) return; // no target — stay put
     // #process belongs to the workspace: entering unmounts this component.
     if (raw === "process") {
       app.enter();
       return;
     }
-    const target = PAGE_FOR_HASH[raw] ?? "home";
-    const anchor = raw && raw !== target ? raw : null;
-    page = target;
-    await tick(); // the page must be un-hidden before it can be scrolled to
-    if (anchor) document.getElementById(anchor)?.scrollIntoView();
-    else window.scrollTo(0, 0);
+    const id = ANCHOR_FOR_HASH[raw] ?? raw;
+    if (!id) {
+      window.scrollTo(0, 0); // #home
+      return;
+    }
+    let el = document.getElementById(id);
+    if (!el || el.getClientRects().length === 0) {
+      const fallback = VISIBLE_FALLBACK[id];
+      el = fallback ? document.getElementById(fallback) : null;
+    }
+    if (!el) {
+      if (!initial) window.scrollTo(0, 0);
+      return;
+    }
+    if (el instanceof HTMLDetailsElement) el.open = true;
+    el.scrollIntoView();
   }
 
   $effect(() => {
-    const onHash = (): void => void applyHash();
+    const onHash = (): void => applyHash();
     window.addEventListener("hashchange", onHash);
-    void applyHash();
+    applyHash(true); // deep links land after mount, once the ids exist
     return () => window.removeEventListener("hashchange", onHash);
   });
 
+  /* Scroll-spy: the nav link whose section crosses the upper reading band
+     lights up. The hero is observed too — it has no id, so reaching the top
+     naturally clears the highlight. */
+  let activeId = $state("");
   $effect(() => {
-    const tab = TABS.find((t) => t.id === page);
-    document.title =
-      page === "home" || !tab ? baseTitle : `${tab.label} · ${baseTitle}`;
+    const targets = [
+      document.querySelector<HTMLElement>(".landing .hero"),
+      ...NAV.map((l) => document.getElementById(l.id)),
+    ].filter((el): el is HTMLElement => el !== null);
+    const spy = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) activeId = (e.target as HTMLElement).id;
+        }
+      },
+      { rootMargin: "-15% 0px -75% 0px" },
+    );
+    targets.forEach((el) => spy.observe(el));
+    return () => spy.disconnect();
   });
 
-  // Entries marked `nerd` describe future work and only render with Nerd
-  // mode on — a visitor with the toggle off sees only what exists today.
-  const faqs: { q: string; a: string; nerd?: boolean }[] = [
+  /* The Your-data page lives on inside this list: #privacy resolves to the
+     receipts-go entry, #account to the boosters entry. Entries marked `nerd`
+     describe in-progress/future work and only render with Nerd mode on — a
+     visitor with the toggle off sees only what exists today. */
+  const faqs: { q: string; a: string; id?: string; nerd?: boolean }[] = [
     {
       q: "Is it really free?",
       a: "Yes. Receipts are read on your device with open-source OCR, so there is no per-receipt charge, no trial and no account.",
     },
     {
+      id: "privacy",
       q: "Where do my receipts go?",
-      a: "Nowhere. Images are stored in your browser and processed on your device. Close the tab and they're still there; clear your browser data and they're gone. Nothing is uploaded.",
+      a: "Nowhere. Images are stored in your browser and processed on your device — the reading, the logo matching and the Excel build all run on your hardware. Close the tab and they're still there; clear your browser data and they're gone. Nothing is uploaded.",
     },
     {
       q: "What do I hand to my office?",
@@ -191,13 +219,19 @@
       a: "Many receipts show the merchant only as a stylized logo the text reader can't spell. Teach the app a brand once with one clear photo of the logo in Settings. From then on it recognizes that logo visually, names the brand and files it in the right category.",
     },
     {
+      id: "account",
+      nerd: true,
+      q: "What about cloud sync and the AI assist?",
+      a: "They're rolling out now; the roadmap below tracks them. Signing in will sync your batches, receipts and taught brands to your own private workspace behind row-level security, so you can pick up on any device — and the AI assist will send low-confidence receipts to the model you configure. Both will always be opt-in and off by default.",
+    },
+    {
+      nerd: true,
       q: "Can it watch a Google Drive or OneDrive folder?",
       a: "Not yet. Both are on the roadmap: automatic Drive-folder scanning that keeps a workbook current, and saving reports straight to OneDrive. The full roadmap is right below this FAQ.",
-      nerd: true,
     },
     {
       q: "What is Nerd mode?",
-      a: "The { } toggle in the top bar. It reveals engineering margin notes across the site (how the pipeline, sync and workbook actually work) plus the project roadmap here on the Help page. Purely informational, and it changes nothing about how the app runs.",
+      a: "The { } toggle in the top bar. It reveals engineering margin notes across the page (how the pipeline, sync and workbook actually work) plus the project roadmap below the FAQ. Purely informational, and it changes nothing about how the app runs.",
     },
   ];
 </script>
@@ -213,16 +247,6 @@
   tabindex="-1"
 />
 
-{#snippet ctaMini()}
-  <div class="card cta-mini" use:aura>
-    <div class="cm-copy">
-      <strong>Got a pile of receipts?</strong>
-      <span class="muted">You're about a minute away from a finished report.</span>
-    </div>
-    <button class="btn btn-primary" onclick={pick}>Add receipts</button>
-  </div>
-{/snippet}
-
 <div class="landing" class:nerd-on={prefs.nerd}>
   {#if dragging}
     <div class="drop-veil" aria-hidden="true">
@@ -236,20 +260,20 @@
     </div>
   {/if}
 
-  <!-- ======================= nav / page tabs ======================= -->
+  <!-- ======================= sticky anchor nav ======================= -->
   <div class="nav-bar">
     <nav class="wrap nav" aria-label="Site">
       <a class="brand" href="#home" aria-label="DueBack home">
         <BrandLogo size={30} />
       </a>
       <div class="nav-tabs">
-        {#each TABS as t (t.id)}
+        {#each NAV as l (l.id)}
           <a
             class="tab"
-            class:active={page === t.id}
-            href={"#" + t.hash}
-            aria-current={page === t.id ? "page" : undefined}
-          >{t.label}</a>
+            class:active={activeId === l.id}
+            href={"#" + l.id}
+            aria-current={activeId === l.id ? "location" : undefined}
+          >{l.label}</a>
         {/each}
       </div>
       <div class="nav-actions">
@@ -268,343 +292,113 @@
     </nav>
   </div>
 
-  <!-- =================================================================
-       PAGE · Home — the whole pitch in three screens. Everything deeper
-       lives on its own page.
-       ================================================================= -->
-  <div class="lpage" hidden={page !== "home"}>
-    <Hero onAdd={pick} />
+  <Hero onAdd={pick} />
 
-    <section class="wrap why">
-      <p class="section-label">Why DueBack</p>
-      <h2>From receipt pile to finished report, without the busywork.</h2>
+  <!-- ======================= the pitch, in one breath ================ -->
+  <section class="wrap why">
+    <p class="section-label">Why DueBack</p>
+    <h2>Stop retyping vendors, dates and totals.</h2>
+    <p>
+      Snap or drop a pile — photos, scans, PDFs, even a whole ZIP. DueBack
+      reads each receipt right in your browser, checks the math against the
+      paper, and files everything into a report your office will accept. You
+      only look at the few it flags.
+    </p>
+    <p>
+      No account and no per-receipt fee. <strong>Receipts stay on your
+      device</strong>, and your money gets back into your account faster.
+      <a class="quiet-link" href="#privacy">Exactly what leaves your device, and when →</a>
+    </p>
+    <aside class="db-nerd" aria-label="Technical details">
+      <span class="db-nerd-tag">nerd note · the stack</span>
       <p>
-        Retyping vendors, dates and totals is data entry no one should still be
-        doing by hand. Add your receipts and DueBack reads each one right in
-        your browser, checks the totals against the paper, and files it into a
-        report your office will accept.
+        Svelte 5 + TypeScript. OCR is Tesseract compiled to WebAssembly,
+        running in the tab you're reading this in; an optional ONNX engine
+        and a CLIP embedder (visual logo matching) load lazily. The workbook
+        is built client-side with ExcelJS. Static hosting, no backend
+        required, MIT-licensed.
+      </p>
+    </aside>
+  </section>
+
+  <HowSection />
+  <LogoSection />
+  <WorkbookSection />
+
+  <section class="wrap last-cta">
+    <div class="card cta-card" use:aura>
+      <h2>Got a pile of receipts?</h2>
+      <p>You're about a minute away from a finished report.</p>
+      <button class="btn btn-primary btn-lg" onclick={pick}>Add receipts</button>
+    </div>
+  </section>
+
+  <!-- ======================= FAQ (incl. the Your-data story) ========= -->
+  <section id="faq" class="wrap faq">
+    <p class="section-label">FAQ</p>
+    <h2>Questions, answered.</h2>
+    {#each faqs.filter((f) => !f.nerd || prefs.nerd) as f (f.q)}
+      <details class="card qa" id={f.id}>
+        <summary>{f.q}</summary>
+        <p>{f.a}</p>
+      </details>
+    {/each}
+    <aside class="db-nerd" aria-label="Technical details">
+      <span class="db-nerd-tag">nerd note · the sync contract</span>
+      <p>
+        Local-first means IndexedDB in your browser is the source of truth.
+        Sign in and rows mirror to your own Supabase workspace behind
+        row-level security (<strong>user_id = auth.uid()</strong>),
+        reconciled last-write-wins on <strong>updatedAt</strong> in both
+        directions: a stale device can't clobber a newer edit, and deletes
+        propagate as tombstones so nothing you removed ever resurrects.
       </p>
       <p>
-        No account and no per-receipt fee. <strong>Receipts stay on your
-        device</strong>, and your money gets back into your account faster.
+        The optional AI assist never sees a raw API key: calls route through
+        a policed proxy with a model allowlist, a token cap, and a per-user
+        daily limit.
       </p>
-    </section>
+    </aside>
+  </section>
 
-    <section class="wrap glance">
-      <p class="section-label">At a glance</p>
-      <h2>Three steps. About a minute.</h2>
-      <div class="glance-grid">
-        <a class="card glance-card" href="#how">
-          <span class="g-n">1</span>
-          <span class="g-title">Snap or drop</span>
-          <span class="g-deck">
-            Phone camera, photos, scans, PDFs or a whole ZIP. Each receipt is
-            straightened, cleaned and read on your device.
-          </span>
-          <span class="g-more">How it works →</span>
-        </a>
-        <a class="card glance-card" href="#how">
-          <span class="g-n">2</span>
-          <span class="g-title">Review the flagged few</span>
-          <span class="g-deck">
-            Most receipts file themselves. The uncertain ones queue for a quick
-            check against the image. Approve or fix in a couple of clicks.
-          </span>
-          <span class="g-more">See the review →</span>
-        </a>
-        <a class="card glance-card" href="#workbook">
-          <span class="g-n">3</span>
-          <span class="g-title">Download the Excel workbook</span>
-          <span class="g-deck">
-            One click builds a themed Excel report with live totals and the
-            receipt images embedded, plus a CSV if you need one.
-          </span>
-          <span class="g-more">See the Excel workbook →</span>
-        </a>
+  <!-- Roadmap: nerd-mode only (the { } toggle), like the margin notes. -->
+  <section id="roadmap" class="wrap roadmap db-nerd-only" aria-label="Project roadmap">
+    <p class="section-label">Roadmap</p>
+    <h2>Where this is going.</h2>
+    <div class="road-cols">
+      <div class="card road">
+        <span class="chip chip-ok">Shipped</span>
+        <ul>
+          <li>On-device reading: OCR, cleanup passes and total reconciliation</li>
+          <li>Teach-a-brand visual logo recognition</li>
+          <li>Themed Excel workbook, insights dashboard, CSV and image archive</li>
+          <li>Installable app (PWA) that works offline</li>
+        </ul>
       </div>
-      <p class="trust-line">
-        Local-first by design: receipts stay in your browser.
-        <a href="#privacy">Exactly what leaves your device, and when →</a>
-      </p>
-      <aside class="db-nerd" aria-label="Technical details">
-        <span class="db-nerd-tag">nerd note · the stack</span>
-        <p>
-          Svelte 5 + TypeScript. OCR is Tesseract compiled to WebAssembly,
-          running in the tab you're reading this in; an optional ONNX engine
-          and a CLIP embedder (visual logo matching) load lazily. The workbook
-          is built client-side with ExcelJS. Static hosting, no backend
-          required, MIT-licensed.
-        </p>
-      </aside>
-    </section>
-
-    <section class="wrap last-cta">
-      <div class="card cta-card" use:aura>
-        <h2>Got a pile of receipts?</h2>
-        <p>You're about a minute away from a finished report.</p>
-        <button class="btn btn-primary btn-lg" onclick={pick}>Add receipts</button>
+      <div class="card road">
+        <span class="chip chip-warn">In progress</span>
+        <ul>
+          <li>Cloud sync: sign in and pick up your batches on any device</li>
+          <li>AI second opinion for low-confidence receipts, behind a policed proxy</li>
+          <li>Save the workbook straight to OneDrive</li>
+        </ul>
       </div>
-    </section>
-  </div>
-
-  <!-- =================================================================
-       PAGE · How it works
-       ================================================================= -->
-  <div class="lpage" hidden={page !== "how"}>
-    <header class="wrap page-head">
-      <p class="page-no">02 · How it works</p>
-      <h2 class="page-title">From glovebox pile to checked and filed.</h2>
-      <p class="page-deck">
-        The three steps in detail: what you can throw at it, how the review
-        keeps you honest, and how merchants that only sign with a logo still
-        get named.
-      </p>
-    </header>
-
-    <HowSection />
-    <TimeSection />
-
-    <section id="features" class="wrap features">
-      <p class="section-label">What's inside</p>
-      <h2>Small app. Serious pipeline.</h2>
-      <div class="feat-grid">
-        <div class="card feat">
-          <h4>🧮 Totals that reconcile</h4>
-          <p>
-            Amounts are grounded in the printed grand total, cross-checked
-            against line items and tax, and flagged when something doesn't foot.
-          </p>
-        </div>
-        <div class="card feat">
-          <h4>⌨️ Fast, honest review</h4>
-          <p>
-            A kanban board tracks every receipt; the review screen zooms into
-            each field on the image and clears a batch with Approve&nbsp;&amp;&nbsp;Next.
-          </p>
-        </div>
-        <div class="card feat">
-          <h4>📖 Reads tough receipts</h4>
-          <p>
-            Open-source text recognition runs in your browser, with a second
-            cleanup pass for unevenly lit photos and an optional stronger
-            on-device engine. No servers, no upload.
-          </p>
-        </div>
+      <div class="card road">
+        <span class="chip">Planned</span>
+        <ul>
+          <li>Google Drive folder watch: drop receipts in Drive, download a current workbook</li>
+          <li>Stronger on-device OCR engine as a one-click booster</li>
+          <li>Shared team workspaces</li>
+        </ul>
       </div>
-    </section>
-
-    <LogoSection />
-
-    <div class="wrap page-foot">
-      {@render ctaMini()}
-      <a class="next-link" href="#workbook">Next: The Excel workbook →</a>
     </div>
-  </div>
+    <p class="muted road-note">
+      Dates on purpose absent: one developer, real job. Want something
+      sooner? Say so below.
+    </p>
+  </section>
 
-  <!-- =================================================================
-       PAGE · The workbook
-       ================================================================= -->
-  <div class="lpage" hidden={page !== "workbook"}>
-    <header class="wrap page-head">
-      <p class="page-no">03 · The Excel workbook</p>
-      <h2 class="page-title">What you hand in, in detail.</h2>
-      <p class="page-deck">
-        What lands in your download folder, and why your office will be
-        thrilled.
-      </p>
-    </header>
-
-    <WorkbookSection />
-
-    <div class="wrap page-foot">
-      {@render ctaMini()}
-      <a class="next-link" href="#privacy">Next: Your data →</a>
-    </div>
-  </div>
-
-  <!-- =================================================================
-       PAGE · Your data
-       ================================================================= -->
-  <div class="lpage" hidden={page !== "data"}>
-    <header class="wrap page-head">
-      <p class="page-no">04 · Your data</p>
-      <h2 class="page-title">Where things live, and when they move.</h2>
-      <p class="page-deck">
-        The default is simple: nothing leaves your device.
-      </p>
-    </header>
-
-    <section id="privacy" class="wrap privacy">
-      <p class="section-label">Privacy</p>
-      <h2>Local first.</h2>
-      <div class="priv-cols">
-        <div class="card priv">
-          <h4>The default path: nothing ever leaves this device</h4>
-          <p>
-            <strong>Images stay in your browser's storage.</strong> OCR, logo
-            recognition, extraction and the Excel build all run on your
-            hardware. Close the tab and it's still there; clear it and it's
-            gone.
-          </p>
-        </div>
-        <figure class="priv-art" aria-hidden="true">
-          <svg viewBox="0 0 205 200" fill="none">
-            <!-- your browser window -->
-            <rect x="12" y="14" width="176" height="154" rx="12" stroke="var(--line-strong)" stroke-width="1.5" fill="var(--bg-raised)" />
-            <circle cx="31" cy="31" r="3" fill="var(--err)" opacity="0.5" />
-            <circle cx="43" cy="31" r="3" fill="var(--gold)" opacity="0.5" />
-            <circle cx="55" cy="31" r="3" fill="var(--ok)" opacity="0.5" />
-            <line x1="13" y1="43" x2="187" y2="43" stroke="var(--line)" stroke-width="1.5" />
-            <!-- the receipt, living inside it -->
-            <g transform="translate(58 58)">
-              <path d="M0 88 V6 a6 6 0 0 1 6 -6 h46 a6 6 0 0 1 6 6 v82 l-14.5 -9 -14.5 9 -14.5 -9 -14.5 9 z" fill="var(--bg)" stroke="var(--line-strong)" stroke-width="1.5" />
-              <line x1="11" y1="19" x2="47" y2="19" stroke="var(--cat-3)" stroke-width="4.5" stroke-linecap="round" />
-              <line x1="11" y1="34" x2="39" y2="34" stroke="var(--cat-4)" stroke-width="4.5" stroke-linecap="round" />
-              <line x1="11" y1="49" x2="44" y2="49" stroke="var(--ok)" stroke-width="4.5" stroke-linecap="round" />
-            </g>
-            <!-- shield: it stays put -->
-            <g transform="translate(152 118)">
-              <path d="M19 0 l17 6.5 v13 c0 10.5 -7.5 19 -17 23.5 c-9.5 -4.5 -17 -13 -17 -23.5 v-13 z" fill="var(--accent)" />
-              <path d="M11 20 l6.5 6.5 L29 13.5" stroke="var(--accent-ink)" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" />
-            </g>
-            <!-- Saved for later use (when the cloud boosters ship): the
-                 dashed padlocked cloud that used to sit right of the window
-                 in a 330-wide viewBox —
-                 <path d="M200 90 h42" stroke="var(--ink-faint)" stroke-width="2" stroke-dasharray="5 6" />
-                 <g transform="translate(246 62)">
-                   <path d="M20 44 h-4 a14 14 0 1 1 3 -27.7 a18 18 0 0 1 34.6 5.2 a12.5 12.5 0 0 1 -3.4 22.5 z" stroke="var(--ink-faint)" stroke-width="2" />
-                   <rect x="16" y="24" width="18" height="14" rx="3.5" fill="var(--ink-faint)" />
-                   <path d="M20 24 v-3 a5 5 0 0 1 10 0 v3" stroke="var(--ink-faint)" stroke-width="2.6" />
-                 </g>
-                 <text x="273" y="128" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">locked until</text>
-                 <text x="273" y="141" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">you opt in</text>
-            -->
-            <text x="100" y="188" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">everything happens here</text>
-          </svg>
-        </figure>
-        <div class="card priv db-nerd-only">
-          <h4>Optional boosters</h4>
-          <p class="priv-flow">
-            <span class="chip">AI second opinion</span>
-            <a class="chip" href="#account">cloud sync</a>
-          </p>
-          <p>
-            These are rolling out now; the roadmap under Help tracks them.
-            Once enabled, the AI assist sends low-confidence receipts to the
-            model you configure, and signing in syncs your batches to your
-            own private workspace behind row-level security. Both will
-            always be opt-in and <strong>off by default</strong>.
-          </p>
-        </div>
-      </div>
-      <aside class="db-nerd" aria-label="Technical details">
-        <span class="db-nerd-tag">nerd note · the sync contract</span>
-        <p>
-          Local-first means IndexedDB in your browser is the source of truth.
-          Sign in and rows mirror to your own Supabase workspace behind
-          row-level security (<strong>user_id = auth.uid()</strong>),
-          reconciled last-write-wins on <strong>updatedAt</strong> in both
-          directions: a stale device can't clobber a newer edit, and deletes
-          propagate as tombstones so nothing you removed ever resurrects.
-        </p>
-        <p>
-          The optional AI assist never sees a raw API key: calls route through
-          a policed proxy with a model allowlist, a token cap, and a per-user
-          daily limit.
-        </p>
-      </aside>
-    </section>
-
-    <AccountSection />
-
-    <div class="wrap page-foot">
-      {@render ctaMini()}
-      <a class="next-link" href="#faq">Next: Help →</a>
-    </div>
-  </div>
-
-  <!-- =================================================================
-       PAGE · Help
-       ================================================================= -->
-  <div class="lpage" hidden={page !== "help"}>
-    <header class="wrap page-head">
-      <p class="page-no">05 · Help</p>
-      <h2 class="page-title">Questions, answered.</h2>
-      <p class="page-deck">
-        The short answers first. Need more? The Contact page is a direct
-        line to the developer.
-      </p>
-    </header>
-
-    <section id="faq" class="wrap faq">
-      <p class="section-label">FAQ</p>
-      <h2>Questions, answered.</h2>
-      {#each faqs.filter((f) => !f.nerd || prefs.nerd) as f (f.q)}
-        <details class="card qa">
-          <summary>{f.q}</summary>
-          <p>{f.a}</p>
-        </details>
-      {/each}
-    </section>
-
-    <!-- Roadmap: nerd-mode only (the { } toggle), like the margin notes. -->
-    <section id="roadmap" class="wrap roadmap db-nerd-only" aria-label="Project roadmap">
-      <p class="section-label">Roadmap</p>
-      <h2>Where this is going.</h2>
-      <div class="road-cols">
-        <div class="card road">
-          <span class="chip chip-ok">Shipped</span>
-          <ul>
-            <li>On-device reading: OCR, cleanup passes and total reconciliation</li>
-            <li>Teach-a-brand visual logo recognition</li>
-            <li>Themed Excel workbook, insights dashboard, CSV and image archive</li>
-            <li>Installable app (PWA) that works offline</li>
-          </ul>
-        </div>
-        <div class="card road">
-          <span class="chip chip-warn">In progress</span>
-          <ul>
-            <li>Cloud sync: sign in and pick up your batches on any device</li>
-            <li>AI second opinion for low-confidence receipts, behind a policed proxy</li>
-            <li>Save the workbook straight to OneDrive</li>
-          </ul>
-        </div>
-        <div class="card road">
-          <span class="chip">Planned</span>
-          <ul>
-            <li>Google Drive folder watch: drop receipts in Drive, download a current workbook</li>
-            <li>Stronger on-device OCR engine as a one-click booster</li>
-            <li>Shared team workspaces</li>
-          </ul>
-        </div>
-      </div>
-      <p class="muted road-note">
-        Dates on purpose absent: one developer, real job. Want something
-        sooner? Say so below.
-      </p>
-    </section>
-
-    <div class="wrap page-foot">
-      {@render ctaMini()}
-      <a class="next-link" href="#contact">Next: Contact →</a>
-    </div>
-  </div>
-
-  <!-- =================================================================
-       PAGE · Contact
-       ================================================================= -->
-  <div class="lpage" hidden={page !== "contact"}>
-    <header class="wrap page-head">
-      <p class="page-no">06 · Contact</p>
-    </header>
-
-    <ContactSection />
-
-    <div class="wrap page-foot">
-      {@render ctaMini()}
-      <a class="next-link" href="#home">Back to the start →</a>
-    </div>
-  </div>
+  <ContactSection />
 
   <footer class="foot">
     <div class="wrap foot-in">
@@ -617,7 +411,7 @@
           workbook your office will love.
         </p>
       </div>
-      <nav class="foot-col" aria-label="Product pages">
+      <nav class="foot-col" aria-label="Product sections">
         <h4>Product</h4>
         <a href="#how">How it works</a>
         <a href="#workbook">The Excel workbook</a>
@@ -689,7 +483,7 @@
     }
   }
 
-  /* ---- nav / page tabs ---- */
+  /* ---- nav ---- */
   .nav-bar {
     position: sticky;
     top: 0;
@@ -813,118 +607,9 @@
     }
   }
 
-  /* ---- page frame ---- */
-  .lpage {
-    animation: db-page-in 0.28s ease-out both;
-  }
-  .lpage[hidden] {
-    display: none;
-  }
-  @keyframes db-page-in {
-    from {
-      opacity: 0;
-      transform: translateY(6px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    /* Static end-state: pages appear in place, no slide. */
-    .lpage {
-      animation: none;
-    }
-  }
-
-  .page-head {
-    padding: 3rem 0 0;
-  }
-  .page-no {
-    font: 600 0.75rem/1 var(--font-mono);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--accent);
-    margin: 0 0 0.8rem;
-  }
-  .page-title {
-    font-size: clamp(1.9rem, 4vw, 2.8rem);
-    margin: 0 0 0.7rem;
-  }
-  .page-deck {
-    color: var(--ink-soft);
-    max-width: 42rem;
-    font-size: 1.05rem;
-    margin: 0;
-  }
-
-  .page-foot {
-    display: flex;
-    align-items: center;
-    gap: 1.1rem;
-    flex-wrap: wrap;
-    padding: 0.4rem 0 3.4rem;
-  }
-  /* The end-of-page ask: the same "Got a pile of receipts?" call to action
-     on every page, compact enough not to shout. */
-  .cta-mini {
-    flex: 1 1 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    flex-wrap: wrap;
-    padding: 1.05rem 1.3rem;
-  }
-  .cm-copy {
-    display: grid;
-    gap: 0.1rem;
-  }
-  .cm-copy strong {
-    font: 600 1.05rem/1.3 var(--font-display);
-  }
-  .cm-copy .muted {
-    font-size: 0.88rem;
-  }
-  /* The soft accent aura that trails the pointer over a CTA card. */
-  .cta-mini,
-  .cta-card {
-    position: relative;
-    overflow: hidden;
-  }
-  .cta-mini::after,
-  .cta-card::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.25s ease;
-    background: radial-gradient(
-      240px circle at var(--aura-x, 50%) var(--aura-y, 50%),
-      color-mix(in srgb, var(--accent) 16%, transparent),
-      transparent 72%
-    );
-  }
-  @media (hover: hover) {
-    .cta-mini:hover::after,
-    .cta-card:hover::after {
-      opacity: 1;
-    }
-  }
-  .next-link {
-    margin-left: auto; /* the forward path reads from the right edge */
-    font: 600 0.92rem/1 var(--font-ui);
-    color: var(--accent);
-    text-decoration: none;
-  }
-  .next-link:hover {
-    text-decoration: underline;
-  }
-
-  /* ---- home sections ---- */
+  /* ---- why ---- */
   .why {
-    padding-top: 1rem;
+    padding-top: 1.2rem;
   }
   .why p {
     color: var(--ink-soft);
@@ -934,121 +619,16 @@
   .why strong {
     color: var(--ink);
   }
-
-  .glance {
-    padding-top: 0.6rem;
-  }
-  .glance-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 1rem;
-  }
-  .glance-card {
-    display: grid;
-    gap: 0.5rem;
-    align-content: start;
-    padding: 1.25rem 1.3rem 1.15rem;
-    text-decoration: none;
-    color: inherit;
-    transition: border-color 0.15s ease;
-  }
-  .glance-card:hover {
-    border-color: var(--accent-line);
-  }
-  .g-n {
-    display: inline-grid;
-    place-items: center;
-    width: 1.9rem;
-    height: 1.9rem;
-    border-radius: 50%;
-    background: var(--accent-soft);
-    color: var(--accent);
-    font: 700 0.9rem/1 var(--font-display);
-  }
-  .g-title {
-    font: 650 1.02rem/1.3 var(--font-ui);
-  }
-  .g-deck {
-    color: var(--ink-soft);
-    font-size: 0.92rem;
-    line-height: 1.55;
-  }
-  .g-more {
-    font: 600 0.85rem/1 var(--font-ui);
-    color: var(--accent);
-    margin-top: 0.2rem;
-  }
-  .trust-line {
-    color: var(--ink-soft);
-    font-size: 0.95rem;
-    margin: 1.4rem 0 0;
-  }
-  .trust-line a {
+  .quiet-link {
     color: var(--accent);
     text-decoration: none;
     font-weight: 600;
   }
-  .trust-line a:hover {
+  .quiet-link:hover {
     text-decoration: underline;
   }
 
-  /* ---- how page ---- */
-  .feat-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 1rem;
-  }
-  .feat {
-    padding: 1.3rem 1.4rem 1.1rem;
-  }
-  .feat p {
-    color: var(--ink-soft);
-    margin: 0;
-    font-size: 0.95rem;
-  }
-
-  /* ---- data page ---- */
-  .priv-cols {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 1rem;
-    align-items: stretch;
-  }
-  .priv-art {
-    margin: 0;
-    display: grid;
-    align-content: center;
-    padding: 0.6rem 0.4rem;
-  }
-  .priv-art svg {
-    width: 100%;
-    height: auto;
-    max-width: 15rem;
-    justify-self: center;
-    font-family: var(--font-ui);
-  }
-  .priv {
-    padding: 1.4rem;
-  }
-  .priv-flow {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-  .priv-flow a.chip {
-    text-decoration: none;
-  }
-  .priv-flow a.chip:hover {
-    color: var(--accent);
-  }
-  .priv p:last-of-type {
-    color: var(--ink-soft);
-    margin: 0.6rem 0 0;
-    font-size: 0.95rem;
-  }
-
-  /* ---- help page ---- */
+  /* ---- FAQ ---- */
   .qa {
     padding: 0;
     margin-bottom: 0.7rem;
@@ -1080,6 +660,14 @@
   .qa[open] summary::after {
     content: "–";
   }
+  .qa p {
+    padding: 0 1.2rem 1.1rem;
+    margin: 0;
+    color: var(--ink-soft);
+    font-size: 0.95rem;
+    max-width: 52rem;
+  }
+
   /* ---- roadmap (nerd-mode only) ---- */
   .roadmap {
     padding-block: 1.8rem 0.4rem;
@@ -1112,14 +700,7 @@
     margin-top: 0.9rem;
   }
 
-  .qa p {
-    padding: 0 1.2rem 1.1rem;
-    margin: 0;
-    color: var(--ink-soft);
-    font-size: 0.95rem;
-  }
-
-  /* ---- shared ---- */
+  /* ---- closing CTA ---- */
   .last-cta {
     padding-bottom: 2rem;
   }
@@ -1138,8 +719,31 @@
     color: var(--ink-soft);
     margin-bottom: 1.4rem;
   }
+  /* The soft accent aura that trails the pointer over the CTA card. */
+  .cta-card {
+    position: relative;
+    overflow: hidden;
+  }
+  .cta-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    background: radial-gradient(
+      240px circle at var(--aura-x, 50%) var(--aura-y, 50%),
+      color-mix(in srgb, var(--accent) 16%, transparent),
+      transparent 72%
+    );
+  }
+  @media (hover: hover) {
+    .cta-card:hover::after {
+      opacity: 1;
+    }
+  }
 
-  /* ---- footer: brand + link columns over a legal line ---- */
+  /* ---- footer: brand + link columns ---- */
   .foot {
     border-top: 1px solid var(--line);
     background: var(--bg-sunken);

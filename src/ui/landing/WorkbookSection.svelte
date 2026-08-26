@@ -1,5 +1,5 @@
 <section id="workbook" class="wrap workbook">
-  <p class="section-label">The workbook</p>
+  <p class="section-label">The deliverable</p>
   <h2>A workbook your office will be excited for.</h2>
   <p class="lede">
     Not a data dump: a themed, multi-sheet Excel file with live formulas, the
@@ -74,7 +74,7 @@
   </div>
 
   <aside class="db-nerd" aria-label="Technical details">
-    <span class="db-nerd-tag">nerd note · a workbook that re-foots itself</span>
+    <span class="db-nerd-tag">nerd note · the file re-foots itself</span>
     <p>
       The category sheets hold the stored amounts; the Summary references them
       with live formulas and the Insights tiles are COUNT/SUMIF over the
