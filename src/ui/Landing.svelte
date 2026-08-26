@@ -406,14 +406,13 @@
       <p class="page-no">04 · Your data</p>
       <h2 class="page-title">Where things live, and when they move.</h2>
       <p class="page-deck">
-        The default is simple: nothing leaves your device. Everything beyond
-        that is opt-in, labeled, and explained here.
+        The default is simple: nothing leaves your device.
       </p>
     </header>
 
     <section id="privacy" class="wrap privacy">
       <p class="section-label">Privacy</p>
-      <h2>Local first. Cloud only when you say so.</h2>
+      <h2>Local first.</h2>
       <div class="priv-cols">
         <div class="card priv">
           <h4>The default path: nothing ever leaves this device</h4>
@@ -421,13 +420,11 @@
             <strong>Images stay in your browser's storage.</strong> OCR, logo
             recognition, extraction and the Excel build all run on your
             hardware. Close the tab and it's still there; clear it and it's
-            gone. The hosted site counts visits anonymously (Cloudflare Web
-            Analytics, no cookies). Your receipts and their contents are never
-            part of that.
+            gone.
           </p>
         </div>
         <figure class="priv-art" aria-hidden="true">
-          <svg viewBox="0 0 330 200" fill="none">
+          <svg viewBox="0 0 205 200" fill="none">
             <!-- your browser window -->
             <rect x="12" y="14" width="176" height="154" rx="12" stroke="var(--line-strong)" stroke-width="1.5" fill="var(--bg-raised)" />
             <circle cx="31" cy="31" r="3" fill="var(--err)" opacity="0.5" />
@@ -446,15 +443,18 @@
               <path d="M19 0 l17 6.5 v13 c0 10.5 -7.5 19 -17 23.5 c-9.5 -4.5 -17 -13 -17 -23.5 v-13 z" fill="var(--accent)" />
               <path d="M11 20 l6.5 6.5 L29 13.5" stroke="var(--accent-ink)" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" />
             </g>
-            <!-- the cloud is dashed, padlocked, and off to the side -->
-            <path d="M200 90 h42" stroke="var(--ink-faint)" stroke-width="2" stroke-dasharray="5 6" />
-            <g transform="translate(246 62)">
-              <path d="M20 44 h-4 a14 14 0 1 1 3 -27.7 a18 18 0 0 1 34.6 5.2 a12.5 12.5 0 0 1 -3.4 22.5 z" stroke="var(--ink-faint)" stroke-width="2" />
-              <rect x="16" y="24" width="18" height="14" rx="3.5" fill="var(--ink-faint)" />
-              <path d="M20 24 v-3 a5 5 0 0 1 10 0 v3" stroke="var(--ink-faint)" stroke-width="2.6" />
-            </g>
-            <text x="273" y="128" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">locked until</text>
-            <text x="273" y="141" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">you opt in</text>
+            <!-- Saved for later use (when the cloud boosters ship): the
+                 dashed padlocked cloud that used to sit right of the window
+                 in a 330-wide viewBox —
+                 <path d="M200 90 h42" stroke="var(--ink-faint)" stroke-width="2" stroke-dasharray="5 6" />
+                 <g transform="translate(246 62)">
+                   <path d="M20 44 h-4 a14 14 0 1 1 3 -27.7 a18 18 0 0 1 34.6 5.2 a12.5 12.5 0 0 1 -3.4 22.5 z" stroke="var(--ink-faint)" stroke-width="2" />
+                   <rect x="16" y="24" width="18" height="14" rx="3.5" fill="var(--ink-faint)" />
+                   <path d="M20 24 v-3 a5 5 0 0 1 10 0 v3" stroke="var(--ink-faint)" stroke-width="2.6" />
+                 </g>
+                 <text x="273" y="128" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">locked until</text>
+                 <text x="273" y="141" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">you opt in</text>
+            -->
             <text x="100" y="188" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink-soft)">everything happens here</text>
           </svg>
         </figure>
@@ -978,7 +978,7 @@
   .priv-art svg {
     width: 100%;
     height: auto;
-    max-width: 24rem;
+    max-width: 15rem;
     justify-self: center;
     font-family: var(--font-ui);
   }
