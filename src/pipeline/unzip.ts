@@ -227,7 +227,12 @@ export async function readZip(
       localOffset: view.getUint32(p + 42, true),
     };
     const nameStart = p + 46;
-    const path = decoder.decode(bytes.subarray(nameStart, nameStart + nameLen));
+    // Some Windows archivers write backslash separators (the spec says "/");
+    // normalize once here so the junk filter, the extension check, the
+    // card's path and the tuning bundle all see one shape.
+    const path = decoder
+      .decode(bytes.subarray(nameStart, nameStart + nameLen))
+      .replace(/\\/g, "/");
     applyZip64Extra(view, nameStart + nameLen, extraLen, sizes);
     p = nameStart + nameLen + extraLen + commentLen;
 

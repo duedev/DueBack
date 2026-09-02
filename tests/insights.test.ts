@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeInsights } from "../src/export/insights.ts";
+import { computeInsights, shareSlices } from "../src/export/insights.ts";
 import type { Receipt, Category } from "../src/types.ts";
 
 function receipt(f: {
@@ -86,3 +86,23 @@ test("empty input is handled", () => {
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
+
+test("shareSlices foots to 100%: the top 7 plus one remainder over the whole positive spend", () => {
+  const byCategory = [
+    "Fuel", "Materials", "Meals", "Travel", "Lodging", "Ground Transportation",
+    "Office Supplies", "Software & Subscriptions", "Utilities & Phone", "Other",
+  ].map((category, i) => ({ category, count: 1, total: 100 - i * 5 }));
+  const slices = shareSlices({ byCategory });
+  assert.equal(slices.length, 8, "7 categories + the remainder");
+  assert.equal(slices[7]!.category, null);
+  assert.equal(slices[7]!.label, "All other (3)");
+  assert.equal(slices[7]!.total, 65 + 60 + 55);
+  const pct = slices.reduce((s, x) => s + x.share, 0);
+  assert.ok(Math.abs(pct - 100) < 1e-9, `shares foot to 100 (got ${pct})`);
+  // No remainder when everything fits; nothing at all with one category.
+  assert.equal(shareSlices({ byCategory: byCategory.slice(0, 3) }).length, 3);
+  assert.deepEqual(shareSlices({ byCategory: byCategory.slice(0, 1) }), []);
+  // Zero-total categories are not drawn and not counted in the denominator.
+  const withZero = [...byCategory.slice(0, 2), { category: "Travel", count: 0, total: 0 }];
+  assert.equal(shareSlices({ byCategory: withZero }).length, 2);
+});

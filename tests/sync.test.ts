@@ -13,9 +13,11 @@ import {
 } from "../src/store/syncMerge.ts";
 
 // The pure half of the sync engine: LWW merge decisions, the pending-delete
-// log (tombstone queue), per-account blob-key scoping, and second-device
-// batch adoption. The Supabase/IndexedDB glue in sync.ts is browser-only and
-// validated by typecheck + the traces documented in the audit-fix report.
+// log (tombstone queue), per-account blob-key scoping, second-device batch
+// adoption, paging, tombstone landing and the owner decision. The
+// Supabase/IndexedDB glue in sync.ts is browser-only; its invariants are
+// documented in CLAUDE.md (the store row and the deletes/adoption gotchas)
+// and in sync.ts's own header comment.
 
 const del = (over: Partial<PendingDelete> = {}): PendingDelete => ({
   table: "receipts",

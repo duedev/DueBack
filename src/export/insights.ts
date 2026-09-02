@@ -39,6 +39,43 @@ export interface Insights {
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+export interface ShareSlice {
+  /** The category, or null for the rolled-up remainder. */
+  category: string | null;
+  label: string;
+  total: number;
+  /** Percent of the spend DRAWN (all positive categories), so slices foot to 100. */
+  share: number;
+}
+
+/** The share doughnut's slices: the top 7 positive categories plus one
+ *  remainder slice for the rest, so the percentages foot to 100% of the
+ *  spend drawn — a capped list over the whole total used to print slices
+ *  summing to less than 100%. Fewer than two positive categories → none
+ *  (a one-slice doughnut says nothing). Pure; Node-tested. */
+export function shareSlices(insights: Pick<Insights, "byCategory">): ShareSlice[] {
+  const all = insights.byCategory.filter((c) => c.total > 0);
+  if (all.length < 2) return [];
+  const head = all.slice(0, 7);
+  const rest = all.slice(7);
+  const total = all.reduce((s, c) => s + c.total, 0);
+  const slices: ShareSlice[] = head.map((c) => ({
+    category: c.category,
+    label: c.category === "Other" ? "Miscellaneous" : c.category,
+    total: c.total,
+    share: 0,
+  }));
+  if (rest.length) {
+    slices.push({
+      category: null,
+      label: `All other (${rest.length})`,
+      total: round2(rest.reduce((s, c) => s + c.total, 0)),
+      share: 0,
+    });
+  }
+  return slices.map((s) => ({ ...s, share: (s.total / total) * 100 }));
+}
+
 export function computeInsights(rows: Receipt[]): Insights {
   let total = 0;
   let tax = 0;

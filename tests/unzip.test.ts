@@ -233,3 +233,16 @@ test("archive entry paths shed '..', '.' and drive prefixes (zip-slip into the t
     originalFileName: "trip.zip › 2026/03/session.pdf",
   });
 });
+
+test("backslash-separated entry names (Windows archivers) read as folders", async () => {
+  const blob = await buildZip([
+    { name: "__MACOSX\\trip\\._receipt.jpg", data: jpegish("stub") },
+    { name: "trip\\._receipt.jpg", data: jpegish("stub2") },
+    { name: "trip\\.DS_Store", data: bytes("junk") },
+    { name: "trip\\sub\\receipt.jpg", data: jpegish("real") },
+  ]);
+  const { entries, skipped } = await readZip(await blob.arrayBuffer(), { extensions: [".jpg"] });
+  assert.deepEqual(entries.map((e) => e.path), ["trip/sub/receipt.jpg"]);
+  assert.equal(skipped.length, 0);
+  assert.equal(archiveEntryName("t.zip", entries[0]!.path).originalFileName, "t.zip › trip/sub/receipt.jpg");
+});

@@ -1,7 +1,7 @@
 import { repo } from "../store/repo.ts";
 import { getCorrections } from "./corrections.ts";
 import { buildZip } from "../export/zip.ts";
-import { toCsv } from "../export/csv.ts";
+import { toCsvBytes } from "../export/csv.ts";
 import type { Receipt } from "../types.ts";
 
 // One ZIP with everything a tuning session needs: the corrections log, every
@@ -50,7 +50,7 @@ export async function buildTuningBundle(receipts: Receipt[]): Promise<TuningBund
         ),
       ),
     },
-    { name: "report.csv", data: enc.encode(toCsv(receipts)) },
+    { name: "report.csv", data: toCsvBytes(receipts) },
   ];
   const used = new Set(entries.map((e) => e.name));
   const uniq = (base: string): string => {

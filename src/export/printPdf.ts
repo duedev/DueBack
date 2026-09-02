@@ -3,8 +3,9 @@
 // PDF of the receipt images — cropped to the strip that matters when the
 // field boxes allow it — packed two columns to a page, large enough that the
 // printed text survives an 8.5"×11" run. Every page carries the employee
-// header, and every image carries its own file-name/amount/job caption (a
-// batch may serve several jobs; the caption is per receipt, not per page).
+// header, and every image carries its own section label ("Fuel #2"), file
+// name, amount and job caption. The job is the batch's today, but it is
+// stamped per image so a per-receipt job later needs no layout change.
 //
 // Dependency-free by design (like export/zip.ts): the images are already
 // JPEG (canvas-recompressed), which PDF embeds verbatim via DCTDecode, so
@@ -12,7 +13,7 @@
 // Node tests can cover the layout and structure.
 
 import type { BBox } from "../types.ts";
-import { foldToAscii } from "../util/rename.ts";
+import { employeeFilePart } from "../util/rename.ts";
 
 export interface PrintImage {
   /** JPEG bytes (canvas output: 3-component YCbCr → DeviceRGB). */
@@ -22,16 +23,18 @@ export interface PrintImage {
   height: number;
   /** Caption line under the image (the receipt's file name). */
   name: string;
+  /** Section label that precedes the name — the workbook's "Fuel #2" — so
+   *  the paper packet reads alongside the Summary. Optional. */
+  label?: string;
   /** Right-hand caption (formatted amount), optional. */
   amount?: string;
-  /** Second caption line: this receipt's job name/number, optional. */
+  /** Second caption line: the job name/number (the batch's, per image so a
+   *  batch may span jobs later), optional. */
   job?: string;
 }
 
 export interface PrintMeta {
   employee?: string;
-  jobName?: string;
-  jobNumber?: string;
 }
 
 // Letter, portrait, in PDF points.
@@ -129,15 +132,21 @@ export function layoutPrintPages(
   return placements;
 }
 
-/** ASCII-sanitize for the PDF's WinAnsi Helvetica + escape ()\ delimiters.
- *  Common typographic punctuation degrades to ASCII instead of "?". */
+/** Sanitize for the PDF's WinAnsi Helvetica + escape ()\ delimiters.
+ *  WinAnsi's 0xA0–0xFF is byte-identical to Latin-1, so é/ñ/ü render as
+ *  themselves (they used to degrade to "?" on the employee's own header
+ *  line); NFC first so a decomposed "é" collapses to one code point instead
+ *  of "e?". Common typographic punctuation degrades to ASCII; anything past
+ *  U+00FF (Ł, CJK) is still "?". The content stream must then be encoded
+ *  as Latin-1 bytes, never UTF-8 (`latin1` below). */
 function pdfText(s: string): string {
   return s
+    .normalize("NFC")
     .replace(/[—–·]/g, "-")
     .replace(/[’‘]/g, "'")
     .replace(/[“”]/g, '"')
     .replace(/…/g, "...")
-    .replace(/[^\x20-\x7e]/g, "?")
+    .replace(/[^\x20-\x7e\xa0-\xff]/g, "?")
     .replace(/\\/g, "\\\\")
     .replace(/\(/g, "\\(")
     .replace(/\)/g, "\\)");
@@ -151,6 +160,9 @@ function headerLine(meta: PrintMeta): string {
 /** Build the PDF file bytes. */
 export function buildPrintPdf(images: PrintImage[], meta: PrintMeta): Uint8Array {
   const enc = new TextEncoder();
+  // Content streams carry pdfText output, which is Latin-1 by construction;
+  // TextEncoder is UTF-8 and would render "é" as "Ã©" under WinAnsi.
+  const latin1 = (s: string): Uint8Array => Uint8Array.from(s, (c) => c.charCodeAt(0) & 0xff);
   const chunks: Uint8Array[] = [];
   const offsets: number[] = []; // byte offset per object id (1-based)
   let length = 0;
@@ -214,7 +226,11 @@ export function buildPrintPdf(images: PrintImage[], meta: PrintMeta): Uint8Array
       cs += `q ${pl.w.toFixed(2)} 0 0 ${pl.h.toFixed(2)} ${pl.x.toFixed(2)} ${y.toFixed(2)} cm /Im${pl.index} Do Q\n`;
 
       const cellX = pl.x + pl.w / 2 - CELL_W / 2;
-      const cap = pdfText(img.name.length > 46 ? `${img.name.slice(0, 45)}…` : img.name);
+      // The label ("Fuel #2") is never truncated; the file name gives way
+      // so the caption still clears the right-aligned amount.
+      const room = Math.max(12, 46 - (img.label ? img.label.length + 2 : 0));
+      const shortName = img.name.length > room ? `${img.name.slice(0, room - 1)}…` : img.name;
+      const cap = pdfText(img.label ? `${img.label}  ${shortName}` : shortName);
       const capY = y - 10;
       cs += `BT /F1 8 Tf ${Math.max(MARGIN, cellX).toFixed(2)} ${capY.toFixed(2)} Td (${cap}) Tj ET\n`;
       if (img.amount) {
@@ -228,7 +244,7 @@ export function buildPrintPdf(images: PrintImage[], meta: PrintMeta): Uint8Array
       }
     }
 
-    const csBytes = enc.encode(cs);
+    const csBytes = latin1(cs);
     const xobjects = onPage
       .map((pl) => `/Im${pl.index} ${imageIds[pl.index]} 0 R`)
       .join(" ");
@@ -276,10 +292,8 @@ export function buildPrintPdf(images: PrintImage[], meta: PrintMeta): Uint8Array
 
 /** "Receipt_Packet_<employee>_<yyyymmdd>.pdf", matching the workbook's stamp. */
 export function printPdfFileName(employee: string | undefined, now = new Date()): string {
-  // Accents fold to ASCII (same rule as the workbook's file name).
-  const who =
-    foldToAscii(employee || "Employee").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_") ||
-    "Employee";
+  // Accents fold to ASCII (the same rule as the workbook's file name).
+  const who = employeeFilePart(employee);
   const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
   return `Receipt_Packet_${who}_${stamp}.pdf`;
 }

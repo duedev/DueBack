@@ -31,6 +31,22 @@ export function foldToAscii(s: string): string {
   return s.normalize("NFKD").replace(/\p{M}+/gu, "");
 }
 
+/** An employee (or other free-text) name as a file-name part: accents fold
+ *  to ASCII, punctuation drops, spaces become underscores, capped — the ONE
+ *  rule behind Reimbursements_<who>_<date>.xlsx, Receipt_Packet_<who>_….pdf
+ *  and the Report/Receipts archives (four copies of the regex had drifted:
+ *  only the workbook's capped the length). Empty or non-Latin input reads
+ *  "Employee". */
+export function employeeFilePart(name: string | undefined, max = 40): string {
+  return (
+    foldToAscii(name || "")
+      .replace(/[^\w\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "_")
+      .slice(0, max) || "Employee"
+  );
+}
+
 /** Port of the original `sanitize_filename_part`. Diverges deliberately in
  *  one place: accents are FOLDED before the ASCII strip (Café → cafe) where
  *  the Python original dropped the letter (caf). File names stay ASCII on

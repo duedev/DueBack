@@ -522,7 +522,7 @@ async function main() {
       );
       check(
         pdfRaw.includes("Receipt packet - Ada Lovelace"),
-        "print packet header carries the employee and job",
+        "print packet header carries the employee",
       );
     }
     const xlsxPath = join(dlDir, download.suggestedFilename());
@@ -547,7 +547,9 @@ async function main() {
     let linkCount = 0;
     summarySheet.eachRow((row) => {
       const v = row.getCell(1).value;
-      if (v && typeof v === "object" && v.hyperlink) linkCount++;
+      // HYPERLINK("#'Sheet'!A4", n) formulas (numeric result) — a hyperlink
+      // -typed cell would be "1" stored as text.
+      if (v && typeof v === "object" && (v.hyperlink || /^HYPERLINK\("#'/.test(v.formula ?? ""))) linkCount++;
     });
     check(linkCount === 4, `summary links every receipt to its image (got ${linkCount})`);
 

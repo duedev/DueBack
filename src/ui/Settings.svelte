@@ -388,15 +388,17 @@
             </p>
             <p class="muted small">
               "Save to OneDrive" in the report bar uploads the generated
-              workbook to <code>OneDrive / Apps / DueBack</code>. Sign-in
-              tokens stay in this browser; disconnecting forgets them.
+              workbook — and, when the print packet is enabled, the packet
+              PDF beside it — to <code>OneDrive / Apps / DueBack</code>.
+              Sign-in tokens stay in this browser; disconnecting forgets them.
             </p>
             <button class="btn btn-sm" onclick={disconnectOd}>Disconnect</button>
           {:else}
             <p class="muted small">
-              Connect a Microsoft account to save generated workbooks straight
-              to <code>OneDrive / Apps / DueBack</code>. Receipts are still
-              read on this device — only the reports you explicitly save are
+              Connect a Microsoft account to save generated reports (the
+              workbook and its print packet) straight to
+              <code>OneDrive / Apps / DueBack</code>. Receipts are still read
+              on this device — only the reports you explicitly save are
               uploaded.
             </p>
             <button class="btn" onclick={() => void connectOd()} disabled={odBusy}>

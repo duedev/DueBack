@@ -9,7 +9,7 @@ import {
 } from "./extract.ts";
 import { findSemanticDuplicate, type DupRecord } from "./dedup.ts";
 import { getOcrEngine, type OcrEngine } from "./ocr.ts";
-import { runVisionAssist } from "./vision/index.ts";
+import { runVisionAssist, shouldAssist, type VisionAssist } from "./vision/index.ts";
 import { receiptFileName } from "../util/rename.ts";
 import { annotateReceipt, HIGHLIGHT_COLORS } from "./annotate.ts";
 import { logoIndexAvailable, cropHeaderBand, searchLogo, type LogoHit } from "./logo/index.ts";
@@ -86,7 +86,6 @@ export async function processReceipt(
   try {
     // 1. Clean (auto-rotate, grayscale, auto-crop, downscale).
     const cleaned = await cleanImage(original);
-    URL.revokeObjectURL(cleaned.url); // we persist the blob, not this URL
     cleanedKey = await repo.putBlob(cleaned.blob, "cleaned");
 
     // 2. Hash the cleaned bytes → cache key + dedup key.
@@ -204,7 +203,16 @@ export async function processReceipt(
     //     only when the user has opted in + supplied a key, get a vision-model
     //     second opinion. It returns the same Extraction shape, so everything
     //     below is identical. Any failure silently keeps the free result.
-    const assist = await runVisionAssist(cleaned.blob, ex);
+    let assist: VisionAssist | null = null;
+    if (shouldAssist(ex)) {
+      // Never spend a paid call on a result that could not land: a receipt
+      // deleted or human-touched mid-flight completes as skip/technical
+      // (below), so the assist's answer would be discarded — and billed.
+      const pre = await repo.getReceipt(receiptId);
+      if (completionWriteMode(pre, claimed.updatedAt, touchedBeforeClaim(receipt)) === "full") {
+        assist = await runVisionAssist(cleaned.blob, ex);
+      }
+    }
     if (assist) {
       ex = assist.extraction;
       methodUsed = "paid";

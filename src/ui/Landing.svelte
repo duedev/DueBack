@@ -371,7 +371,7 @@
         <ul>
           <li>On-device reading: OCR, cleanup passes and total reconciliation</li>
           <li>Teach-a-brand visual logo recognition</li>
-          <li>Themed Excel workbook, insights dashboard, CSV and image archive</li>
+          <li>Themed Excel workbook, insights dashboard and a print packet PDF</li>
           <li>Installable app (PWA) that works offline</li>
         </ul>
       </div>

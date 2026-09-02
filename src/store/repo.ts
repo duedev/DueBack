@@ -174,19 +174,58 @@ class Repo {
     return all.map(normalizeReceipt);
   }
 
+  /** Store a new receipt — its original bytes, the row and its job — in ONE
+   *  transaction: a quota error mid-way used to leave an orphaned blob or a
+   *  "Queued" card with no job behind it, and the card now first renders
+   *  with its image already present. */
+  async addReceipt(receipt: Receipt, original: Blob): Promise<void> {
+    const conn = await db();
+    const tx = conn.transaction(["blobs", "receipts", "jobs"], "readwrite");
+    const job: Job = {
+      id: uid("job"),
+      receiptId: receipt.id,
+      attempts: 0,
+      lockedAt: null,
+      createdAt: receipt.createdAt,
+    };
+    await Promise.all([
+      tx.objectStore("blobs").put({
+        key: receipt.fileKey,
+        blob: original,
+        kind: "original",
+        createdAt: receipt.createdAt,
+      }),
+      tx.objectStore("receipts").put(receipt),
+      tx.objectStore("jobs").put(job),
+    ]);
+    await tx.done;
+    this.notify();
+  }
+
+  /** Row, blobs and any pending job go in ONE transaction; the sync
+   *  tombstone (kv) is recorded after the commit, as before. */
   async deleteReceipt(id: string): Promise<void> {
-    const r = await this.getReceipt(id);
+    const conn = await db();
+    const tx = conn.transaction(["blobs", "receipts", "jobs"], "readwrite");
+    const r = await tx.objectStore("receipts").get(id);
     const blobKeys = r
       ? [r.fileKey, r.cleanedKey, r.annotatedKey].filter((k): k is string => !!k)
       : [];
-    for (const key of blobKeys) await this.deleteBlob(key).catch(() => {});
-    const conn = await db();
-    await conn.delete("receipts", id);
-    // Drop any pending job too.
-    const jobs = await conn.getAllFromIndex("jobs", "byReceipt", id);
-    await Promise.all(jobs.map((j) => conn.delete("jobs", j.id)));
+    const jobKeys = await tx.objectStore("jobs").index("byReceipt").getAllKeys(id);
+    await Promise.all([
+      ...blobKeys.map((k) => tx.objectStore("blobs").delete(k)),
+      tx.objectStore("receipts").delete(id),
+      ...jobKeys.map((k) => tx.objectStore("jobs").delete(k)),
+    ]);
+    await tx.done;
     await this.recordPendingDelete("receipts", id, blobKeys);
     this.notify();
+  }
+
+  /** Receipt ids with a job in THIS browser's work-list — the board's way
+   *  of telling "reading here" from "another device is reading it". */
+  async listJobReceiptIds(): Promise<string[]> {
+    return (await (await db()).getAll("jobs")).map((j) => j.receiptId);
   }
 
   async countByStatus(batchId: string): Promise<Record<ReceiptStatus, number>> {

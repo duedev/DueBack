@@ -29,16 +29,32 @@ Deno.serve(async (req) => {
   const jwt = auth.replace(/^Bearer\s+/i, "");
   if (!jwt) return json(401, { error: "missing bearer token" });
 
-  let body: { embedding?: number[]; count?: number };
+  let body: unknown;
   try {
     body = await req.json();
   } catch {
     return json(400, { error: "invalid JSON" });
   }
-  const embedding = body.embedding;
-  if (!Array.isArray(embedding) || embedding.length !== 512) {
+  // A JSON `null` or array body used to throw on property access and come
+  // back as a CORS-less 500.
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return json(400, { error: "body must be a JSON object" });
+  }
+  const { embedding, count } = body as Record<string, unknown>;
+  // Every element must be a finite number — pgvector rejects NaN/Infinity,
+  // and a string element would reach the RPC as SQL text.
+  if (
+    !Array.isArray(embedding) ||
+    embedding.length !== 512 ||
+    !embedding.every((x) => typeof x === "number" && Number.isFinite(x))
+  ) {
     return json(400, { error: "embedding must be number[512]" });
   }
+  // Clamped and floored to a valid int; junk falls back to the documented 3.
+  const matchCount =
+    typeof count === "number" && Number.isFinite(count)
+      ? Math.min(10, Math.max(1, Math.floor(count)))
+      : 3;
 
   const supa = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -47,7 +63,7 @@ Deno.serve(async (req) => {
   );
   const { data, error } = await supa.rpc("match_brand_logos", {
     query: `[${embedding.join(",")}]`,
-    match_count: Math.min(10, Math.max(1, body.count ?? 3)),
+    match_count: matchCount,
   });
   if (error) return json(500, { error: error.message });
   return json(200, { hits: data ?? [] });

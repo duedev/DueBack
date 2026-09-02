@@ -1,9 +1,10 @@
 import ExcelJS from "exceljs";
 import type { Batch, Receipt, Category } from "../types.ts";
 import { APP_NAME, APP_URL } from "../config/constants.ts";
-import { CATEGORIES, CATEGORY_META } from "../config/categories.ts";
+import { CATEGORY_META } from "../config/categories.ts";
 import { safeAmount } from "../util/money.ts";
-import { foldToAscii } from "../util/rename.ts";
+import { employeeFilePart } from "../util/rename.ts";
+import { displayCategory, exportableReceipts, reportOrder } from "./order.ts";
 import { perDiemAmount, perDiemLabel } from "../util/perdiem.ts";
 import { phoneServiceAmount, phoneServiceLabel } from "../util/phone.ts";
 import { computeInsights, type Insights } from "./insights.ts";
@@ -170,12 +171,6 @@ function autofitColumns(
   }
 }
 
-function exportable(receipts: Receipt[]): Receipt[] {
-  return receipts
-    .filter((r) => r.status !== "failed" && safeAmount(r.amount.value) > 0)
-    .sort((a, b) => (a.date.value < b.date.value ? -1 : 1));
-}
-
 export interface WorkbookOptions {
   /** Add the Insights dashboard sheet (KPI tiles + charts). Off by default —
    *  most offices want the form, and skipping it also skips the chart
@@ -190,7 +185,7 @@ export async function buildWorkbook(
   opts: WorkbookOptions = {},
 ): Promise<ExportResult> {
   const withInsights = opts.insights === true;
-  const rows = exportable(receipts);
+  const rows = exportableReceipts(receipts);
   const wb = new ExcelJS.Workbook();
   wb.creator = APP_NAME;
   wb.created = new Date();
@@ -238,10 +233,7 @@ export async function buildWorkbook(
 
   // Categories present, in taxonomy order; layout is computed up-front so the
   // Summary (built first, shown first) can hyperlink into the image sheets.
-  const perCategory = CATEGORIES.map((cat) => ({
-    cat,
-    rows: rows.filter((r) => r.category.value === cat),
-  })).filter((g) => g.rows.length > 0);
+  const perCategory = reportOrder(rows);
 
   const anchors = new Map<string, ReceiptAnchor>();
   // The category-sheet amount cell is the single source of truth; the
@@ -357,11 +349,25 @@ function writeReceiptCells(
   const line = ws.getRow(row);
   const num = line.getCell(1);
   if (opts.link) {
-    num.value = { text: String(n), hyperlink: `#'${opts.link.sheet}'!A${opts.link.row}` };
+    // A formula with a NUMERIC result, not a hyperlink-typed cell: ExcelJS
+    // can only write the latter as text ("1" as a shared string), which
+    // trips Excel's "number stored as text" triangle on every receipt row —
+    // the first column of the sheet the office reads. HYPERLINK("#…")
+    // navigates in Excel desktop/Online/iOS (Google Sheets and LibreOffice
+    // ignore the fragment form; Excel is the product's consumer).
+    num.value = {
+      formula: `HYPERLINK("#'${opts.link.sheet}'!A${opts.link.row}",${n})`,
+      result: n,
+    };
   } else {
     num.value = n;
   }
-  num.font = { bold: true, size: opts.small ? 10 : 11, color: { argb: LINK_BLUE } };
+  num.font = {
+    bold: true,
+    size: opts.small ? 10 : 11,
+    color: { argb: LINK_BLUE },
+    ...(opts.link ? { underline: true } : {}),
+  };
   num.alignment = { horizontal: "center", vertical: "middle" };
 
   const base = { size: opts.small ? 10 : 11 } as const;
@@ -863,11 +869,19 @@ function buildInsightsSheet(
     ["Vendor", "Count", "Total"],
     insights.topVendors.map((v, i) => {
       const nameCell = `E${tableTop + 2 + i}`;
-      return [
-        v.vendor,
-        { formula: `COUNTIF(Summary!$C:$C,${nameCell})`, result: v.count },
-        { formula: `SUMIF(Summary!$C:$C,${nameCell},Summary!$F:$F)`, result: v.total },
-      ];
+      // Receipt rows only: whole-column criteria also matched the header's
+      // employee cell (C2) and every section's "Store" header, so a blank
+      // vendor ("—" beside a blank employee) or a vendor literally named
+      // "Store" over-counted once Excel recalculated on open.
+      const cats = [...refs.byCategory.values()];
+      const store = (range: string): string => range.replace(/F/g, "C");
+      const count =
+        cats.map((c) => `COUNTIF(Summary!${store(c.range)},${nameCell})`).join("+") || "0";
+      const total =
+        cats
+          .map((c) => `SUMIF(Summary!${store(c.range)},${nameCell},Summary!${c.range})`)
+          .join("+") || "0";
+      return [v.vendor, { formula: count, result: v.count }, { formula: total, result: v.total }];
     }),
     fmt,
   );
@@ -922,10 +936,6 @@ function smallTable(
 
 /** Report label for a category — "Other" reads "Miscellaneous", like the
  *  original app's fuel/materials/miscellaneous taxonomy. */
-function displayCategory(cat: Category): string {
-  return cat === "Other" ? "Miscellaneous" : cat;
-}
-
 function sheetName(cat: Category): string {
   // Excel sheet names: max 31 chars, no []:*?/\
   return displayCategory(cat).replace(/[[\]:*?/\\]/g, "").slice(0, 31);
@@ -941,11 +951,7 @@ function toLocalIso(d: Date): string {
 function makeFileName(batch: Batch): string {
   // The original app's convention: Reimbursements_{Employee}_{YYYYMMDD}.xlsx
   // Accents fold to ASCII (José Álvarez → Jose_Alvarez) rather than dropping.
-  const safe = foldToAscii(batch.employee || "Employee")
-    .replace(/[^\w\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "_")
-    .slice(0, 40);
+  const safe = employeeFilePart(batch.employee);
   const stamp = toLocalIso(new Date()).replace(/-/g, "");
-  return `Reimbursements_${safe || "Employee"}_${stamp}.xlsx`;
+  return `Reimbursements_${safe}_${stamp}.xlsx`;
 }

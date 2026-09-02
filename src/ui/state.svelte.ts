@@ -37,6 +37,11 @@ class AppState {
   toasts = $state<Toast[]>([]);
   theme = $state<ThemePref>("auto");
 
+  /** Receipt ids whose job lives in THIS browser's work-list. A queued or
+   *  processing receipt without one arrived through sync and is being read
+   *  on another device — the card says so instead of "Reading on your
+   *  device…", which nothing here was doing. */
+  localJobIds = $state(new Set<string>());
   /** Receipt currently open in the review modal (id), if any. */
   reviewId = $state<string | null>(null);
   settingsOpen = $state(false);
@@ -209,6 +214,10 @@ class AppState {
   async refresh(): Promise<void> {
     if (!this.batch) return;
     this.receipts = await repo.listReceipts(this.batch.id);
+    // Receipts first, then jobs: a receipt and its job land in one
+    // transaction, so this order can only ever see a job for a receipt
+    // already listed — never a listed receipt whose job is still coming.
+    this.localJobIds = new Set(await repo.listJobReceiptIds());
     const fresh = await repo.getBatch(this.batch.id);
     if (fresh) this.batch = fresh;
   }
@@ -343,16 +352,33 @@ class AppState {
    *  ZIP becomes one receipt per usable entry, however deeply the archive
    *  nests its folders. Processing only page 1 / ignoring the archive
    *  silently dropped the rest. */
-  async addFiles(files: Iterable<File>): Promise<void> {
+  addFiles(files: Iterable<File>): Promise<void> {
     if (!this.batch) {
       // Boot couldn't open storage; the 4-second toast it showed is long
       // gone by the time the user drops files, so say it again here.
       this.toast("Storage is unavailable in this browser, so receipts can't be added.", "err");
-      return;
+      return Promise.resolve();
     }
     this.entered = true;
     this.wentHome = false;
-    const existing = this.receipts.length;
+    // Snapshot NOW: a drop hands over the live dataTransfer.files, which
+    // empties once the event is over (the picker's FileList has the same
+    // trap) — iterating it after waiting on an earlier intake lost files.
+    const list = Array.from(files);
+    // Serialized: two overlapping intakes (a drop while a ZIP is still
+    // unpacking) each counted the batch from the same stale board and
+    // together overshot the cap.
+    const run = this.intake.then(() => this.addFilesNow(list));
+    this.intake = run.catch(() => {});
+    return run;
+  }
+
+  private intake: Promise<void> = Promise.resolve();
+
+  private async addFilesNow(files: File[]): Promise<void> {
+    // The store's count, not the reactive array's: the board lags the
+    // async refresh, and the previous intake's receipts may not be in it yet.
+    const existing = (await repo.listReceipts(this.batch!.id)).length;
     let accepted = 0;
     let capped = false;
 
@@ -374,12 +400,11 @@ class AppState {
       mimeType: string,
       originalFileName?: string,
     ): Promise<void> => {
-      const fileKey = await repo.putBlob(blob, "original");
       const now = Date.now();
       const receipt: Receipt = {
         id: uid("rcpt"),
         batchId: this.batch!.id,
-        fileKey,
+        fileKey: uid("blob"),
         fileName,
         originalFileName,
         mimeType,
@@ -399,16 +424,8 @@ class AppState {
         createdAt: now,
         updatedAt: now,
       };
-      try {
-        await repo.putReceipt(receipt);
-        await repo.enqueue(receipt.id);
-      } catch (err) {
-        // Three writes, one failure: don't leave an orphaned original or a
-        // permanently "Queued" receipt with no job behind it.
-        await repo.deleteReceipt(receipt.id).catch(() => {});
-        await repo.deleteBlob(fileKey).catch(() => {});
-        throw err;
-      }
+      // Blob, row and job in one transaction — all or nothing.
+      await repo.addReceipt(receipt, blob);
       accepted++;
     };
 

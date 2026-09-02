@@ -2,6 +2,8 @@ import {
   buildAuthUrl,
   isExpired,
   ensureFolders,
+  GraphError,
+  TokenEndpointError,
   ONEDRIVE_FOLDER,
   pkceChallenge,
   randomToken,
@@ -39,16 +41,51 @@ const AUTH_TIMEOUT_MS = 5 * 60_000;
 
 async function postTokenForm(params: Record<string, string>): Promise<OneDriveTokens> {
   const prev = loadTokens() ?? undefined;
-  const res = await fetch(tokenUrl(ONEDRIVE_TENANT), {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ client_id: oneDriveClientId(), ...params }).toString(),
-  });
+  let res: Response;
+  try {
+    res = await fetch(tokenUrl(ONEDRIVE_TENANT), {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: oneDriveClientId(), ...params }).toString(),
+    });
+  } catch {
+    throw new Error("Couldn't reach Microsoft — check the connection and try again.");
+  }
+  // Only a 4xx JSON error is a verdict on the grant (TokenEndpointError,
+  // via tokensFromResponse); an outage says nothing about it.
+  if (res.status >= 500 || res.status === 429) {
+    throw new Error(
+      `Microsoft sign-in is unavailable right now (${res.status}) — try again in a moment.`,
+    );
+  }
   const json = (await res.json().catch(() => ({}))) as Parameters<
     typeof tokensFromResponse
   >[0];
   return tokensFromResponse(json, Date.now(), prev);
 }
+
+/** Refresh the stored grant. True when fresh tokens were saved; false when
+ *  the endpoint REFUSED the grant (expired/revoked — tokens cleared, the
+ *  session is dead); throws on a transport failure or an outage, which
+ *  must not be mistaken for a dead session. */
+async function tryRefresh(refreshToken: string): Promise<boolean> {
+  try {
+    const fresh = await postTokenForm({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      scope: "offline_access Files.ReadWrite",
+    });
+    saveTokens(fresh);
+    return true;
+  } catch (err) {
+    if (!(err instanceof TokenEndpointError)) throw err;
+    clearTokens();
+    return false;
+  }
+}
+
+const RECONNECT_MESSAGE =
+  "OneDrive no longer accepts this sign-in — click Save to OneDrive again to reconnect.";
 
 /** Wait for the popup to land back on the app with our state: the popup
  *  relays its URL via postMessage (popup.ts), and a same-origin location
@@ -145,6 +182,7 @@ export async function connectOneDrive(): Promise<OneDriveAccount> {
       code_verifier: verifier,
     });
     saveTokens(tokens);
+    foldersReady = false; // a new grant may be a different drive
     return tokens.account;
   } finally {
     try {
@@ -160,27 +198,13 @@ export async function connectOneDrive(): Promise<OneDriveAccount> {
 export async function ensureConnected(): Promise<string> {
   const stored = loadTokens();
   if (stored && !isExpired(stored.expiresAt, Date.now())) return stored.accessToken;
-  if (stored?.refreshToken) {
-    try {
-      const fresh = await postTokenForm({
-        grant_type: "refresh_token",
-        refresh_token: stored.refreshToken,
-        scope: "offline_access Files.ReadWrite",
-      });
-      saveTokens(fresh);
-      return fresh.accessToken;
-    } catch (err) {
-      // A refused refresh (invalid_grant: expired or revoked) is a dead
-      // session — fall through to interactive. A network failure is not:
-      // keep the refresh token for next time and say what happened instead
-      // of throwing away a good session and forcing a re-consent popup.
-      if (err instanceof TypeError) {
-        throw new Error(
-          "Couldn't reach Microsoft to refresh the OneDrive sign-in — check the connection and try again.",
-        );
-      }
-      clearTokens();
-    }
+  // A refused refresh (invalid_grant: expired or revoked) is a dead session
+  // — fall through to interactive. A network failure or an outage is not:
+  // tryRefresh rethrows those, keeping the refresh token for next time,
+  // instead of throwing away a good session and forcing a re-consent popup
+  // over a blip.
+  if (stored?.refreshToken && (await tryRefresh(stored.refreshToken))) {
+    return loadTokens()!.accessToken;
   }
   await connectOneDrive();
   const tokens = loadTokens();
@@ -201,13 +225,17 @@ export async function uploadReport(
     return await uploadOnce(fileName, blob);
   } catch (err) {
     // Graph answered 401: the cached access token is dead before its clock
-    // says so (revoked consent, invalidated token). Expire it and go once
-    // more through ensureConnected — refresh, or the popup — instead of
-    // failing on the same token for up to an hour.
-    if (!/\(401\b/.test(err instanceof Error ? err.message : "")) throw err;
-    const stored = loadTokens();
-    if (stored) saveTokens({ ...stored, expiresAt: 0 });
+    // says so (revoked consent, invalidated token). Refresh silently and
+    // go once more; when the grant itself is dead, clear it and ask for a
+    // second click — the popup must open inside a user gesture, and this
+    // code runs seconds after the click, past the gesture window.
+    if (!(err instanceof GraphError && err.status === 401)) throw err;
     foldersReady = false;
+    const stored = loadTokens();
+    if (!stored?.refreshToken || !(await tryRefresh(stored.refreshToken))) {
+      clearTokens();
+      throw new Error(RECONNECT_MESSAGE);
+    }
     return uploadOnce(fileName, blob);
   }
 }

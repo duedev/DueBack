@@ -52,7 +52,7 @@ test("the employee header labels every page; the job is per image", () => {
         fakeImage({ job: "Warehouse Refit #77" }),
         fakeImage({ job: "Q1 Coffee Run #42" }),
       ],
-      { employee: "Ada Lovelace", jobName: "Q1 Coffee Run", jobNumber: "42" },
+      { employee: "Ada Lovelace" },
     ),
   );
   const headers = pdf.match(/Receipt packet - Ada Lovelace/g);
@@ -122,4 +122,30 @@ test("printPdfFileName is sanitized and date-stamped", () => {
   const d = new Date(2026, 7, 26);
   assert.equal(printPdfFileName("Ada Lovelace", d), "Receipt_Packet_Ada_Lovelace_20260826.pdf");
   assert.equal(printPdfFileName(undefined, d), "Receipt_Packet_Employee_20260826.pdf");
+});
+
+test("accented names render as Latin-1 under WinAnsi instead of '?'", () => {
+  const pdf = ascii(buildPrintPdf([fakeImage({ job: "Señor's job #42" })], { employee: "José García" }));
+  assert.ok(pdf.includes("Receipt packet - Jos\xe9 Garc\xeda"), "header keeps é/í");
+  assert.ok(pdf.includes("Se\xf1or's job #42"), "caption keeps ñ");
+  // A decomposed e + combining acute collapses to the one Latin-1 byte.
+  const nfd = ascii(buildPrintPdf([fakeImage()], { employee: "Jose\u0301" }));
+  assert.ok(nfd.includes("Receipt packet - Jos\xe9"));
+  // Past Latin-1 still degrades — but to one "?", not mojibake.
+  const far = ascii(buildPrintPdf([fakeImage()], { employee: "Łukasz" }));
+  assert.ok(far.includes("Receipt packet - ?ukasz"));
+  assert.equal(printPdfFileName("José García", new Date(2026, 7, 26)), "Receipt_Packet_Jose_Garcia_20260826.pdf");
+});
+
+test("the section label precedes the file name in the caption and is never truncated", () => {
+  const pdf = ascii(
+    buildPrintPdf(
+      [fakeImage({ label: "Ground Transportation #12", name: "transport_06-25-26_uber_technologies_inc.jpg" })],
+      {},
+    ),
+  );
+  assert.ok(pdf.includes("Ground Transportation #12  transport_"), "label first, then the (shortened) name");
+  assert.ok(!pdf.includes("uber_technologies_inc.jpg"), "the file name gave way, not the label");
+  const plain = ascii(buildPrintPdf([fakeImage({ name: "receipt (page 1).jpg" })], {}));
+  assert.ok(plain.includes("receipt \\(page 1\\).jpg"));
 });

@@ -21,6 +21,11 @@
   const busy = $derived(
     receipt.status === "queued" || receipt.status === "processing",
   );
+  /** Busy with no job in THIS browser's work-list: it arrived through sync
+   *  and another device is reading it. Only meaningful when signed in. */
+  const remoteBusy = $derived(
+    busy && app.userEmail !== null && !app.localJobIds.has(receipt.id),
+  );
 
   /** What a screen reader hears on focus: status first, then the card's
    *  facts — including the review reason, the date and the logo state the
@@ -65,7 +70,7 @@
   </div>
   <div class="body">
     <div class="top">
-      <span class="chip {meta.cls}">{meta.label}</span>
+      <span class="chip {meta.cls}">{remoteBusy ? "Reading elsewhere…" : meta.label}</span>
       {#if receipt.logoMatch?.source === "logo"}
         <span class="chip chip-ok" title="Brand identified visually">logo ✓</span>
       {/if}
@@ -106,7 +111,9 @@
     {:else if receipt.status === "failed"}
       <div class="flags err">{receipt.error ?? "Processing failed."}</div>
     {:else}
-      <div class="facts muted">Reading on your device…</div>
+      <div class="facts muted">
+        {remoteBusy ? "Being read on another device…" : "Reading on your device…"}
+      </div>
     {/if}
   </div>
 </button>

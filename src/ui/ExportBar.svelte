@@ -1,7 +1,8 @@
 <script lang="ts">
   import { app } from "./state.svelte.ts";
-  import { CATEGORIES } from "../config/categories.ts";
   import { repo } from "../store/repo.ts";
+  import { displayCategory, exportableReceipts, reportOrder } from "../export/order.ts";
+  import { employeeFilePart } from "../util/rename.ts";
   import { formatMoney, safeAmount } from "../util/money.ts";
   import { perDiemAmount, safePerDiemDays } from "../util/perdiem.ts";
   import {
@@ -172,8 +173,8 @@
   /** Letter-size PDF of the receipt images — what actually goes to the
    *  office printer. Receipts whose vendor/date/total boxes are all known
    *  (including hand-drawn ones) are cropped to that strip, so several fit
-   *  a page; each image carries its own job caption because a batch can
-   *  serve more than one job. */
+   *  a page; each image carries the batch's job caption (stamped per image,
+   *  so a batch may span jobs later without a layout change). */
   async function buildPrintPacket(): Promise<Blob | null> {
     const { buildPrintPdf, receiptStrip } = await import("../export/printPdf.ts");
     const { thumbnail, stripThumbnail } = await import("../export/images.ts");
@@ -181,41 +182,51 @@
       .filter(Boolean)
       .join(" ");
     const imgs: import("../export/printPdf.ts").PrintImage[] = [];
-    // Same order and numbering as the workbook (category sections in
-    // CATEGORIES order, receipts by date, "#n" within the section), so the
-    // paper packet reads alongside the Summary instead of in upload order.
-    const ordered = CATEGORIES.flatMap((cat) =>
-      exportable
-        .filter((r) => r.category.value === cat)
-        .sort((a, b) => (a.date.value < b.date.value ? -1 : 1))
-        .map((r, i) => ({ r, label: `${cat === "Other" ? "Miscellaneous" : cat} #${i + 1}` })),
-    );
-    for (const { r, label } of ordered) {
-      const blob = await repo.getBlob(r.annotatedKey ?? r.cleanedKey ?? r.fileKey);
-      if (!blob) continue;
-      const strip = receiptStrip([r.vendor.bbox, r.date.bbox, r.amount.bbox]);
-      const t = strip
-        ? await stripThumbnail(blob, strip.y0, strip.y1, 1400, 0.8)
-        : await thumbnail(blob, 1400, 0.8);
-      imgs.push({
-        jpeg: new Uint8Array(t.buffer),
-        width: t.width,
-        height: t.height,
-        name: `${label} · ${r.fileName}`,
-        amount: formatMoney(safeAmount(r.amount.value)),
-        ...(jobLabel ? { job: jobLabel } : {}),
-      });
+    // The workbook's own order and numbering (export/order.ts: category
+    // sections in taxonomy order, receipts by date then intake, "#n" within
+    // the section), so the paper packet reads alongside the Summary.
+    let skipped = 0;
+    for (const g of reportOrder(app.receipts)) {
+      for (const [i, r] of g.rows.entries()) {
+        // Per receipt, like the workbook's image loop: one receipt whose
+        // image is missing (a failed sync download) or won't decode must
+        // not sink the whole packet — or vanish from it silently.
+        try {
+          const blob = await repo.getBlob(r.annotatedKey ?? r.cleanedKey ?? r.fileKey);
+          if (!blob) {
+            skipped++;
+            continue;
+          }
+          const strip = receiptStrip([r.vendor.bbox, r.date.bbox, r.amount.bbox]);
+          const t = strip
+            ? await stripThumbnail(blob, strip.y0, strip.y1, 1400, 0.8)
+            : await thumbnail(blob, 1400, 0.8);
+          imgs.push({
+            jpeg: new Uint8Array(t.buffer),
+            width: t.width,
+            height: t.height,
+            label: `${displayCategory(g.cat)} #${i + 1}`,
+            name: r.fileName,
+            amount: formatMoney(safeAmount(r.amount.value)),
+            ...(jobLabel ? { job: jobLabel } : {}),
+          });
+        } catch {
+          skipped++;
+        }
+      }
+    }
+    if (skipped > 0) {
+      app.toast(
+        `Print packet skipped ${skipped} receipt${skipped === 1 ? "" : "s"} without a readable image.`,
+        "warn",
+      );
     }
     if (imgs.length === 0) return null;
-    const bytes = buildPrintPdf(imgs, { employee, jobName, jobNumber });
+    const bytes = buildPrintPdf(imgs, { employee });
     return new Blob([bytes.buffer as ArrayBuffer], { type: "application/pdf" });
   }
 
-  const exportable = $derived(
-    app.receipts.filter(
-      (r) => r.status !== "failed" && safeAmount(r.amount.value) > 0,
-    ),
-  );
+  const exportable = $derived(exportableReceipts(app.receipts));
   const flagged = $derived(
     app.receipts.filter((r) => r.reviewRequired && !r.approved),
   );
@@ -256,7 +267,7 @@
         return;
       }
       const zip = await buildZip(entries);
-      const employee = (app.batch.employee || "Employee").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_");
+      const employee = employeeFilePart(app.batch.employee);
       const now = new Date();
       // Local date, matching the workbook's filename stamp (UTC drifted a day).
       const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
@@ -319,7 +330,7 @@
           });
         }
         const zip = await buildZip(entries);
-        const who = (employee || "Employee").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_") || "Employee";
+        const who = employeeFilePart(employee);
         const now = new Date();
         const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
         download(zip, `Report_${who}_${stamp}.zip`);
@@ -406,7 +417,25 @@
       await ensureConnected();
       const result = await buildReport();
       const saved = await uploadReport(result.fileName, result.blob);
-      app.toast(`Saved to OneDrive: ${saved.path}`, "ok");
+      // The print packet goes up beside the workbook (two browsable files,
+      // never a ZIP) — the download path ships both, so the cloud path
+      // should not silently leave the paper half behind. Seconds after
+      // ensureConnected, so the second upload reuses the stored token and
+      // can never need a popup outside the click.
+      let packetNote = "";
+      if (includePrint) {
+        try {
+          const packet = await buildPrintPacket();
+          if (packet) {
+            const { printPdfFileName } = await import("../export/printPdf.ts");
+            await uploadReport(printPdfFileName(employee), packet);
+            packetNote = " (+ print packet)";
+          }
+        } catch {
+          app.toast("Workbook saved; the print packet couldn't be built or uploaded.", "warn");
+        }
+      }
+      app.toast(`Saved to OneDrive: ${saved.path}${packetNote}`, "ok");
     } catch (err) {
       app.toast(
         err instanceof Error ? err.message : "Couldn't save to OneDrive.",

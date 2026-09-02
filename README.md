@@ -50,21 +50,24 @@ feeds the grand TOTAL.
 
 | Stage | What runs |
 |---|---|
-| Clean | EXIF auto-rotate → optional perspective straightening (OpenCV.js, lazy) → grayscale → edge-energy auto-crop → downscale |
+| Clean | EXIF auto-rotate → optional perspective straightening (OpenCV.js, lazy) → projection-profile deskew → dark scan-border trim → paper-slab auto-crop (edge-energy fallback) → grayscale → two renders: a transient 2600 px copy for OCR and the stored 1600 px copy |
 | Read | **Tesseract.js** on-device (default, $0, offline), or the opt-in **PaddleOCR PP-OCRv5** tier on onnxruntime-web for tough photos |
 | Name the merchant | curated **~300-brand vendor DB** with word-boundary matching, **glyph-normalized** OCR-confusion folding (`7-ELEUEN` → 7-Eleven), printed-slogan aliases ("How doers get more done." → The Home Depot), and a bounded fuzzy backstop |
 | **See the logo** | when the name is a logo the OCR can't spell: CLIP image embeddings (transformers.js, on-device) vs. a brand-logo index. **Teach it any brand with one image**, no retraining |
 | Extract | grand-total selection reconciled against the receipt's own arithmetic (subtotal + tax footing, pump math on fuel receipts), US-first dates, tax, category — amounts are always US dollars |
 | Trust | per-field confidence + provenance boxes, flags, semantic + image-hash duplicate detection; anything the rules can't verify is queued for manual review instead of shipping wrong |
-| Assist (opt-in) | low-confidence receipts can get a vision-LLM second opinion. Bring your own key, or sign in and use the server-keyed proxy |
+| Assist (optional) | low-confidence receipts can get a vision-LLM second opinion. Bring your own key, or sign in and use the server-keyed proxy |
 
 Everything above the "Assist" row runs entirely in your browser.
 
 ## Privacy model
 
-- **Default:** receipts never leave your device. Storage is IndexedDB; OCR,
-  logo recognition, and the Excel build are all client-side.
-- **AI assist (opt-in):** low-confidence receipts go to the model you chose.
+- **Default (keyless build):** receipts never leave your device. Storage is
+  IndexedDB; OCR, logo recognition, and the Excel build are all client-side.
+- **AI assist:** low-confidence receipts go to the model you chose. Off
+  unless you turn it on — except that a build made with `OPENROUTER_API_KEY`
+  turns the free OpenRouter tier on by default (switch it off in Settings →
+  AI assist).
 - **Sync (opt-in):** signing in mirrors your data to *your own* Supabase
   workspace with row-level security. See [`SUPABASE_SETUP.md`](./SUPABASE_SETUP.md).
 - **OneDrive (opt-in):** only the workbooks you explicitly save are uploaded,
@@ -80,6 +83,8 @@ npm test           # unit suites (node:test via tsx)
 npm run testkit    # the fixed accuracy gate (9 challenge receipts + logo case)
 npm run typecheck  # tsc + svelte-check
 npm run build      # typecheck + production build (dist/)
+npm run e2e        # real-OCR gate: Tesseract in headless Chromium via vite preview (CI runs it)
+node tests/screenshots.mjs   # Playwright screenshots vs vite preview
 ```
 
 Optional tiers:

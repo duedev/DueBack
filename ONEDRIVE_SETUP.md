@@ -81,8 +81,10 @@ VITE_ONEDRIVE_REDIRECT_URI=https://dueback.duanehamilton.net/
 
 - **Report bar → Save to OneDrive:** first use opens a Microsoft sign-in
   popup; after that the workbook is built and uploaded to
-  `OneDrive / Apps / DueBack / Reimbursements_<Employee>_<YYYYMMDD>.xlsx`
-  (same-named files are replaced — re-saving a report updates it).
+  `OneDrive / Apps / DueBack / Reimbursements_<Employee>_<YYYYMMDD>.xlsx`,
+  and — with **Print packet** ticked, as it is by default — the
+  `Receipt_Packet_<Employee>_<YYYYMMDD>.pdf` goes up beside it as its own
+  file (same-named files are replaced — re-saving a report updates both).
 - **Settings → OneDrive:** shows the connected account, connects, or
   disconnects (which just forgets the tokens in this browser).
 
@@ -112,4 +114,5 @@ VITE_ONEDRIVE_REDIRECT_URI=https://dueback.duanehamilton.net/
 | `AADSTS50194` / "unauthorized_client" for personal accounts | The registration is single-tenant. Either re-register as multitenant + personal accounts, or set `VITE_ONEDRIVE_TENANT` to your tenant and accept org-only sign-in. |
 | "Popup blocked" toast | Allow popups for the site, or click the button again (the popup must open inside a click). |
 | The button doesn't appear at all | The build has no `VITE_ONEDRIVE_CLIENT_ID`. Settings → OneDrive says so explicitly. |
+| Signed in, but the save says "OneDrive no longer accepts this sign-in" (a 401 from Graph) | The token was revoked or invalidated before its clock ran out and a silent refresh didn't help. Click **Save to OneDrive** again — it re-opens the sign-in popup (or Settings → OneDrive → Disconnect, then Connect). |
 | Signed in, but uploads fail with 403 | The user declined the `Files.ReadWrite` consent, or a tenant admin has disabled user consent — an admin must grant it (Entra ID → Enterprise applications → DueBack → Permissions). |

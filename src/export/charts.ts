@@ -2,7 +2,7 @@ import { Chart } from "chart.js/auto";
 import type { ChartConfiguration } from "chart.js";
 import { CATEGORY_META } from "../config/categories.ts";
 import type { Category } from "../types.ts";
-import type { Insights } from "./insights.ts";
+import { shareSlices, type Insights } from "./insights.ts";
 
 // Chart.js → PNG for the workbook's Insights sheet (ExcelJS can embed images
 // but not draw native charts well). Rendered on a hidden canvas against the
@@ -347,22 +347,22 @@ export async function cumulativeChartImage(
 export async function shareChartImage(
   insights: Insights,
 ): Promise<ChartImage | null> {
-  const rows = insights.byCategory.filter((c) => c.total > 0).slice(0, 7);
-  if (rows.length < 2) return null;
-  const total = rows.reduce((s, c) => s + c.total, 0);
+  const slices = shareSlices(insights);
+  if (slices.length === 0) return null;
   return renderToPng(
     {
       type: "doughnut",
       data: {
-        labels: rows.map((c) => {
-          const name = c.category === "Other" ? "Miscellaneous" : c.category;
-          return `${name}  ${((c.total / total) * 100).toFixed(0)}%`;
-        }),
+        labels: slices.map((s) => `${s.label}  ${s.share.toFixed(0)}%`),
         datasets: [
           {
-            data: rows.map((c) => c.total),
-            backgroundColor: rows.map((c) =>
-              argbToCss(CATEGORY_META[c.category as Category]?.color ?? "FF94A3B8"),
+            data: slices.map((s) => s.total),
+            // The remainder gets a neutral stone, not the slate that IS the
+            // real Miscellaneous category (which can sit right beside it).
+            backgroundColor: slices.map((s) =>
+              s.category === null
+                ? "#d6d3d1"
+                : argbToCss(CATEGORY_META[s.category as Category]?.color ?? "FF94A3B8"),
             ),
             borderColor: "#ffffff",
             borderWidth: 2,
