@@ -10,7 +10,7 @@ import {
   dataUrl,
   appOrigin,
   errorBody,
-  visionSignal,
+  visionFetch,
   type ProviderInit,
 } from "./shared.ts";
 
@@ -75,9 +75,8 @@ export function createOpenRouterProvider(init: ProviderInit): VisionProvider {
         };
       }
 
-      const res = await fetch(url, {
+      const res = await visionFetch("OpenRouter", url, {
         method: "POST",
-        signal: visionSignal(),
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${init.apiKey}`,

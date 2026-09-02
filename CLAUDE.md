@@ -668,6 +668,10 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   year, so an unversioned path kept serving the previous worker to a bundle
   built against the next release (test-pinned in
   `tests/vendor_tesseract.test.ts`; stale version folders are pruned). `ai-extract`'s
+  Every provider call goes through `visionFetch` (90 s deadline, a
+  TimeoutError reads "<provider> timed out after 90 s"), and `ai-extract`
+  caps its upstream call at 85 s so the browser gets a clean JSON 504
+  before its own deadline instead of a network error.
   `policy.ts DEFAULT_ALLOWED_MODEL` must stay in sync with
   `PROVIDERS.openrouter.defaultModel` (vision/config.ts): a signed-in user who
   picks a non-default model gets 403 from the proxy unless the deployer widens

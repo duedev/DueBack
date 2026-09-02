@@ -37,6 +37,22 @@ export function visionSignal(): AbortSignal {
   return AbortSignal.timeout(VISION_TIMEOUT_MS);
 }
 
+/** fetch with the deadline attached and its failures made readable: a
+ *  TimeoutError/AbortError used to surface as "signal timed out" in the
+ *  Settings test and the training log. The signal also aborts a trickling
+ *  body read, so callers need not wrap res.json(). */
+export async function visionFetch(provider: string, url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: visionSignal() });
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    if (name === "TimeoutError" || name === "AbortError") {
+      throw new Error(`${provider} timed out after ${Math.round(VISION_TIMEOUT_MS / 1000)} s.`);
+    }
+    throw new Error(`${provider}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 /** A referer/title pair OpenRouter likes for attribution; harmless elsewhere. */
 export function appOrigin(): string {
   return typeof location !== "undefined" ? location.origin : APP_URL;

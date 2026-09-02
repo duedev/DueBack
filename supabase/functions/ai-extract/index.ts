@@ -104,16 +104,32 @@ Deno.serve(async (req) => {
     return json(429, { error: "daily AI request limit reached" });
   }
 
-  const upstream = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${key}`,
-      "http-referer": "https://dueback.duanehamilton.net",
-      "x-title": "DueBack",
-    },
-    body: JSON.stringify(body),
-  });
+  // Answer BEFORE the client's own 90 s deadline (vision/providers/shared.ts)
+  // with a clean JSON 504, instead of the browser seeing a network error —
+  // and never hold the function open on a stalled upstream.
+  const UPSTREAM_TIMEOUT_MS = 85_000;
+  let upstream: Response;
+  try {
+    upstream = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${key}`,
+        "http-referer": "https://dueback.duanehamilton.net",
+        "x-title": "DueBack",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    const timedOut = name === "TimeoutError" || name === "AbortError";
+    return json(timedOut ? 504 : 502, {
+      error: timedOut
+        ? `upstream timed out after ${UPSTREAM_TIMEOUT_MS / 1000} s`
+        : `upstream unreachable: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
 
   const resBody = await upstream.text();
   return new Response(resBody, {
