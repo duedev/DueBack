@@ -405,14 +405,24 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   (`receiptStrip`; hand-drawn boxes count) and column-flow-packs the strips
   (`layoutPrintPages`) so several fit a Letter page; each image carries its
   own file-name/amount/job caption (a batch can span jobs) and the
-  employee header tops every page.
+  employee header tops every page. The packet is ordered and numbered like
+  the workbook (category sections in `CATEGORIES` order, receipts by date,
+  "Fuel #2 · file.jpg" captions) so paper and Summary read together.
 - **ReviewModal has draw-a-box mode**: "▣ mark on image" per field
   (color-coded to the field) arms a drag on the receipt that writes the
   field's bbox with `Field.manualBox`, which `applyPatch`'s relocation must
   never move (and `patchFromForm` must carry through saves). The drawn rect
   MUST be `$state.snapshot`-ed before entering the patch — a $state proxy
   makes IndexedDB's structuredClone throw and the box silently never
-  persists. The box also autofills its field via `extract.readValueInBox`
+  persists. Saves are SERIALIZED (`applyPatch` chains through one promise
+  and diffs against the receipt as stored): a field's change event and the
+  Approve click behind it fire back to back and used to log the correction
+  twice and orphan an annotated blob. `patchFromForm` stamps `edited` only
+  on fields whose value changed (or were already edited) — stamping every
+  field dropped provenance boxes on untouched values and made every save
+  read as a human touch. The form re-seeds when the SAME receipt's
+  `updatedAt` moves while the form is untouched (it finished processing or
+  synced while its card was open); typed edits always win. The box also autofills its field via `extract.readValueInBox`
   (stored `ocrLines` inside the box; Node-tested). The completed review
   sweep fires `ui/confetti.ts` (multi-volley canvas burst, reduced-motion
   no-op). Grid view groups by category with show/hide chips (localStorage

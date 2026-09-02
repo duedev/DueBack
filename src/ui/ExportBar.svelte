@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from "./state.svelte.ts";
+  import { CATEGORIES } from "../config/categories.ts";
   import { repo } from "../store/repo.ts";
   import { formatMoney, safeAmount } from "../util/money.ts";
   import { perDiemAmount, safePerDiemDays } from "../util/perdiem.ts";
@@ -180,7 +181,16 @@
       .filter(Boolean)
       .join(" ");
     const imgs: import("../export/printPdf.ts").PrintImage[] = [];
-    for (const r of exportable) {
+    // Same order and numbering as the workbook (category sections in
+    // CATEGORIES order, receipts by date, "#n" within the section), so the
+    // paper packet reads alongside the Summary instead of in upload order.
+    const ordered = CATEGORIES.flatMap((cat) =>
+      exportable
+        .filter((r) => r.category.value === cat)
+        .sort((a, b) => (a.date.value < b.date.value ? -1 : 1))
+        .map((r, i) => ({ r, label: `${cat === "Other" ? "Miscellaneous" : cat} #${i + 1}` })),
+    );
+    for (const { r, label } of ordered) {
       const blob = await repo.getBlob(r.annotatedKey ?? r.cleanedKey ?? r.fileKey);
       if (!blob) continue;
       const strip = receiptStrip([r.vendor.bbox, r.date.bbox, r.amount.bbox]);
@@ -191,7 +201,7 @@
         jpeg: new Uint8Array(t.buffer),
         width: t.width,
         height: t.height,
-        name: r.fileName,
+        name: `${label} · ${r.fileName}`,
         amount: formatMoney(safeAmount(r.amount.value)),
         ...(jobLabel ? { job: jobLabel } : {}),
       });

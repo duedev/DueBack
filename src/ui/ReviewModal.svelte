@@ -30,19 +30,56 @@
   let imgLoaded = $state(false);
   let imageUrl = $state<string | null>(null);
   let seededId: string | null = null;
+  /** The record version the form was seeded from, and what it was seeded
+   *  with — so a receipt that finishes processing (or syncs) while its
+   *  card is open re-seeds the form instead of letting Approve write the
+   *  stale empty values over the machine's read. Only an UNTOUCHED form is
+   *  re-seeded; typed edits always win. */
+  let seededAt = 0;
+  let seededImageKey: string | undefined;
+  let seeded = { vendor: "", date: "", amount: "", category: "" };
+
+  function formUntouched(): boolean {
+    return (
+      vendor === seeded.vendor &&
+      date === seeded.date &&
+      amount === seeded.amount &&
+      category === seeded.category
+    );
+  }
 
   $effect(() => {
     const r = current;
-    if (!r || r.id === seededId) return;
+    if (!r) return;
+    const sameReceipt = r.id === seededId;
+    if (sameReceipt && r.updatedAt === seededAt) return;
+    if (sameReceipt && !formUntouched()) {
+      // The human is mid-edit: keep their form, but follow a fresh image
+      // (the pipeline swapped the raw upload for the cleaned copy).
+      const key = r.cleanedKey ?? r.fileKey;
+      if (key !== seededImageKey) {
+        seededImageKey = key;
+        const id = r.id;
+        void app.blobUrl(key).then((u) => {
+          if (seededId === id) imageUrl = u;
+        });
+      }
+      seededAt = r.updatedAt;
+      return;
+    }
     seededId = r.id;
+    seededAt = r.updatedAt;
     vendor = r.vendor.value;
     date = r.date.value;
     amount = r.amount.value ? String(r.amount.value) : "";
     category = r.category.value;
+    seeded = { vendor, date, amount, category };
     imgLoaded = false;
     imageUrl = null;
     const id = r.id;
-    void app.blobUrl(r.cleanedKey ?? r.fileKey).then((u) => {
+    const key = r.cleanedKey ?? r.fileKey;
+    seededImageKey = key;
+    void app.blobUrl(key).then((u) => {
       // Rapid prev/next: the LAST promise to resolve would win otherwise —
       // only the still-current receipt may set the image.
       if (seededId === id) imageUrl = u;
@@ -115,22 +152,33 @@
       ...(f.bbox ? { bbox: f.bbox } : {}),
       ...(f.manualBox ? { manualBox: true } : {}),
     });
+    // `edited` marks a HUMAN change: it is what the training log, the
+    // relocation ("an edited value that can't be found keeps no box") and
+    // the pipeline's touched-before-claim guard read. Stamping it on every
+    // field of every save dropped provenance boxes on values nobody touched.
+    const edited = (f: Field<unknown>, value: unknown) =>
+      f.value !== value || f.edited ? { edited: true } : {};
     return {
-      vendor: { value: newVendor, confidence: 1, edited: true, ...keepBox(r.vendor) },
+      vendor: {
+        value: newVendor,
+        confidence: 1,
+        ...edited(r.vendor, newVendor),
+        ...keepBox(r.vendor),
+      },
       date: {
         value: newDate,
         confidence: 1,
-        edited: true,
+        ...edited(r.date, newDate),
         ...keepBox(r.date),
       },
       amount: {
         value: newAmount,
         confidence: 1,
-        edited: true,
+        ...edited(r.amount, newAmount),
         ...keepBox(r.amount),
       },
       currency: "USD", // USD-only app — a save normalizes any legacy value
-      category: { value: category, confidence: 1, edited: true },
+      category: { value: category, confidence: 1, ...edited(r.category, category) },
       // Edits change the fields the file is named after — keep it in sync
       // (same amount>0 gate as the pipeline: failed reads keep their name).
       ...(newAmount > 0
@@ -149,8 +197,20 @@
   /** Apply a review patch, closing the improvement loop: locate each
    *  corrected value on the receipt, move its highlight there, re-bake the
    *  annotated copy, and log the correction for training. */
-  async function applyPatch(receipt: Receipt, patch: Partial<Receipt>): Promise<void> {
-    const r = $state.snapshot(receipt) as Receipt;
+  /** Saves are serialized: a field's change event and the Approve click it
+   *  precedes fire back to back, and two concurrent applyPatch calls logged
+   *  the correction twice and orphaned an annotated blob. Each call also
+   *  diffs against the receipt as STORED (not the snapshot taken before the
+   *  previous save landed), so the second call finds nothing new to log. */
+  let inflight: Promise<void> = Promise.resolve();
+  function applyPatch(receipt: Receipt, patch: Partial<Receipt>): Promise<void> {
+    const next = inflight.then(() => applyPatchNow(receipt, patch));
+    inflight = next.catch(() => {});
+    return next;
+  }
+
+  async function applyPatchNow(receipt: Receipt, patch: Partial<Receipt>): Promise<void> {
+    const r = ((await repo.getReceipt(receipt.id)) ?? $state.snapshot(receipt)) as Receipt;
     const lines = (r.ocrLines ?? []) as OcrLine[];
     const records = buildCorrectionRecords(r, patch, lines);
 
