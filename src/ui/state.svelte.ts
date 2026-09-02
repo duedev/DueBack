@@ -119,7 +119,7 @@ class AppState {
     }
     this.batch = batch;
 
-    repo.subscribe(() => void this.refresh());
+    repo.subscribe(() => this.scheduleRefresh());
     queue.onProgress((remaining) => {
       this.pendingJobs = remaining;
     });
@@ -185,6 +185,19 @@ class AppState {
     this.batch = batch;
     await this.refresh();
     if (this.receipts.length > 0) this.entered = true;
+  }
+
+  /** Coalesce bursts of repo notifications into one board read. Every
+   *  pipeline write, every one of a clear-all's 200 deletes and every synced
+   *  row notified, and each notification re-read and re-deserialized the
+   *  whole batch — O(N²) over a batch run. */
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private scheduleRefresh(): void {
+    if (this.refreshTimer) return;
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      void this.refresh();
+    }, 40);
   }
 
   async refresh(): Promise<void> {

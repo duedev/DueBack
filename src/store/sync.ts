@@ -446,12 +446,16 @@ class SyncEngine {
         }
       }
     });
+    // Rows first: the board shows the pulled receipts now, not after every
+    // image has downloaded — a fresh device used to stare at an empty board
+    // for minutes while the blobs streamed in one by one.
+    this.announce();
     // Blob downloads run OUTSIDE the suppression window (M2): they take
     // multi-seconds and never notify, so a local edit meanwhile must still
     // schedule its push.
     for (const r of needBlobs) await this.ensureBlobs(c, r);
-    // One notify for the whole merge — announced, never echoed into a push.
-    this.announce();
+    // …and once more so the cards pick up their thumbnails.
+    if (needBlobs.length > 0) this.announce();
     await repo.setSetting("sync.lastPullAt", Date.now());
   }
 

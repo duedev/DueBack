@@ -56,6 +56,12 @@ interface RawBlock {
   paragraphs?: { lines?: RawLine[] }[];
 }
 
+/** First-use start-up fetches the worker, a ~3.4 MB wasm core and ~4 MB of
+ *  language data; on a slow connection that is minutes, so the deadline is
+ *  generous — but it exists, because a hung start used to park every
+ *  receipt in "processing" for good. */
+const OCR_INIT_TIMEOUT_MS = 180_000;
+
 class TesseractEngine implements OcrEngine {
   private worker: Worker | null = null;
   private initPromise: Promise<Worker> | null = null;
@@ -66,7 +72,7 @@ class TesseractEngine implements OcrEngine {
       const langPath = OCR.useLocal
         ? `${base()}${OCR.localLangPath}`
         : OCR.cdnLangPath;
-      this.initPromise = createWorker(OCR.language, 1, {
+      const init = createWorker(OCR.language, 1, {
         workerPath: `${vendorDir()}worker.min.js`,
         corePath: vendorDir(),
         langPath,
@@ -74,6 +80,22 @@ class TesseractEngine implements OcrEngine {
         this.worker = w;
         return w;
       });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("The OCR engine took too long to start — check the connection and try again.")),
+          OCR_INIT_TIMEOUT_MS,
+        );
+      });
+      // A failed or timed-out start is forgotten, so the next receipt
+      // retries instead of inheriting a permanently rejected promise (the
+      // old behaviour: one bad start failed every receipt for the session).
+      this.initPromise = Promise.race([init, deadline])
+        .finally(() => clearTimeout(timer))
+        .catch((err) => {
+          this.initPromise = null;
+          throw err;
+        });
     }
     return this.initPromise;
   }

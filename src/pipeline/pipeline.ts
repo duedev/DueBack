@@ -78,11 +78,16 @@ export async function processReceipt(
     return;
   }
 
+  // Blobs this run stores; a throw before the completion write used to
+  // orphan them forever (there is no blob GC), so the failure path deletes
+  // whichever the receipt doesn't reference.
+  let cleanedKey: string | undefined;
+  let annotatedKey: string | undefined;
   try {
     // 1. Clean (auto-rotate, grayscale, auto-crop, downscale).
     const cleaned = await cleanImage(original);
     URL.revokeObjectURL(cleaned.url); // we persist the blob, not this URL
-    const cleanedKey = await repo.putBlob(cleaned.blob, "cleaned");
+    cleanedKey = await repo.putBlob(cleaned.blob, "cleaned");
 
     // 2. Hash the cleaned bytes → cache key + dedup key.
     const imageHash = await hashBlob(cleaned.blob);
@@ -261,7 +266,6 @@ export async function processReceipt(
     // Bake highlighter marks (vendor/date/amount) onto an annotated copy for
     // exports and thumbnails — the review modal keeps the clean image with
     // live overlays. Best-effort: any failure just skips the highlights.
-    let annotatedKey: string | undefined;
     try {
       const annotated = await annotateReceipt(cleaned.blob, [
         ...(ex.vendor.bbox ? [{ bbox: ex.vendor.bbox, color: HIGHLIGHT_COLORS.vendor }] : []),
@@ -344,6 +348,11 @@ export async function processReceipt(
     const latest = await repo.getReceipt(receiptId);
     if (!latest?.approved && latest?.status !== "done") {
       await fail(receiptId, friendlyError(err, latest));
+    }
+    for (const key of [cleanedKey, annotatedKey]) {
+      if (key && latest?.cleanedKey !== key && latest?.annotatedKey !== key) {
+        await repo.deleteBlob(key).catch(() => {});
+      }
     }
     throw err; // let the queue decide on retry
   }

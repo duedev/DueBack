@@ -487,6 +487,15 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   double-processed (and double-billed the paid vision assist). The pool
   re-wakes itself every 30 s while jobs remain but none is claimable, so a
   reload mid-batch no longer strands the in-flight receipts at "Reading…".
+  The Tesseract start-up has a 180 s deadline and a failed/timed-out start
+  is forgotten (`initPromise` reset), so the next receipt retries instead
+  of inheriting one permanently rejected promise. The pipeline's failure
+  path deletes the cleaned/annotated blobs this run stored that the receipt
+  doesn't reference (there is no blob GC). The board coalesces repo
+  notifications into one read per 40 ms (`state.scheduleRefresh`) — every
+  pipeline write and every one of a clear-all's deletes re-read the whole
+  batch. `pullAll` announces the merged ROWS before downloading blobs (a
+  fresh device stared at an empty board for minutes) and again after.
   `releaseJob` only re-puts a job that still exists. Jobs are claimed in
   `createdAt` order (upload order) — ids are random UUIDs, so key order, the
   old claim order, processed a 40-photo drop in no relation to how it was
