@@ -25,10 +25,13 @@ permissions:
   pages: write
   id-token: write
 
-# Allow one concurrent deployment; newer pushes supersede in-flight ones.
+# One deployment at a time, and each one is allowed to FINISH: cancelling
+# actions/deploy-pages mid-publish can leave the github-pages environment in
+# a failed half-applied state that needs a manual re-run (GitHub's own Pages
+# template says the same). A newer push simply queues behind it.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:

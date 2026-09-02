@@ -8,9 +8,22 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The token only needs to read the repo: both jobs run PR-controlled code
+# (the e2e, the vendoring script), so it must not carry the default write.
+permissions:
+  contents: read
+
+# Five quick pushes to a PR used to queue five full real-OCR runs; a newer
+# push supersedes the older one. Runs on main are never cancelled — deploy
+# waits on a completed CI run for the commit it ships.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
@@ -33,6 +46,8 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    # A hung Tesseract worker held the runner for the 6-hour default.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

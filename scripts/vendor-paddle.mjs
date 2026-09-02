@@ -48,11 +48,16 @@ try {
 if (haveOrt) {
   const all = await readdir(ortDist);
   // The WebGPU ESM bundle the engine imports, plus every wasm binary it loads.
+  // Since onnxruntime-web 1.19 the entry bundles don't embed the Emscripten
+  // glue: ort.webgpu.min.mjs dynamically imports an ort-wasm-*.mjs factory
+  // from wasmPaths, and only THAT fetches the .wasm — without the factory
+  // the first InferenceSession 404s.
   const wanted = all.filter(
     (f) =>
       f === "ort.webgpu.min.mjs" ||
       f === "ort.min.mjs" ||
-      f.endsWith(".wasm"),
+      f.endsWith(".wasm") ||
+      (f.startsWith("ort-wasm") && f.endsWith(".mjs")),
   );
   if (!wanted.includes("ort.webgpu.min.mjs")) {
     console.warn(

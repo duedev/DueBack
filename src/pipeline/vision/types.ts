@@ -4,8 +4,11 @@
 //
 // This is the seam the README's two-tier vision describes: it sits *behind* the
 // free on-device default and only fires for receipts the rules path is unsure
-// about. It is OFF by default and requires the user to supply their own API key
-// (this app has no server) — see vision/config.ts and the privacy note there.
+// about. Three ways it gets a key: the user pastes their own (Settings), a
+// build made with OPENROUTER_API_KEY bakes in the free router and turns the
+// tier ON by default (deliberate zero-click — one switch in Settings turns it
+// off), or a signed-in user is routed through the ai-extract Edge Function
+// that holds the deployer's key — see vision/config.ts and the privacy note.
 
 export type ProviderId = "openrouter" | "gemini" | "anthropic";
 

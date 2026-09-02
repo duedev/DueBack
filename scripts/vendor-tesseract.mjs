@@ -79,10 +79,13 @@ async function main() {
   await mkdir(tessDir, { recursive: true });
   const langFile = join(tessDir, `${LANG}.traineddata.gz`);
 
+  // gzip magic bytes: a CDN error page served with HTTP 200, or a partial
+  // write, would otherwise be vendored (and cached in browsers for a year).
+  const looksGzip = (buf) => buf.length > 1_000_000 && buf[0] === 0x1f && buf[1] === 0x8b;
   let haveLang = false;
   try {
     const s = await stat(langFile);
-    haveLang = s.size > 1_000_000; // sanity: real data is several MB
+    haveLang = s.size > 1_000_000 && looksGzip(await readFile(langFile));
   } catch {
     /* not present yet */
   }
@@ -95,10 +98,12 @@ async function main() {
     let ok = false;
     for (const url of sources) {
       try {
-        const res = await fetch(url);
+        // A CDN that accepts the connection and stalls used to hang prebuild
+        // for a CI job's whole 6-hour limit; the fallback source never ran.
+        const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const buf = Buffer.from(await res.arrayBuffer());
-        if (buf.length < 1_000_000) throw new Error("suspiciously small");
+        if (!looksGzip(buf)) throw new Error("not a gzip payload (or suspiciously small)");
         await writeFile(langFile, buf);
         console.log(
           `vendored ${LANG}.traineddata.gz (${(buf.length / 1e6).toFixed(1)} MB) → public/vendor/tessdata/4.0.0`,

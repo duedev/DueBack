@@ -248,3 +248,14 @@ test("the landing does not advertise the retired CSV or the hidden images ZIP", 
     if (csvGone) assert.ok(!/\bCSV\b/.test(copy), `${f} still advertises a CSV`);
   }
 });
+
+test("the PWA chrome colour is one value across theme.css, index.html, state.svelte.ts and the manifest", () => {
+  const bg = dark.get("--bg")!;
+  const vite = read("vite.config.ts");
+  assert.ok(vite.includes(`theme_color: "${bg}"`), "manifest theme_color");
+  assert.ok(vite.includes(`background_color: "${bg}"`), "manifest background_color");
+  assert.ok(read("index.html").includes(`content="${bg}"`), "index.html theme-color meta");
+  assert.ok(read("src/ui/state.svelte.ts").includes(`dark: "${bg}"`), "applyTheme's dark meta colour");
+  const light = root.get("--bg")!;
+  assert.ok(read("src/ui/state.svelte.ts").includes(`light: "${light}"`), "applyTheme's light meta colour");
+});

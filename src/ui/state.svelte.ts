@@ -569,11 +569,18 @@ class AppState {
       }
       const unzip = await import("../pipeline/unzip.ts");
       let result: import("../pipeline/unzip.ts").ZipReadResult;
+      // Inflate only what the batch still has room for: with 199 receipts on
+      // the board, a 250-photo ZIP used to inflate all 250 (up to 400 MB) to
+      // enqueue exactly one. The PDF path already budgets its pages this way.
+      const room = Math.min(
+        LIMITS.maxArchiveEntries,
+        Math.max(1, LIMITS.maxReceiptsPerBatch - (existing + accepted)),
+      );
       try {
         result = await unzip.readZip(await file.arrayBuffer(), {
           extensions: LIMITS.acceptedExtensions,
           maxEntryBytes: LIMITS.maxFileBytes,
-          maxEntries: LIMITS.maxArchiveEntries,
+          maxEntries: room,
           maxTotalBytes: LIMITS.maxArchiveInflatedBytes,
         });
       } catch {
@@ -616,7 +623,7 @@ class AppState {
       }
       if (result.truncated) {
         this.toast(
-          `${label}: only the first ${LIMITS.maxArchiveEntries} files were read.`,
+          `${label}: only the first ${room} files were read${room < LIMITS.maxArchiveEntries ? " — the batch is nearly full" : ""}.`,
           "warn",
         );
       }

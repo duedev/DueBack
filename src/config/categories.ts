@@ -11,6 +11,19 @@ import { matchVendor, wordBoundaryMatcher, type VendorMatch } from "./vendors.ts
 //      `_kw_pattern`) so short tokens like "inn" or "ink" can't fire inside
 //      "dinner"/"drink", which the previous padded-substring approach risked.
 
+// Categories renamed since older data was stored (locally or in a synced
+// payload written by an older client). Normalized on every repo read — a
+// receipt filed under the old name would otherwise land on a category sheet
+// the taxonomy no longer has.
+export const LEGACY_CATEGORIES: Record<string, Category> = {
+  "Meals & Entertainment": "Meals",
+};
+
+/** The current name for a stored category value (pure; Node-tested). */
+export function normalizeCategory(value: string): Category {
+  return LEGACY_CATEGORIES[value] ?? (value as Category);
+}
+
 // Report order: Fuel and Materials lead (the original app's taxonomy the
 // user's office expects), Other ("Miscellaneous" in the workbook) closes.
 export const CATEGORIES: Category[] = [

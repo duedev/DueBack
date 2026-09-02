@@ -204,7 +204,7 @@
     {
       id: "privacy",
       q: "Where do my receipts go?",
-      a: "Nowhere, by default. Images are stored in your browser and processed on your device — the reading, the logo matching and the Excel build all run on your hardware. Close the tab and they're still there; clear your browser data and they're gone. The one exception is the optional AI assist: when it is on (Settings → AI assist; a build that ships a free key turns it on for you, and one click turns it off), only the receipts the reader can't make out confidently are sent to the model you picked.",
+      a: "Nowhere, by default. Images are stored in your browser and processed on your device — the reading, the logo matching and the Excel build all run on your hardware. Close the tab and they're still there; clear your browser data and they're gone. The one exception is the optional AI assist: when it is on (Settings → AI assist; a build that ships a free key turns it on for you, and one click turns it off), only the receipts the reader can't make out confidently are sent to the model you picked. If the site's operator turned on the optional visit counter (Cloudflare Web Analytics), it records a page view — never a receipt.",
     },
     {
       q: "What do I hand to my office?",

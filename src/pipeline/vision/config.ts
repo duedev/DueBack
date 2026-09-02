@@ -80,7 +80,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     free: false,
     keyUrl: "https://console.anthropic.com/settings/keys",
     note: "Highest accuracy on hard/degraded receipts. ~a fraction of a cent per receipt on Haiku 4.5.",
-    models: ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8"],
+    models: ["claude-haiku-4-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-opus-5", "claude-opus-4-8"],
   },
 };
 

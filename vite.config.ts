@@ -34,9 +34,11 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       target: "es2022",
-      // The Tesseract OCR core is a ~3.4 MB wasm payload; let Workbox precache
-      // it so the app works fully offline after the first visit.
-      chunkSizeWarningLimit: 6000,
+      // The workbook chunk (ExcelJS + Chart.js) is ~1.2 MB by design — it is
+      // lazy-loaded from the report bar. Warn on anything bigger than that
+      // instead of the default 500 kB (the Tesseract cores live under
+      // /vendor/, outside the bundle, and are runtime-cached, not precached).
+      chunkSizeWarningLimit: 1500,
     },
     worker: {
       format: "es",
@@ -52,8 +54,12 @@ export default defineConfig(({ mode }) => {
         registerType: "prompt",
         includeAssets: ["icons/favicon.svg", "icons/apple-touch-icon.png"],
         manifest: {
+          // A stable identity: without `id`, Chromium derives it from
+          // start_url, and any later change there orphans installed copies.
+          id: "./",
           name: "DueBack",
           short_name: "DueBack",
+          categories: ["productivity", "finance", "business"],
           description:
             "Receipts in. Report out. On-device OCR + logo recognition, polished Excel export, optional cloud sync.",
           theme_color: "#12100e",
@@ -81,8 +87,21 @@ export default defineConfig(({ mode }) => {
           // intake path the "works offline after the first visit" promise
           // was silently missing.
           globPatterns: ["**/*.{js,mjs,css,html,svg,png,ico,woff2,webmanifest}"],
-          // The share image is for link previews, not for every install's precache.
-          globIgnores: ["**/vendor/**", "**/og.png"],
+          globIgnores: [
+            "**/vendor/**",
+            // The share image is for link previews, not for every install's precache.
+            "**/og.png",
+            // Font subsets an English UI never selects (unicode-range fetches
+            // them on demand online): ~185 KB per install otherwise.
+            "**/*-cyrillic*",
+            "**/*-greek*",
+            "**/*-vietnamese*",
+            "**/*-math-*",
+            "**/*-symbols-*",
+            // The CLIP runtime chunk is lazy and inert while the logo index is
+            // empty; it is runtime-cached on first use instead (below).
+            "**/transformers.web-*.js",
+          ],
           runtimeCaching: [
             {
               // Same-origin OCR worker, wasm cores, and language data: cache on
@@ -102,6 +121,20 @@ export default defineConfig(({ mode }) => {
               options: {
                 cacheName: "tesseract-langdata",
                 expiration: { maxEntries: 8, maxAgeSeconds: 60 * 60 * 24 * 365 },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+            {
+              // The logo layer's own code: the transformers.js chunk and the
+              // same-origin ONNX runtime wasm it resolves via import.meta.url
+              // (23 MB — never precached). Cached on first use so recognition
+              // keeps working offline once it has run.
+              urlPattern: ({ url }) =>
+                /\/assets\/(transformers\.web-|ort-wasm)/.test(url.pathname),
+              handler: "CacheFirst",
+              options: {
+                cacheName: "logo-model",
+                expiration: { maxEntries: 24, maxAgeSeconds: 60 * 60 * 24 * 365 },
                 cacheableResponse: { statuses: [0, 200] },
               },
             },

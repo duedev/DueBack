@@ -8,6 +8,8 @@ import {
   remoteAction,
   uploadedBlobsKey,
   ownerDecision,
+  changedSince,
+  lastPushKey,
   PENDING_DELETES_CAP,
   type PendingDelete,
 } from "../src/store/syncMerge.ts";
@@ -193,4 +195,12 @@ test("ownerDecision: first sign-in adopts anonymous or empty local data, a diffe
   assert.equal(ownerDecision("userA", "userB", true), "foreign");
   // …but an empty store belongs to nobody, so B adopts it.
   assert.equal(ownerDecision("userA", "userB", false), "adopt");
+});
+
+test("a push carries only rows stamped since the last one (inclusive), everything on a fresh sign-in", () => {
+  const rows = [{ id: "a", updatedAt: 100 }, { id: "b", updatedAt: 200 }, { id: "c", updatedAt: 300 }];
+  assert.deepEqual(changedSince(rows, 0).map((r) => r.id), ["a", "b", "c"]);
+  assert.deepEqual(changedSince(rows, 200).map((r) => r.id), ["b", "c"]); // same-ms edit re-pushed, never skipped
+  assert.deepEqual(changedSince(rows, 301), []);
+  assert.equal(lastPushKey("u1"), "sync.lastPushAt.u1");
 });

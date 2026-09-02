@@ -130,3 +130,15 @@ test("parseVisionJson survives leaked think-blocks and prose with stray braces",
   assert.equal(parseVJ("no json here"), null);
   assert.equal(parseVJ("[1,2,3]"), null);
 });
+
+import { priceFor } from "../src/pipeline/vision/providers/anthropic.ts";
+
+test("Anthropic pricing resolves dated snapshots and never prices an unknown model at $0", () => {
+  assert.deepEqual(priceFor("claude-haiku-4-5"), { in: 1, out: 5 });
+  assert.deepEqual(priceFor("claude-haiku-4-5-20251001"), { in: 1, out: 5 }); // a dated id a console lists
+  assert.deepEqual(priceFor("claude-sonnet-4-6"), { in: 3, out: 15 });
+  assert.deepEqual(priceFor("claude-sonnet-5"), { in: 2, out: 10 }); // not the 4-6 prefix
+  assert.deepEqual(priceFor("claude-opus-5"), { in: 5, out: 25 });
+  // Unknown → the top rate, so the spend cap engages instead of reading $0.00.
+  assert.deepEqual(priceFor("claude-something-new"), { in: 10, out: 50 });
+});

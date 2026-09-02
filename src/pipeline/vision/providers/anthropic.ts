@@ -17,13 +17,34 @@ interface AnthropicResponse {
   usage?: { input_tokens?: number; output_tokens?: number };
 }
 
-// $/1M tokens (input, output). Keyed by model id; unknown models report $0
-// rather than guess.
+// $/1M tokens (input, output), Anthropic first-party rates. Keyed by model id;
+// a dated snapshot ("claude-haiku-4-5-20251001") resolves to its base id by
+// longest prefix. An id not in the table is charged at the TOP rate: the
+// Model field is free text, and "unknown = $0" meant a paid provider ran with
+// "Spent so far: $0.00" and the spend cap never engaged.
 const PRICES: Record<string, { in: number; out: number }> = {
   "claude-haiku-4-5": { in: 1, out: 5 },
   "claude-sonnet-4-6": { in: 3, out: 15 },
+  "claude-sonnet-5": { in: 2, out: 10 },
+  "claude-opus-4-6": { in: 5, out: 25 },
+  "claude-opus-4-7": { in: 5, out: 25 },
   "claude-opus-4-8": { in: 5, out: 25 },
+  "claude-opus-5": { in: 5, out: 25 },
+  "claude-fable-5": { in: 10, out: 50 },
+  "claude-fable-5-1": { in: 10, out: 50 },
 };
+const TOP_RATE = { in: 10, out: 50 };
+
+/** The price row for a model id: exact, else the longest table id the given
+ *  id starts with, else the top rate (never $0). Pure; Node-tested. */
+export function priceFor(model: string): { in: number; out: number } {
+  const id = model.trim().toLowerCase();
+  if (PRICES[id]) return PRICES[id]!;
+  const prefix = Object.keys(PRICES)
+    .filter((k) => id.startsWith(k))
+    .sort((a, b) => b.length - a.length)[0];
+  return prefix ? PRICES[prefix]! : TOP_RATE;
+}
 
 export function createAnthropicProvider(init: ProviderInit): VisionProvider {
   return {
@@ -74,8 +95,8 @@ export function createAnthropicProvider(init: ProviderInit): VisionProvider {
 }
 
 function priceCall(model: string, usage: AnthropicResponse["usage"]): number {
-  const p = PRICES[model];
-  if (!p || !usage) return 0;
+  if (!usage) return 0;
+  const p = priceFor(model);
   const inTok = usage.input_tokens ?? 0;
   const outTok = usage.output_tokens ?? 0;
   return (inTok / 1e6) * p.in + (outTok / 1e6) * p.out;

@@ -135,6 +135,23 @@ export async function fetchAll<T>(
   }
 }
 
+/** kv key (per account): the newest `updatedAt` this device has pushed. A
+ *  push used to upsert EVERY batch/receipt/brand row with its full payload
+ *  on every 1.5 s debounce tick while a batch processed — tens of MB of
+ *  uploads for a 200-receipt run. */
+export function lastPushKey(userId: string): string {
+  return `sync.lastPushAt.${userId}`;
+}
+
+/** The rows a push must carry: everything stamped at or after `since`
+ *  (`>=`, not `>`: a row edited in the same millisecond as the previous
+ *  push's newest row would otherwise be skipped; re-upserting is
+ *  idempotent under the LWW guard). `since` 0 = push everything (a fresh
+ *  sign-in). */
+export function changedSince<T extends { updatedAt: number }>(rows: readonly T[], since: number): T[] {
+  return rows.filter((r) => r.updatedAt >= since);
+}
+
 /** kv key: the account whose data this device's local store holds. Written
  *  after the first successful push of a sign-in; cleared by a local wipe. */
 export const OWNER_KEY = "sync.ownerUserId";

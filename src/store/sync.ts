@@ -5,6 +5,8 @@ import type { Batch, Receipt, StoredBrand } from "../types.ts";
 import type { IDBPDatabase } from "idb";
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import {
+  changedSince,
+  lastPushKey,
   OWNER_KEY,
   PENDING_DELETES_KEY,
   ownerDecision,
@@ -143,6 +145,9 @@ class SyncEngine {
   /** A local write notified while applyingRemote was held; flush it. */
   private dirtyWhileApplying = false;
   private uploaded = new Set<string>();
+  /** Newest updatedAt pushed for this account (kv, per uid) — the next push
+   *  carries only rows stamped since. */
+  private lastPushAt = 0;
   private listeners = new Set<(s: SyncStatus) => void>();
   /** Held while announcing a remote-driven change to the UI, so the engine's
    *  own repo subscription doesn't mistake the announcement for a local edit
@@ -207,6 +212,7 @@ class SyncEngine {
     this.uploaded = new Set(
       (await repo.getSetting<string[]>(uploadedBlobsKey(userId))) ?? [],
     );
+    this.lastPushAt = (await repo.getSetting<number>(lastPushKey(userId))) ?? 0;
     try {
       // Deletes first: pull would otherwise re-insert a row this device
       // deleted while offline, resurrecting it before the tombstone lands.
@@ -350,14 +356,20 @@ class SyncEngine {
     // Tombstones go first — before an upsert could revive a deleted row.
     await this.pushDeletes(c);
     const conn = await db();
-    const batches = await conn.getAll("batches");
-    const receipts = await conn.getAll("receipts");
-    const brands = await conn.getAll("brands");
+    const since = this.lastPushAt;
+    const allReceipts = await conn.getAll("receipts");
+    // Only rows stamped since the last successful push go up: every push
+    // used to upsert the whole store with full payloads on each debounce
+    // tick. Blob uploads still walk every receipt — the `uploaded` set makes
+    // that a lookup per key, and a download that failed earlier retries.
+    const batches = changedSince(await conn.getAll("batches"), since);
+    const receipts = changedSince(allReceipts, since);
+    const brands = (await conn.getAll("brands")).filter((b) => b.createdAt >= since);
 
     // Blobs FIRST: the row upsert fires the other device's realtime apply,
     // whose blob download 404ed — and never retried — when the objects
     // weren't in storage yet, so receipts arrived without their images.
-    for (const r of receipts) {
+    for (const r of allReceipts) {
       for (const key of [r.fileKey, r.cleanedKey, r.annotatedKey]) {
         if (!key || this.uploaded.has(key)) continue;
         const blob = await repo.getBlob(key);
@@ -390,6 +402,18 @@ class SyncEngine {
     }
     if (this.userId) {
       await repo.setSetting(uploadedBlobsKey(this.userId), [...this.uploaded]);
+      // Everything read above is up; a row stamped while this push ran is
+      // newer than the newest pushed one and rides the next push.
+      const newest = Math.max(
+        since,
+        ...batches.map((b) => b.updatedAt),
+        ...receipts.map((r) => r.updatedAt),
+        ...brands.map((b) => b.createdAt),
+      );
+      if (newest > this.lastPushAt) {
+        this.lastPushAt = newest;
+        await repo.setSetting(lastPushKey(this.userId), newest);
+      }
     }
     this.setStatus("idle");
   }

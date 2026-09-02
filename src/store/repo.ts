@@ -6,9 +6,9 @@ import type {
   StoredBlob,
   StoredBrand,
   ReceiptStatus,
-  Category,
 } from "../types.ts";
 import { uid } from "../util/id.ts";
+import { normalizeCategory } from "../config/categories.ts";
 import {
   appendPendingDelete,
   OWNER_KEY,
@@ -17,20 +17,16 @@ import {
   type SyncTable,
 } from "./syncMerge.ts";
 
-// Categories renamed since older data was stored (locally or in Supabase).
-// Normalized on every read so legacy receipts keep working untouched.
-const LEGACY_CATEGORIES: Record<string, Category> = {
-  "Meals & Entertainment": "Meals",
-};
-
+// Categories renamed since older data was stored are normalized on every
+// read (config/categories.ts LEGACY_CATEGORIES, Node-tested there).
 function normalizeReceipt(r: Receipt): Receipt {
-  const mapped = LEGACY_CATEGORIES[r.category?.value as string];
-  return mapped ? { ...r, category: { ...r.category, value: mapped } } : r;
+  const mapped = normalizeCategory(r.category?.value as string);
+  return mapped !== r.category?.value ? { ...r, category: { ...r.category, value: mapped } } : r;
 }
 
 function normalizeBrand(b: StoredBrand): StoredBrand {
-  const mapped = LEGACY_CATEGORIES[b.category as string];
-  return mapped ? { ...b, category: mapped } : b;
+  const mapped = normalizeCategory(b.category as string);
+  return mapped !== b.category ? { ...b, category: mapped } : b;
 }
 
 // Repository over the local stores. This is the one place that reads/writes the
