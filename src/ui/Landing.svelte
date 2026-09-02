@@ -247,7 +247,11 @@
   tabindex="-1"
 />
 
-<div class="landing" class:nerd-on={prefs.nerd}>
+<!-- id="home": the footer/nav "#home" links used to change no fragment when
+     the page already sat at #home (every return from the workspace lands
+     there), so no hashchange fired and nothing scrolled. A real target lets
+     the browser's own fragment navigation scroll to the top regardless. -->
+<div class="landing" id="home" class:nerd-on={prefs.nerd}>
   {#if dragging}
     <div class="drop-veil" aria-hidden="true">
       <div class="drop-box">

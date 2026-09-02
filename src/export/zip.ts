@@ -6,6 +6,10 @@
 export interface ZipEntry {
   name: string;
   data: Uint8Array;
+  /** false = store as-is (method 0). JPEG/PDF payloads never shrink, and
+   *  deflating 200 photos just to discard the result cost seconds and a
+   *  transient second copy of every image. Default: try deflate. */
+  compress?: boolean;
 }
 
 const CRC_TABLE = (() => {
@@ -67,7 +71,7 @@ export async function buildZip(entries: ZipEntry[]): Promise<Blob> {
   for (const entry of entries) {
     const nameBytes = enc.encode(entry.name);
     const crc = crc32(entry.data);
-    const deflated = await deflateRaw(entry.data);
+    const deflated = entry.compress === false ? null : await deflateRaw(entry.data);
     // Only take the deflated form when it actually shrinks (JPEGs often don't).
     const useDeflate = deflated !== null && deflated.length < entry.data.length;
     const payload = useDeflate ? deflated : entry.data;

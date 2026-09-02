@@ -130,7 +130,10 @@
       const bundle = await buildTuningBundle($state.snapshot(app.receipts) as Receipt[]);
       downloadBundle(bundle);
       app.toast(
-        `Tuning bundle packaged: ${bundle.receiptCount} receipts, ${bundle.correctionCount} corrections.`,
+        `Tuning bundle packaged: ${bundle.receiptCount} receipts, ${bundle.correctionCount} corrections.` +
+          (bundle.omittedOriginals > 0
+            ? ` ${bundle.omittedOriginals} originals were left out to keep it under 200 MB.`
+            : ""),
         "ok",
       );
     } catch (err) {

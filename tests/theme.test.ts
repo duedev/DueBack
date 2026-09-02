@@ -90,10 +90,15 @@ test("light --gold-text meets AA everywhere the warn chips render", () => {
   assert.ok(contrast(goldText, chipBg) >= 4.5, "on gold-soft chip fill");
 });
 
-test("light --ink-soft meets AA on both paper tones (fname, footer)", () => {
+test("light --ink-soft meets AA on every paper tone (fname, footer)", () => {
   const ink = hex(root.get("--ink-soft")!);
   assert.ok(contrast(ink, hex(root.get("--bg")!)) >= 4.5);
   assert.ok(contrast(ink, hex(root.get("--bg-raised")!)) >= 4.5);
+  // The footer's actual ground: its 12px bold column heads are --ink-soft
+  // (--ink-faint only reached 3.7:1 there).
+  assert.ok(contrast(ink, hex(root.get("--bg-sunken")!)) >= 4.5, "on --bg-sunken (footer)");
+  const darkInk = hex(dark.get("--ink-soft")!);
+  assert.ok(contrast(darkInk, hex(dark.get("--bg-sunken")!)) >= 4.5, "dark footer");
 });
 
 test("dark --gold-text meets AA everywhere the warn chips render", () => {

@@ -17,6 +17,9 @@
   const list = $derived(app.receipts);
   const index = $derived(list.findIndex((r) => r.id === app.reviewId));
   const current = $derived(index >= 0 ? list[index] : undefined);
+  /** Still being read (the modal opens any card): approving now would stamp
+   *  the empty form as the human's answer, so Approve waits. */
+  const busy = $derived(current?.status === "queued" || current?.status === "processing");
 
   // Editable copies (re-seeded whenever the open receipt changes). The amount
   // and tax fields are number inputs — Svelte rebinds them as numbers after a
@@ -146,7 +149,10 @@
       return y >= 1990 && y <= 2100;
     };
     const newDate = date && isValidIso(date) && saneYear(date) ? date : r.date.value;
-    const newAmount = amt !== null ? safeAmount(amt) : r.amount.value;
+    // A negative amount is a typo, not a refund the report can carry: keep
+    // the stored value (like a partial date) and say so.
+    if (amt !== null && amt < 0) app.toast("Amounts can't be negative.", "warn");
+    const newAmount = amt !== null && amt >= 0 ? safeAmount(amt) : r.amount.value;
     // Boxes (and their hand-drawn flag) survive every save.
     const keepBox = (f: Field<unknown>) => ({
       ...(f.bbox ? { bbox: f.bbox } : {}),
@@ -362,6 +368,9 @@
 
   function onKey(e: KeyboardEvent): void {
     if (!current) return;
+    // A held Enter/"a" auto-repeats every ~30 ms: each repeat approved and
+    // advanced another receipt before the first save had landed.
+    if (e.repeat) return;
     const tag = (e.target as HTMLElement)?.tagName;
     const typing = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
     if (e.key === "Escape") {
@@ -370,6 +379,11 @@
         cancelDraw();
         return;
       }
+      // Escape from an edited field used to lose the edit: close() cleared
+      // the receipt synchronously and the unmount's change event found no
+      // `current`. A programmatic blur fires change (→ save) right now,
+      // while the receipt is still open — and only if the value changed.
+      if (typing) (e.target as HTMLElement).blur();
       close();
       return;
     }
@@ -379,13 +393,13 @@
     if (e.key === "Enter") {
       if (tag === "BUTTON" || tag === "A" || tag === "SUMMARY" || tag === "SELECT") return;
       e.preventDefault();
-      void approveAndNext();
+      if (!busy) void approveAndNext();
       return;
     }
     if (typing) return;
     if (e.key === "ArrowRight" || e.key.toLowerCase() === "n") go(1);
     else if (e.key === "ArrowLeft" || e.key.toLowerCase() === "p") go(-1);
-    else if (e.key.toLowerCase() === "a") void approveAndNext();
+    else if (e.key.toLowerCase() === "a" && !busy) void approveAndNext();
   }
 
   /** Svelte action: render a zoomed crop of the receipt around a bbox. */
@@ -734,8 +748,16 @@
         <button class="btn btn-sm" onclick={() => go(1)} disabled={index >= list.length - 1}>Next →</button>
         <button class="btn btn-sm btn-danger" onclick={deleteCurrent}>Delete</button>
         <span class="spacer"></span>
+        {#if busy}
+          <span class="muted small">Still reading…</span>
+        {/if}
         <span class="kbd">Enter</span>
-        <button class="btn btn-primary" onclick={approveAndNext}>Approve &amp; Next</button>
+        <button
+          class="btn btn-primary"
+          onclick={approveAndNext}
+          disabled={busy}
+          title={busy ? "Wait for the read to finish, or enter the values yourself once it has" : undefined}
+        >Approve &amp; Next</button>
       </footer>
     </div>
   </div>

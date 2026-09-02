@@ -276,7 +276,7 @@
     try {
       const { buildZip } = await import("../export/zip.ts");
       const { thumbnail } = await import("../export/images.ts");
-      const entries: { name: string; data: Uint8Array }[] = [];
+      const entries: import("../export/zip.ts").ZipEntry[] = [];
       const used = new Set<string>();
       for (const r of exportable) {
         const blob = await repo.getBlob(r.annotatedKey ?? r.cleanedKey ?? r.fileKey);
@@ -287,7 +287,7 @@
         let name = `${base}.jpg`;
         for (let i = 2; used.has(name); i++) name = `${base}_${i}.jpg`;
         used.add(name);
-        entries.push({ name, data: new Uint8Array(t.buffer) });
+        entries.push({ name, data: new Uint8Array(t.buffer), compress: false }); // JPEG never shrinks
       }
       if (entries.length === 0) {
         app.toast("No receipt images to package.", "warn");

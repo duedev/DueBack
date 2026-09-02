@@ -609,7 +609,15 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   unless focus is inside the bar, and its own saves stamp `seededAt`;
   `saveMeta` skips a no-op write. A review save prunes the flags that
   questioned the fields the human just changed (`flagsAfterEdit`, removal
-  only — status/approval untouched).
+  only — status/approval untouched). The modal's Approve is disabled (and
+  Enter/"a" ignored) while the receipt is still queued/processing, key
+  auto-repeat is ignored, and Escape from an edited field blurs it first so
+  the change event saves before close() clears the receipt. The tuning
+  bundle caps originals at `BUNDLE_ORIGINALS_BUDGET` (200 MB; the
+  annotated copy always ships, `extraction.json` marks
+  `originalOmitted`), flattens archive paths into one honest entry name
+  (`originalEntryName`, Node-tested) and stores images with
+  `compress: false` (`ZipEntry.compress` — JPEG/PDF never shrink).
 - **All three dialogs manage focus** (ReviewModal, Settings, ExportBar's
   blank-details confirm): container
   `tabindex="-1"` focused on open, a local Tab trap, Escape closes, focus

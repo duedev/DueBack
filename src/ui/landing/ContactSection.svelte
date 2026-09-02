@@ -29,7 +29,11 @@
 
 (P.S. Please attach the file "${bundle.fileName}" that just downloaded. ` +
           `It holds my ${bundle.receiptCount} receipts' extraction data and ` +
-          `${bundle.correctionCount} corrections for tuning.)`;
+          `${bundle.correctionCount} corrections for tuning.` +
+          (bundle.omittedOriginals > 0
+            ? ` ${bundle.omittedOriginals} original images were left out to keep it under 200 MB.`
+            : "") +
+          `)`;
       }
     } catch {
       /* the message still goes out without the bundle */
