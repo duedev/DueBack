@@ -668,6 +668,14 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   year, so an unversioned path kept serving the previous worker to a bundle
   built against the next release (test-pinned in
   `tests/vendor_tesseract.test.ts`; stale version folders are pruned). `ai-extract`'s
+  The proxy also validates the MESSAGES (`policy.messagesProblem`, Node-
+  tested): 1–2 system/user entries, bounded text, at most one image and
+  only an inline `data:image/` URL — the server key must never fetch a
+  remote URL or relay an arbitrary prompt; temperature/usage/response_format
+  are bounded, not passed through; the declared content-length is checked
+  before the body is buffered. The client omits its OpenRouter attribution
+  headers through the proxy (`openRouterHeaders`) and a test pins that
+  every proxied header is on `CORS_ALLOWED_REQUEST_HEADERS`.
   Every provider call goes through `visionFetch` (90 s deadline, a
   TimeoutError reads "<provider> timed out after 90 s"), and `ai-extract`
   caps its upstream call at 85 s so the browser gets a clean JSON 504

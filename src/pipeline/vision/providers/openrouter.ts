@@ -35,6 +35,23 @@ interface OpenRouterResponse {
 
 /** True when the model uses OpenRouter's free routing (the router, or any
  *  `:free` model), where strict structured outputs are best avoided. */
+/** Request headers for a chat call. Through the proxy (`baseUrl` set) the
+ *  attribution pair is omitted: the function stamps its own on the
+ *  upstream call, and every extra request header is one more preflight
+ *  allow-list entry that can be wrong on either side of a deploy (it was:
+ *  the preflight refused x-title and every signed-in assist failed). */
+export function openRouterHeaders(init: ProviderInit): Record<string, string> {
+  const h: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${init.apiKey}`,
+  };
+  if (!init.baseUrl) {
+    h["HTTP-Referer"] = appOrigin();
+    h["X-Title"] = "DueBack";
+  }
+  return h;
+}
+
 export function usesFreeRouting(model: string): boolean {
   return model === "openrouter/free" || model.includes(":free");
 }
@@ -77,12 +94,7 @@ export function createOpenRouterProvider(init: ProviderInit): VisionProvider {
 
       const res = await visionFetch("OpenRouter", url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${init.apiKey}`,
-          "HTTP-Referer": appOrigin(),
-          "X-Title": "DueBack",
-        },
+        headers: openRouterHeaders(init),
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`OpenRouter HTTP ${res.status}: ${await errorBody(res)}`);
