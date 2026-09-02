@@ -24,14 +24,16 @@
 // SUPABASE_SERVICE_ROLE_KEY.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { allowedModels, capMaxTokens, dailyLimit } from "./policy.ts";
+import { allowedModels, capMaxTokens, dailyLimit, policeBody } from "./policy.ts";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const MAX_BODY_BYTES = 8 * 1024 * 1024; // images are downscaled client-side
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, content-type",
+  // The client also sends OpenRouter's attribution pair (HTTP-Referer, X-Title);
+  // a preflight that omits them blocks the whole signed-in path.
+  "Access-Control-Allow-Headers": "authorization, content-type, http-referer, x-title",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -81,6 +83,9 @@ Deno.serve(async (req) => {
   if (!allowed.includes(model)) {
     return json(403, { error: `model "${model}" is not allowed by this deployment` });
   }
+  // Only allowlisted fields go upstream: a sibling `models`/`route`/`plugins`
+  // field would otherwise route around the model check on the server key.
+  body = policeBody(body);
   body.max_tokens = capMaxTokens(body.max_tokens);
 
   // 3. Per-user daily cap, counted server-side in ai_usage (service role —

@@ -18,6 +18,9 @@ const BASE = `http://localhost:${PORT}/`;
 
 const log = (...a) => console.log("•", ...a);
 let failures = 0;
+// Uncaught exceptions and console errors used to be logged and ignored; a
+// run that threw inside the pipeline could still print "all checks passed".
+let pageErrors = 0;
 function check(cond, msg) {
   if (cond) log("PASS:", msg);
   else {
@@ -319,9 +322,18 @@ function anchorPx(ws, range) {
 
 async function main() {
   log("starting preview server…");
+  // Run vite's bin directly (not through npx): killing the npx wrapper left
+  // the preview server orphaned on the port, and the next run then tested
+  // whatever stale build was still bound there.
   const server = spawn(
-    "npx",
-    ["vite", "preview", "--port", String(PORT), "--strictPort"],
+    process.execPath,
+    [
+      join(root, "node_modules", "vite", "bin", "vite.js"),
+      "preview",
+      "--port",
+      String(PORT),
+      "--strictPort",
+    ],
     { cwd: root, stdio: "ignore" },
   );
   let browser;
@@ -333,7 +345,14 @@ async function main() {
     const ctx = await browser.newContext({ acceptDownloads: true });
     const page = await ctx.newPage();
     page.on("console", (m) => {
-      if (m.type() === "error") console.error("  [page error]", m.text());
+      if (m.type() === "error") {
+        pageErrors++;
+        console.error("  [page error]", m.text());
+      }
+    });
+    page.on("pageerror", (e) => {
+      pageErrors++;
+      console.error("  [uncaught]", e.message);
     });
     page.on("dialog", (d) => d.accept()); // auto-accept confirms
 
@@ -718,6 +737,8 @@ async function main() {
       (await page.locator(".drop-veil").count()) === 0,
       "the drop veil clears after the drop",
     );
+
+    check(pageErrors === 0, `no uncaught or console errors during the run (got ${pageErrors})`);
   } finally {
     if (browser) await browser.close();
     server.kill("SIGKILL");

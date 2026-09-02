@@ -154,9 +154,14 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   of `--gold` (chips, flag text, lane heads — `--gold` itself stays fills/
   borders/large text only), and `--cat-3-ink`/`--err-ink` are the ink partners
   for the ReviewModal markers on `--cat-3`/`--err` fills (white in light, dark
-  inks in dark). The global `:focus-visible` no longer forces a border-radius;
-  controls inside `overflow:hidden` containers (Workspace `.seg-btn`, FAQ/How
-  `summary`) draw INSET focus rings locally because the outside halo clips.
+  inks in dark). The global `:focus-visible` is an OUTLINE (2px accent,
+  2px offset) and forces no border-radius: when it lived in `box-shadow`,
+  every later box-shadow rule (`.btn-primary`, `.card`, `.btn:hover`, the
+  breathing next-action keyframes) silently cancelled it and keyboard focus
+  on a card or primary button was invisible. Controls inside
+  `overflow:hidden` containers (Workspace `.seg-btn`, FAQ/How `summary`, the
+  landing nav tabs) set `outline: none` and draw INSET box-shadow rings
+  locally because the outside ring clips.
 - **The Drive-folder story is marketing for planned/in-progress work** — it
   lives in the nerd-gated FAQ entries ("What about cloud sync and the AI
   assist?", anchored `#account`, and "Can it watch a Google Drive or
@@ -169,8 +174,12 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   per-receipt amount assertions, then the review-modal sweep and workbook
   export are exercised. The testkit exercises the rules on synthetic text
   only; regressions in the real path show up here. CI runs it (own job in
-  ci.yml) along with a production build; deploy runs `npm test` before
-  building.
+  ci.yml) along with a production build; deploy is gated on CI passing on
+  main (`workflow_run`, manual `workflow_dispatch` still allowed) and runs
+  `npm test` again before building. The e2e fails on any uncaught page
+  error or console error (it used to only log them). The testkit requires
+  the AMOUNT right on every challenge and no challenge below 0.9 — the old
+  averaged gate let one receipt ship a 100× total.
 - **Digit-ENDING brand aliases ("76", "super 8") are excluded from the glyph
   pass** — its punctuation stripping would turn a price ending `.76` or
   "SUPER 8.50" into a brand hit; the exact pass (with the numeric boundary

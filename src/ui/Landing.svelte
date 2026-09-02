@@ -646,6 +646,7 @@
   }
   /* .qa's overflow:hidden clips the global focus ring — draw it inset. */
   .qa summary:focus-visible {
+    outline: none;
     box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 4px var(--accent);
   }
   .qa summary::after {

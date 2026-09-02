@@ -3,6 +3,9 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "description": "Receipts in. Reimbursement report out. A browser-only receipt → spreadsheet app with on-device OCR, visual logo recognition, and optional Supabase sync.",
   "scripts": {
     "vendor": "node scripts/vendor-tesseract.mjs",

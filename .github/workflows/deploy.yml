@@ -1,6 +1,9 @@
 name: Deploy to GitHub Pages
 
-# Builds the static site (Vite) and publishes dist/ to GitHub Pages.
+# Builds the static site (Vite) and publishes dist/ to GitHub Pages — only
+# after the CI workflow (typecheck, unit + testkit, build, real-OCR e2e) has
+# passed on main. A push to main used to deploy in parallel with CI, so a red
+# testkit or e2e never blocked production.
 # The build's prebuild step vendors the Tesseract OCR core + language data into
 # dist/, so the deployed app runs fully offline at $0 with no third-party CDN.
 #
@@ -10,7 +13,9 @@ name: Deploy to GitHub Pages
 #   VITE_ONEDRIVE_CLIENT_ID — enables "Save to OneDrive" (see ONEDRIVE_SETUP.md)
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch: # lets you deploy manually (e.g. to preview before merge)
 
@@ -26,6 +31,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"

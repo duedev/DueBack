@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       # npm ci skips install scripts: the only script that reaches the network is
       # onnxruntime-node's binary download (a transitive dep of the browser-only
@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       # --ignore-scripts for the same reason as the test job (also makes the
       # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD guard moot; the browser is installed

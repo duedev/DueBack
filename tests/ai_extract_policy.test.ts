@@ -40,3 +40,34 @@ test("daily limit parses AI_DAILY_LIMIT and defaults to 200", () => {
   assert.equal(dailyLimit("-1"), DEFAULT_DAILY_LIMIT);
   assert.equal(dailyLimit("lots"), DEFAULT_DAILY_LIMIT);
 });
+
+// ── Audit round (2026-09) ─────────────────────────────────────────────────────
+import { policeBody, FORWARDED_FIELDS } from "../supabase/functions/ai-extract/policy.ts";
+import { PROVIDERS } from "../src/pipeline/vision/config.ts";
+
+test("the proxy forwards only allowlisted fields; sibling model routes are dropped", () => {
+  const out = policeBody({
+    model: "openrouter/free",
+    messages: [{ role: "user", content: "hi" }],
+    max_tokens: 700,
+    temperature: 0,
+    usage: { include: true },
+    provider: { sort: "throughput", allow_fallbacks: true, order: ["anthropic"], only: ["x"] },
+    response_format: { type: "json_schema" },
+    models: ["anthropic/claude-opus-4"], // a fallback list that bypasses `model`
+    route: "fallback",
+    plugins: [{ id: "web" }],
+    transforms: ["middle-out"],
+    tools: [{ type: "function" }],
+  });
+  assert.deepEqual(Object.keys(out).sort(), [...FORWARDED_FIELDS].sort());
+  assert.deepEqual(out.provider, { sort: "throughput", allow_fallbacks: true });
+  assert.equal("models" in out, false);
+  assert.equal("route" in out, false);
+  // A non-object provider is dropped rather than forwarded.
+  assert.equal("provider" in policeBody({ model: "m", provider: ["x"] }), false);
+});
+
+test("the proxy's default model stays in sync with the client's OpenRouter default", () => {
+  assert.equal(DEFAULT_ALLOWED_MODEL, PROVIDERS.openrouter.defaultModel);
+});

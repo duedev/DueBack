@@ -32,3 +32,38 @@ export function dailyLimit(env: string | undefined): number {
   const n = Number(env);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_DAILY_LIMIT;
 }
+
+/** The request fields the proxy forwards. Everything else the client sends —
+ *  OpenRouter's `models` list, `route`, `plugins`, `transforms`, `tools`… — is
+ *  dropped, so the model allowlist can't be bypassed by naming other models
+ *  in a sibling field, and only vetted knobs reach the server key. */
+export const FORWARDED_FIELDS = [
+  "model",
+  "messages",
+  "max_tokens",
+  "temperature",
+  "usage",
+  "provider",
+  "response_format",
+] as const;
+
+/** Rebuild the upstream body from the allowlisted fields only. The `provider`
+ *  routing preferences keep just the three knobs the client uses. */
+export function policeBody(body: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of FORWARDED_FIELDS) if (k in body) out[k] = body[k];
+  const p = out.provider;
+  if (p && typeof p === "object" && !Array.isArray(p)) {
+    const src = p as Record<string, unknown>;
+    const kept: Record<string, unknown> = {};
+    if (typeof src.sort === "string") kept.sort = src.sort;
+    if (typeof src.allow_fallbacks === "boolean") kept.allow_fallbacks = src.allow_fallbacks;
+    if (typeof src.require_parameters === "boolean") {
+      kept.require_parameters = src.require_parameters;
+    }
+    out.provider = kept;
+  } else {
+    delete out.provider;
+  }
+  return out;
+}

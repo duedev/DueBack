@@ -12,6 +12,26 @@ const target = document.getElementById("app");
 if (!target) throw new Error("#app root element missing");
 target.removeAttribute("aria-busy");
 
+// A deploy purges the previous build's hashed chunks (autoUpdate service
+// worker), so a tab left open across it 404s on its next lazy import —
+// Generate, the PDF renderer, the ZIP reader. Vite reports that as
+// `vite:preloadError`; reload once to pick up the new build (in-flight jobs
+// resume from IndexedDB). The timestamp guard stops a reload loop when the
+// chunk is missing for a real reason (network down).
+window.addEventListener("vite:preloadError", (event) => {
+  const KEY = "dueback.preloadReloadedAt";
+  let last = 0;
+  try {
+    last = Number(sessionStorage.getItem(KEY)) || 0;
+    if (Date.now() - last < 60_000) return;
+    sessionStorage.setItem(KEY, String(Date.now()));
+  } catch {
+    return; // storage blocked — no guard, so no automatic reload
+  }
+  event.preventDefault();
+  location.reload();
+});
+
 // When this page-load is the OneDrive OAuth popup returning with ?code=,
 // relay it to the opener and stop — don't boot the app inside the popup.
 if (!relayOneDriveAuthPopup()) {

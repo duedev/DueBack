@@ -85,8 +85,8 @@
             <span class="step-head">
               <span class="step-title">Download the Excel workbook</span>
               <span class="step-deck">
-                One click builds a themed Excel report, plus a CSV and an
-                images ZIP if you need them.
+                One click builds a themed Excel report and a print packet PDF
+                of the receipts for offices that keep paper.
               </span>
             </span>
           </summary>
@@ -234,6 +234,7 @@
   }
   /* .step's overflow:hidden clips the global focus ring — draw it inset. */
   .step summary:focus-visible {
+    outline: none;
     box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 4px var(--accent);
   }
   .step summary::after {

@@ -415,6 +415,7 @@
   }
   /* .seg's overflow:hidden clips the global focus ring — draw it inset. */
   .seg-btn:focus-visible {
+    outline: none;
     box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 4px var(--accent);
   }
   .sort {

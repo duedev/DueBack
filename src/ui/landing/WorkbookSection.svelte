@@ -60,14 +60,13 @@
           <div class="bar" style="height: 22%; background: #94a3b8"></div>
         </div>
         <p class="rail-note">
-          Insights sheet: spend by category and by week, largest vendors, and
-          a log of anything flagged.
+          Insights sheet: KPI tiles, spend by day and by month, and category
+          and vendor breakdowns.
         </p>
         <div class="chips">
           <span class="chip">receipt images embedded</span>
-          <span class="chip">custom notes per line (billable, needs-attention)</span>
+          <span class="chip">summary that foots with live formulas</span>
           <span class="chip">+ print packet PDF</span>
-          <span class="chip">+ images ZIP</span>
         </div>
       </div>
     </div>

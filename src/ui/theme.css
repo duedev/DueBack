@@ -238,8 +238,15 @@ small,
 }
 
 :focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring); /* follows the element's own border-radius */
+  /* An OUTLINE, not a box-shadow ring: the ring used to live in box-shadow,
+     where every later box-shadow rule (.btn-primary, .card, .btn:hover, the
+     breathing next-action keyframes) silently cancelled it — keyboard focus
+     on a receipt card or a primary button was invisible. Outline is its own
+     property, follows border-radius, and survives forced-colors mode. Same
+     look as before: a 2px gap, then a 2px accent ring. Controls inside
+     overflow:hidden containers set outline: none and draw an inset ring. */
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 img {
@@ -351,6 +358,7 @@ textarea:hover {
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
+  outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
