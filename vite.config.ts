@@ -44,7 +44,12 @@ export default defineConfig(({ mode }) => {
     plugins: [
       svelte(),
       VitePWA({
-        registerType: "autoUpdate",
+        // "prompt", not "autoUpdate": autoUpdate forces skipWaiting +
+        // clientsClaim, so a deploy purged the previous build's precache
+        // under every open tab and its next lazy import (Generate, the PDF
+        // renderer, the ZIP reader) 404'd. The waiting build now stays put
+        // until the user takes the reload bar (main.ts registerSW).
+        registerType: "prompt",
         includeAssets: ["icons/favicon.svg", "icons/apple-touch-icon.png"],
         manifest: {
           name: "DueBack",

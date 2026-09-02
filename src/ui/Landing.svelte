@@ -204,7 +204,7 @@
     {
       id: "privacy",
       q: "Where do my receipts go?",
-      a: "Nowhere. Images are stored in your browser and processed on your device — the reading, the logo matching and the Excel build all run on your hardware. Close the tab and they're still there; clear your browser data and they're gone. Nothing is uploaded.",
+      a: "Nowhere, by default. Images are stored in your browser and processed on your device — the reading, the logo matching and the Excel build all run on your hardware. Close the tab and they're still there; clear your browser data and they're gone. The one exception is the optional AI assist: when it is on (Settings → AI assist; a build that ships a free key turns it on for you, and one click turns it off), only the receipts the reader can't make out confidently are sent to the model you picked.",
     },
     {
       q: "What do I hand to my office?",
@@ -222,12 +222,12 @@
       id: "account",
       nerd: true,
       q: "What about cloud sync and the AI assist?",
-      a: "They're rolling out now; the roadmap below tracks them. Signing in will sync your batches, receipts and taught brands to your own private workspace behind row-level security, so you can pick up on any device — and the AI assist will send low-confidence receipts to the model you configure. Both will always be opt-in and off by default.",
+      a: "They're rolling out now; the roadmap below tracks them. Signing in will sync your batches, receipts and taught brands to your own private workspace behind row-level security, so you can pick up on any device — and the AI assist sends only low-confidence receipts to the model you configure. Sync is opt-in (nothing leaves the device until you sign in); the assist is one switch in Settings, on by default only on a build that ships a free key.",
     },
     {
       nerd: true,
       q: "Can it watch a Google Drive or OneDrive folder?",
-      a: "Not yet. Both are on the roadmap: automatic Drive-folder scanning that keeps a workbook current, and saving reports straight to OneDrive. The full roadmap is right below this FAQ.",
+      a: "Watching a folder, not yet: automatic Drive-folder scanning that keeps a workbook current is planned. Saving the finished workbook (and its print packet) straight to OneDrive is built and rolling out: on deployments configured for it, connect in Settings → OneDrive and use Save to OneDrive in the report bar. The full roadmap is right below this FAQ.",
     },
     {
       q: "What is Nerd mode?",
@@ -380,7 +380,7 @@
         <ul>
           <li>Cloud sync: sign in and pick up your batches on any device</li>
           <li>AI second opinion for low-confidence receipts, behind a policed proxy</li>
-          <li>Save the workbook straight to OneDrive</li>
+          <li>Save the workbook and print packet straight to OneDrive (built; on where a deployment is configured for it)</li>
         </ul>
       </div>
       <div class="card road">

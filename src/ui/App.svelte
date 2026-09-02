@@ -45,6 +45,13 @@
   // listener above or with the landing's own router — it runs BEFORE the
   // surface swap renders, and the landing then mounts reading the already
   // corrected hash.
+  // index.html stamps aria-busy on #app; it comes off when boot has actually
+  // finished (main.ts used to strip it synchronously before mount, so the
+  // busy flag never covered the real boot window).
+  $effect(() => {
+    if (!app.booting) document.getElementById("app")?.removeAttribute("aria-busy");
+  });
+
   $effect(() => {
     if (app.booting) return;
     if (app.showWorkspace) {
@@ -56,8 +63,11 @@
 </script>
 
 {#if app.booting}
-  <div class="splash" aria-label="Loading">
-    <div class="splash-mark">DB</div>
+  <!-- role=status: aria-label is name-prohibited on a plain div, so screen
+       readers announced only "DB". -->
+  <div class="splash" role="status" aria-live="polite">
+    <div class="splash-mark" aria-hidden="true">DB</div>
+    <span class="sr-only">Loading DueBack…</span>
   </div>
 {:else if app.showWorkspace}
   <Workspace />
@@ -65,9 +75,44 @@
   <Landing />
 {/if}
 
+{#if app.updateReady}
+  <!-- Persistent, never auto-dismissed (a toast would vanish in 4 s). The
+       reload waits while receipts are being read: the job lock heartbeats
+       every 20 s and a reload mid-job parks it until the lock goes stale. -->
+  <div class="update-bar" role="status">
+    <span>A new version of DueBack is ready.</span>
+    <button
+      class="btn btn-sm btn-primary"
+      onclick={() => app.updateReady?.()}
+      disabled={app.pendingJobs > 0}
+      title={app.pendingJobs > 0 ? "Reload once the receipts being read finish" : "Reload into the new version"}
+    >
+      {app.pendingJobs > 0 ? `Reload after ${app.pendingJobs} finish` : "Reload"}
+    </button>
+  </div>
+{/if}
+
 <Toasts />
 
 <style>
+  .update-bar {
+    position: fixed;
+    left: 50%;
+    bottom: 1rem;
+    transform: translateX(-50%);
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    max-width: calc(100vw - 2rem);
+    padding: 0.6rem 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-pill);
+    background: var(--bg-raised);
+    color: var(--ink);
+    box-shadow: var(--shadow-2);
+    font-size: 0.9rem;
+  }
   .splash {
     min-height: 100dvh;
     display: grid;

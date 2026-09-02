@@ -180,8 +180,14 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   lives in the nerd-gated FAQ entries ("What about cloud sync and the AI
   assist?", anchored `#account`, and "Can it watch a Google Drive or
   OneDrive folder?") and the roadmap; keep the future tense until each
-  piece ships. With Nerd mode off the page claims only the local-first
-  story that exists today.
+  piece ships. OneDrive SAVE is merged and config-gated (`src/onedrive/`,
+  hidden without `VITE_ONEDRIVE_CLIENT_ID`); the future tense applies to
+  Drive/OneDrive folder WATCHING, and "ships" means enabled on the
+  production deployment. With Nerd mode off the page claims only the
+  local-first story that exists today — and the #privacy FAQ names the one
+  exception honestly: the AI assist, which a build made with
+  `OPENROUTER_API_KEY` turns on by default (deliberate zero-click, commit
+  e7f9bbd; the hero's "never leave your device" line is the owner's call).
 - **`npm run e2e` is the real-OCR accuracy gate** — four image receipts (easy
   coffee, fuel with per-gallon pricing + FUEL TOTAL, split-label TOTAL, a
   skewed scan) plus a 2-page PDF run through actual Tesseract in Chromium with
@@ -587,6 +593,23 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   (tests/theme.test.ts). ReviewModal renders each flag NEXT TO the field it
   questions (`FLAG_FIELD` map); only unmapped codes (duplicate,
   low_confidence) stay in the general list.
+- **A new build never swaps under an open tab** — `vite.config.ts` registers
+  the service worker with `registerType: "prompt"` (autoUpdate forced
+  skipWaiting/clientsClaim, purged the old precache and 404'd the next lazy
+  import); `main.ts registerSW` sets `app.updateReady` and App.svelte shows
+  a persistent reload bar (disabled while `pendingJobs > 0` — a reload
+  mid-job parks it until the lock goes stale). The `vite:preloadError`
+  reload stays as the SW-less backstop. `aria-busy` on `#app` comes off in
+  App.svelte when boot finishes, not in main.ts before mount.
+- **Theme has one reactive truth** — `app.isDark` (theme, or the live OS
+  scheme via a matchMedia listener under "auto"); the header toggle flips
+  light/dark with `aria-pressed`, and Settings → Appearance is where "Match
+  system" lives. The report bar re-seeds from a batch whose `updatedAt` is
+  newer than the version it seeded from (a synced edit from another device)
+  unless focus is inside the bar, and its own saves stamp `seededAt`;
+  `saveMeta` skips a no-op write. A review save prunes the flags that
+  questioned the fields the human just changed (`flagsAfterEdit`, removal
+  only — status/approval untouched).
 - **All three dialogs manage focus** (ReviewModal, Settings, ExportBar's
   blank-details confirm): container
   `tabindex="-1"` focused on open, a local Tab trap, Escape closes, focus

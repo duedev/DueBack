@@ -22,13 +22,26 @@ export function relayOneDriveAuthPopup(): boolean {
   }
   if (!state.startsWith(STATE_PREFIX)) return false;
 
+  // Not the live popup (a history/tab restore, a copied URL): there is no
+  // opener to relay to and the single-use code is stale. Strip the query
+  // BEFORE mount — Supabase's detectSessionInUrl would otherwise try to
+  // exchange Microsoft's ?code= — and boot the app normally.
+  if (!window.opener) {
+    try {
+      history.replaceState(null, "", location.pathname + location.hash);
+    } catch {
+      /* ignore */
+    }
+    return false;
+  }
+
   try {
-    window.opener?.postMessage(
+    window.opener.postMessage(
       { type: POPUP_MESSAGE_TYPE, url: location.href },
       location.origin,
     );
   } catch {
-    /* opener gone — the poller in the opener still reads our location */
+    /* postMessage threw on a live opener — its location poll still reads our URL */
   }
 
   const target = document.getElementById("app");

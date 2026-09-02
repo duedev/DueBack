@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app } from "./state.svelte.ts";
+  import { app, type ThemePref } from "./state.svelte.ts";
   import { repo } from "../store/repo.ts";
   import { CATEGORIES } from "../config/categories.ts";
   import {
@@ -30,7 +30,7 @@
   let provider = $state<ProviderId>(cfg0.provider);
   let model = $state(cfg0.model);
   let apiKey = $state(cfg0.apiKey);
-  let spendCap = $state(cfg0.spendCapUsd);
+  let spendCap = $state<number | null>(cfg0.spendCapUsd);
   let spent = $state(cfg0.spentUsd);
   let testMsg = $state("");
   let testing = $state(false);
@@ -50,13 +50,21 @@
   });
 
   function saveAi(): void {
+    // An emptied cap field is "unchanged", not "$0 — never assist"; a
+    // negative is clamped; the persisted value is echoed back so an uncap
+    // is visible.
+    const cap =
+      spendCap === null || (spendCap as unknown) === ""
+        ? getVisionConfig().spendCapUsd
+        : Math.max(0, Number(spendCap) || 0);
     const next = saveVisionConfig({
       enabled: aiEnabled,
       provider,
       model,
       apiKey: apiKey.trim(),
-      spendCapUsd: Number(spendCap) || 0,
+      spendCapUsd: cap,
     });
+    spendCap = next.spendCapUsd;
     spent = next.spentUsd;
   }
 
@@ -297,6 +305,27 @@
       </header>
 
       <div class="p-body">
+        <!-- ============== appearance ============== -->
+        <section>
+          <h4>Appearance</h4>
+          <!-- The header button only flips light/dark; "Match system" is
+               reachable here (it used to be unreachable once toggled). -->
+          <div class="theme-row" role="radiogroup" aria-label="Theme">
+            {#each [["auto", "Match system"], ["light", "Light"], ["dark", "Dark"]] as const as [v, label] (v)}
+              <label class="theme-opt">
+                <input
+                  type="radio"
+                  name="theme"
+                  value={v}
+                  checked={app.theme === v}
+                  onchange={() => app.applyTheme(v as ThemePref)}
+                />
+                {label}
+              </label>
+            {/each}
+          </div>
+        </section>
+
         <!-- ============== account & sync ============== -->
         <section>
           <h4>Account &amp; sync</h4>
@@ -497,7 +526,8 @@
               <button class="btn btn-sm" onclick={testConnection} disabled={testing}>
                 {testing ? "Testing…" : "Test connection"}
               </button>
-              {#if testMsg}<span class="muted small">{testMsg}</span>{/if}
+              <!-- Always present so its insertion is announced. -->
+              <span class="muted small" role="status" aria-live="polite">{testMsg}</span>
             </div>
           {/if}
         </section>
@@ -558,8 +588,9 @@
           <p class="muted small">
             Every correction you make in review is recorded with where the
             right value sits on the receipt and what the reader believed
-            beforehand. Download it (and the images ZIP) to tune extraction
-            against your real receipts. Stays on this device.
+            beforehand. Download the tuning bundle below — the log plus every
+            receipt's extraction and images — to tune extraction against your
+            real receipts. Stays on this device.
           </p>
           <div class="test-row">
             <span class="chip">{correctionCount} corrections</span>
@@ -585,6 +616,17 @@
 {/if}
 
 <style>
+  .theme-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  .theme-opt {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+  }
   .sync-error {
     color: var(--err);
     margin: 0.25rem 0 0.5rem;

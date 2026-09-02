@@ -109,7 +109,7 @@
         {/if}
       {/if}
     {:else if receipt.status === "failed"}
-      <div class="flags err">{receipt.error ?? "Processing failed."}</div>
+      <div class="flags err">{receipt.error ?? "Processing failed."} Open it to read again or enter it by hand.</div>
     {:else}
       <div class="facts muted">
         {remoteBusy ? "Being read on another device…" : "Reading on your device…"}

@@ -105,17 +105,48 @@ test("pages are Letter-size and the media box never changes", () => {
   assert.ok(pdf.includes("/MediaBox [0 0 612 792]"));
 });
 
-test("xref offsets point at their objects", () => {
-  const bytes = buildPrintPdf([fakeImage(), fakeImage()], { employee: "A" });
-  const pdf = ascii(bytes);
+/** Every xref entry must land exactly on its "N 0 obj". */
+function assertXrefValid(pdf: string): void {
   const xrefAt = Number(pdf.match(/startxref\n(\d+)\n/)![1]);
   assert.equal(pdf.slice(xrefAt, xrefAt + 4), "xref");
-  // Every in-use entry must land exactly on "N 0 obj".
   const entries = pdf.slice(xrefAt).match(/^\d{10} 00000 n /gm)!;
   entries.forEach((e, i) => {
     const off = Number(e.slice(0, 10));
     assert.match(pdf.slice(off, off + 12), new RegExp(`^${i + 1} 0 obj`), `object ${i + 1}`);
   });
+}
+
+test("xref offsets point at their objects", () => {
+  assertXrefValid(ascii(buildPrintPdf([fakeImage(), fakeImage()], { employee: "A" })));
+});
+
+test("every stream /Length is its exact byte count, even with non-ASCII text and a JPEG full of delimiters", () => {
+  // xref offsets come from the bytes actually pushed, so they can't catch a
+  // /Length that disagrees with the stream — a reader would then mis-parse
+  // every object after it.
+  const jpeg = new Uint8Array([0xff, 0xd8, 0x0a, 0x0d, 0x0a, 0x65, 0x6e, 0x64, 0xff, 0xd9]);
+  const pdf = ascii(
+    buildPrintPdf([fakeImage({ jpeg, name: "Café_Zoë.jpg", job: "Übung #1" })], { employee: "Renée" }),
+  );
+  const streams = [...pdf.matchAll(/\/Length (\d+) >>\nstream\n/g)];
+  assert.equal(streams.length, 2, "one content stream + one image");
+  for (const m of streams) {
+    const start = m.index! + m[0].length;
+    const n = Number(m[1]);
+    assert.equal(pdf.slice(start + n, start + n + 11), "\nendstream\n", `stream at ${m.index}`);
+  }
+  const img = streams[1]!;
+  const imgStart = img.index! + img[0].length;
+  assert.equal(pdf.slice(imgStart, imgStart + jpeg.length), ascii(jpeg), "JPEG bytes embedded verbatim");
+  assertXrefValid(pdf);
+});
+
+test("an empty batch still yields one valid page", () => {
+  const pdf = ascii(buildPrintPdf([], {}));
+  assert.equal(pdf.match(/\/Type \/Page\b/g)?.length, 1);
+  assert.ok(pdf.includes("/Count 1"));
+  assert.match(pdf, /\/XObject <<\s*>>/);
+  assertXrefValid(pdf);
 });
 
 test("printPdfFileName is sanitized and date-stamped", () => {

@@ -235,6 +235,14 @@
             {/each}
           </div>
         {/if}
+        {#if catGroups.length > 0 && catGroups.every((g) => hiddenCats.has(g.cat))}
+          <!-- The hidden set persists across batches, so a board can open
+               with every one of its categories struck through. -->
+          <p class="muted small all-hidden">
+            Every category on this board is hidden.
+            <button class="btn btn-ghost btn-sm" onclick={() => (hiddenCats = new Set())}>Show all</button>
+          </p>
+        {/if}
         {#each catGroups as g (g.cat)}
           {#if !hiddenCats.has(g.cat)}
             <section class="cat-group">
@@ -536,6 +544,12 @@
   }
   .lane-review .lane-head { color: var(--gold-text); }
   .lane-failed .lane-head { color: var(--err); }
+  .all-hidden {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.5rem 0;
+  }
   .lane-action {
     margin-left: auto;
     padding: 0.15rem 0.5rem;

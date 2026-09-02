@@ -50,7 +50,11 @@ exactly what the SPA + PKCE flow is designed for. **API permissions** need no
 manual setup either — the app requests its delegated scopes (`Files.ReadWrite`,
 `offline_access`, `openid`, `profile`, `email`) dynamically at sign-in, and
 each user consents to their own OneDrive; no admin consent is required for
-these scopes in the common case.
+these scopes in the common case. `Files.ReadWrite` (whole-drive) is
+deliberate even though the app only ever writes `Apps/DueBack`: the
+narrower delegated `Files.ReadWrite.AppFolder` is personal-account-only
+(preview) and fails with `accessDenied` on OneDrive for Business, so it
+can't serve the multitenant + personal registration this guide sets up.
 
 ## 2. Build the app with the client ID
 
@@ -61,8 +65,10 @@ VITE_ONEDRIVE_CLIENT_ID=00000000-0000-0000-0000-000000000000
 ```
 
 For GitHub Pages, add it as a **repository variable** (the deploy workflow
-already forwards `vars.VITE_ONEDRIVE_CLIENT_ID`). For local dev, put it in
-`.env` (see `.env.example`).
+forwards `vars.VITE_ONEDRIVE_CLIENT_ID`, and likewise the optional
+`VITE_ONEDRIVE_TENANT` / `VITE_ONEDRIVE_REDIRECT_URI` below — a variable
+the workflow doesn't forward never reaches the bundle). For local dev, put
+it in `.env` (see `.env.example`).
 
 Optional extras:
 
@@ -73,7 +79,9 @@ Optional extras:
 VITE_ONEDRIVE_TENANT=common
 
 # Override the computed redirect URI (rarely needed — e.g. an embed setup
-# where the app's own address isn't what you registered).
+# where the app's own address isn't what you registered). It must stay on
+# the app's own origin: the OAuth popup relays its callback to the opener
+# with a same-origin postMessage.
 VITE_ONEDRIVE_REDIRECT_URI=https://dueback.duanehamilton.net/
 ```
 

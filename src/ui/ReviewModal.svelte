@@ -8,7 +8,7 @@
   import { annotateReceipt, HIGHLIGHT_COLORS } from "../pipeline/annotate.ts";
   import { buildCorrectionRecords, appendCorrections } from "../train/corrections.ts";
   import { locateValue, readValueInBox } from "../pipeline/extract.ts";
-  import type { Receipt, BBox, Category, OcrLine, Field } from "../types.ts";
+  import type { Receipt, BBox, Category, OcrLine, Field, Flag } from "../types.ts";
 
   // The review sweep: board → modal → keyboard Approve & Next. On-image markers
   // and per-field zoomed callouts show each extracted value beside the slice of
@@ -279,10 +279,28 @@
     await appendCorrections(records).catch(() => {});
   }
 
+  /** Flags that no longer apply once a human changed the field they
+   *  question: a save (onchange) used to keep "No date found" beside the
+   *  date the user just typed, and the card kept its warn banner. Only ever
+   *  REMOVES flags; approval, status and reviewRequired stay untouched — the
+   *  receipt still needs its explicit Approve. */
+  function flagsAfterEdit(r: Receipt, patch: Partial<Receipt>): Flag[] | undefined {
+    const changed = (["vendor", "date", "amount", "category"] as const).filter(
+      (k) => patch[k] !== undefined && patch[k]!.value !== r[k].value,
+    );
+    if (changed.length === 0) return undefined;
+    const gone = new Set<string>(changed);
+    const kept = r.flags.filter((f) => !gone.has(FLAG_FIELD[f.code] ?? ""));
+    return kept.length === r.flags.length ? undefined : kept;
+  }
+
   async function save(): Promise<void> {
     const r = current;
     if (!r) return;
-    await applyPatch(r, patchFromForm(r));
+    const patch = patchFromForm(r);
+    const flags = flagsAfterEdit($state.snapshot(r) as Receipt, patch);
+    if (flags) patch.flags = flags;
+    await applyPatch(r, patch);
   }
 
   async function approveAndNext(): Promise<void> {
@@ -488,6 +506,9 @@
     const f = patch[field] as Field<string | number>;
     f.bbox = box;
     f.manualBox = true;
+    // The autofill changed a value too: drop the flag that questioned it.
+    const flags = flagsAfterEdit($state.snapshot(current) as Receipt, patch);
+    if (flags) patch.flags = flags;
     await applyPatch(current, patch);
   }
 

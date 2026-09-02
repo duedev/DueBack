@@ -42,12 +42,23 @@
   /** Year shown by the month picker — step freely, any year works. */
   let phYear = $state(new Date().getFullYear());
   let seededBatch: string | null = null;
+  /** The batch version the form was seeded from. A remote edit (sync
+   *  realtime, a pull) lands with a newer updatedAt and must re-seed — the
+   *  bar used to keep the stale copy and write it back over the other
+   *  device's employee/job on the next save. This device's own saves stamp
+   *  seededAt so they never re-seed. */
+  let seededAt = 0;
+  let barEl = $state<HTMLElement | null>(null);
   let building = $state(false);
 
   $effect(() => {
     const b = app.batch;
-    if (!b || b.id === seededBatch) return;
+    if (!b || (b.id === seededBatch && b.updatedAt <= seededAt)) return;
+    // Mid-edit: keep the human's form. seededAt stays put, so the next
+    // notify retries once focus has left the bar.
+    if (b.id === seededBatch && barEl?.contains(document.activeElement)) return;
     seededBatch = b.id;
+    seededAt = b.updatedAt;
     employee = b.employee;
     jobName = b.jobName;
     jobNumber = b.jobNumber;
@@ -86,14 +97,30 @@
   }
 
   async function saveMeta(): Promise<void> {
-    if (!app.batch) return;
-    await repo.updateBatch(app.batch.id, {
+    const b = app.batch;
+    if (!b) return;
+    const next = {
       employee,
       jobName,
       jobNumber,
       perDiem: currentPerDiem(),
       phoneService: currentPhoneService(),
-    });
+    };
+    // Nothing changed → no write: Preview/Generate used to bump updatedAt
+    // (and push a no-op row) on every click.
+    if (
+      b.employee === next.employee &&
+      b.jobName === next.jobName &&
+      b.jobNumber === next.jobNumber &&
+      JSON.stringify(b.perDiem ?? null) === JSON.stringify(next.perDiem) &&
+      JSON.stringify(b.phoneService ?? null) === JSON.stringify(next.phoneService)
+    ) {
+      return;
+    }
+    await repo.updateBatch(b.id, next);
+    // updateBatch stamps Date.now() before its await resolves: our own
+    // write is never newer than this, so it can't re-seed the form.
+    seededAt = Date.now();
   }
 
   // ---- Saved jobs: name ⇄ number always travel as a pair ------------------
@@ -480,7 +507,7 @@
   }
 </script>
 
-<section class="bar card" aria-label="Report">
+<section class="bar card" aria-label="Report" bind:this={barEl}>
   <div class="meta">
     <div class="f">
       <label for="xb-emp">Employee</label>
@@ -507,7 +534,7 @@
         bind:value={jobNumber}
         oninput={onJobNumber}
         onchange={saveMeta}
-        placeholder="Optional"
+        placeholder="e.g. 24-117"
       />
     </div>
     <div class="jobsave">
@@ -560,7 +587,7 @@
               id="xb-pd-days"
               type="number"
               min="0"
-              step="1"
+              step="0.5"
               inputmode="decimal"
               placeholder="5"
               bind:value={pdDays}
@@ -660,7 +687,8 @@
       <span class="muted small">
         Downloads with the workbook: receipts cropped to their key lines and
         packed onto letter pages, labeled per receipt, sized for legible
-        printing.
+        printing. Your browser may ask once to allow the second download — or
+        pick Bundle below for a single file.
       </span>
     </div>
 

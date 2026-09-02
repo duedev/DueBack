@@ -36,6 +36,10 @@ class AppState {
   pendingJobs = $state(0);
   toasts = $state<Toast[]>([]);
   theme = $state<ThemePref>("auto");
+  /** The OS scheme, tracked live — "auto" follows it, and the toggle's icon
+   *  used to go stale when the OS flipped while the page was open. */
+  osDark = $state(false);
+  isDark = $derived(this.theme === "dark" || (this.theme === "auto" && this.osDark));
 
   /** Receipt ids whose job lives in THIS browser's work-list. A queued or
    *  processing receipt without one arrived through sync and is being read
@@ -46,6 +50,11 @@ class AppState {
   reviewId = $state<string | null>(null);
   settingsOpen = $state(false);
 
+  /** Boot could not open IndexedDB (a storage-blocked embed, some private
+   *  modes): the landing shows it and every add explains itself with it. */
+  storageError = $state<string | null>(null);
+  /** A new build is installed and waiting; calling this reloads into it. */
+  updateReady = $state<null | (() => void)>(null);
   /** Signed-in Supabase user (null when signed out or sync unconfigured). */
   userEmail = $state<string | null>(null);
   syncStatus = $state<"off" | "syncing" | "idle" | "error">("off");
@@ -100,10 +109,9 @@ class AppState {
       // Storage refused (blocked third-party IndexedDB in an embed, private
       // mode, …): the splash must still clear so the landing page renders.
       console.error("init failed", err);
-      this.toast(
-        "Couldn't open this browser's storage — receipts won't save here.",
-        "err",
-      );
+      this.storageError =
+        "Couldn't open this browser's storage, so receipts can't be saved here. Open dueback.duanehamilton.net directly, or allow site data for it.";
+      this.toast(this.storageError, "err");
     } finally {
       this.booting = false;
     }
@@ -117,6 +125,13 @@ class AppState {
       saved = localStorage.getItem(THEME_KEY) as ThemePref | null;
     } catch {
       // storage blocked
+    }
+    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      this.osDark = mq.matches;
+      mq.addEventListener("change", (e) => {
+        this.osDark = e.matches;
+      });
     }
     this.applyTheme(saved ?? "auto");
 
@@ -214,6 +229,23 @@ class AppState {
   async refresh(): Promise<void> {
     if (!this.batch) return;
     this.receipts = await repo.listReceipts(this.batch.id);
+    // Drop object URLs for blobs no receipt on the board references any
+    // more (deleted, re-baked by a review save, replaced by sync) — the
+    // cache only ever grew and pinned every stale Blob for the tab's life.
+    const live = new Set(
+      this.receipts.flatMap((r) =>
+        [r.fileKey, r.cleanedKey, r.annotatedKey].filter((k): k is string => !!k),
+      ),
+    );
+    for (const [key, url] of this.urlCache) {
+      if (live.has(key)) continue;
+      this.urlCache.delete(key);
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        /* already gone */
+      }
+    }
     // Receipts first, then jobs: a receipt and its job land in one
     // transaction, so this order can only ever see a job for a receipt
     // already listed — never a listed receipt whose job is still coming.
@@ -330,20 +362,23 @@ class AppState {
     }
   }
 
+  /** The header button flips between light and dark; "auto" (follow the OS)
+   *  is reachable from Settings → Appearance. */
   toggleTheme(): void {
-    const dark =
-      this.theme === "dark" ||
-      (this.theme === "auto" &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches);
-    this.applyTheme(dark ? "light" : "dark");
+    this.applyTheme(this.isDark ? "light" : "dark");
   }
 
   toast(message: string, kind: Toast["kind"] = "info"): void {
     const t: Toast = { id: uid("toast"), message, kind };
-    this.toasts = [...this.toasts, t];
-    setTimeout(() => {
-      this.toasts = this.toasts.filter((x) => x.id !== t.id);
-    }, 4200);
+    // A drop of twenty rejected files used to stack twenty toasts down the
+    // page; keep the newest few. Errors stay long enough to be read.
+    this.toasts = [...this.toasts, t].slice(-5);
+    setTimeout(
+      () => {
+        this.toasts = this.toasts.filter((x) => x.id !== t.id);
+      },
+      kind === "err" ? 8000 : 4200,
+    );
   }
 
   /** Validate, store, and enqueue a set of dropped/picked files. Two inputs
@@ -354,9 +389,12 @@ class AppState {
    *  silently dropped the rest. */
   addFiles(files: Iterable<File>): Promise<void> {
     if (!this.batch) {
-      // Boot couldn't open storage; the 4-second toast it showed is long
-      // gone by the time the user drops files, so say it again here.
-      this.toast("Storage is unavailable in this browser, so receipts can't be added.", "err");
+      // Boot couldn't open storage; the toast it showed is long gone by the
+      // time the user drops files, so say it again here.
+      this.toast(
+        this.storageError ?? "Storage is unavailable in this browser, so receipts can't be added.",
+        "err",
+      );
       return Promise.resolve();
     }
     this.entered = true;
