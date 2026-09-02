@@ -59,3 +59,16 @@ test("parseAmount: accepts a plain number (Svelte number-input binding)", () => 
   assert.equal(parseAmount(null), null);
   assert.equal(parseAmount(undefined), null);
 });
+
+test("parseAmount: preserves sign; safeAmount is the clamp", () => {
+  // The parser is SIGNED — a leading or trailing "-" negates, accounting
+  // parentheses are stripped (not negated), and stray letters are ignored.
+  // Anything persisted or exported goes through safeAmount, which clamps
+  // negatives to 0 (money.ts docstring).
+  assert.equal(parseAmount("-12.00"), -12);
+  assert.equal(parseAmount("12.00-"), -12);
+  assert.equal(parseAmount(-5), -5);
+  assert.equal(parseAmount("(12.00)"), 12);
+  assert.equal(parseAmount("12.00 CR"), 12);
+  assert.equal(safeAmount(parseAmount("-12.00")!), 0);
+});

@@ -8,7 +8,7 @@
   import { annotateReceipt, HIGHLIGHT_COLORS } from "../pipeline/annotate.ts";
   import { buildCorrectionRecords, appendCorrections } from "../train/corrections.ts";
   import { locateValue, readValueInBox } from "../pipeline/extract.ts";
-  import type { Receipt, BBox, Category, OcrLine, Field } from "../types.ts";
+  import type { Receipt, BBox, Category, OcrLine, Field, Flag } from "../types.ts";
 
   // The review sweep: board → modal → keyboard Approve & Next. On-image markers
   // and per-field zoomed callouts show each extracted value beside the slice of
@@ -17,6 +17,9 @@
   const list = $derived(app.receipts);
   const index = $derived(list.findIndex((r) => r.id === app.reviewId));
   const current = $derived(index >= 0 ? list[index] : undefined);
+  /** Still being read (the modal opens any card): approving now would stamp
+   *  the empty form as the human's answer, so Approve waits. */
+  const busy = $derived(current?.status === "queued" || current?.status === "processing");
 
   // Editable copies (re-seeded whenever the open receipt changes). The amount
   // and tax fields are number inputs — Svelte rebinds them as numbers after a
@@ -30,19 +33,56 @@
   let imgLoaded = $state(false);
   let imageUrl = $state<string | null>(null);
   let seededId: string | null = null;
+  /** The record version the form was seeded from, and what it was seeded
+   *  with — so a receipt that finishes processing (or syncs) while its
+   *  card is open re-seeds the form instead of letting Approve write the
+   *  stale empty values over the machine's read. Only an UNTOUCHED form is
+   *  re-seeded; typed edits always win. */
+  let seededAt = 0;
+  let seededImageKey: string | undefined;
+  let seeded = { vendor: "", date: "", amount: "", category: "" };
+
+  function formUntouched(): boolean {
+    return (
+      vendor === seeded.vendor &&
+      date === seeded.date &&
+      amount === seeded.amount &&
+      category === seeded.category
+    );
+  }
 
   $effect(() => {
     const r = current;
-    if (!r || r.id === seededId) return;
+    if (!r) return;
+    const sameReceipt = r.id === seededId;
+    if (sameReceipt && r.updatedAt === seededAt) return;
+    if (sameReceipt && !formUntouched()) {
+      // The human is mid-edit: keep their form, but follow a fresh image
+      // (the pipeline swapped the raw upload for the cleaned copy).
+      const key = r.cleanedKey ?? r.fileKey;
+      if (key !== seededImageKey) {
+        seededImageKey = key;
+        const id = r.id;
+        void app.blobUrl(key).then((u) => {
+          if (seededId === id) imageUrl = u;
+        });
+      }
+      seededAt = r.updatedAt;
+      return;
+    }
     seededId = r.id;
+    seededAt = r.updatedAt;
     vendor = r.vendor.value;
     date = r.date.value;
     amount = r.amount.value ? String(r.amount.value) : "";
     category = r.category.value;
+    seeded = { vendor, date, amount, category };
     imgLoaded = false;
     imageUrl = null;
     const id = r.id;
-    void app.blobUrl(r.cleanedKey ?? r.fileKey).then((u) => {
+    const key = r.cleanedKey ?? r.fileKey;
+    seededImageKey = key;
+    void app.blobUrl(key).then((u) => {
       // Rapid prev/next: the LAST promise to resolve would win otherwise —
       // only the still-current receipt may set the image.
       if (seededId === id) imageUrl = u;
@@ -109,28 +149,42 @@
       return y >= 1990 && y <= 2100;
     };
     const newDate = date && isValidIso(date) && saneYear(date) ? date : r.date.value;
-    const newAmount = amt !== null ? safeAmount(amt) : r.amount.value;
+    // A negative amount is a typo, not a refund the report can carry: keep
+    // the stored value (like a partial date) and say so.
+    if (amt !== null && amt < 0) app.toast("Amounts can't be negative.", "warn");
+    const newAmount = amt !== null && amt >= 0 ? safeAmount(amt) : r.amount.value;
     // Boxes (and their hand-drawn flag) survive every save.
     const keepBox = (f: Field<unknown>) => ({
       ...(f.bbox ? { bbox: f.bbox } : {}),
       ...(f.manualBox ? { manualBox: true } : {}),
     });
+    // `edited` marks a HUMAN change: it is what the training log, the
+    // relocation ("an edited value that can't be found keeps no box") and
+    // the pipeline's touched-before-claim guard read. Stamping it on every
+    // field of every save dropped provenance boxes on values nobody touched.
+    const edited = (f: Field<unknown>, value: unknown) =>
+      f.value !== value || f.edited ? { edited: true } : {};
     return {
-      vendor: { value: newVendor, confidence: 1, edited: true, ...keepBox(r.vendor) },
+      vendor: {
+        value: newVendor,
+        confidence: 1,
+        ...edited(r.vendor, newVendor),
+        ...keepBox(r.vendor),
+      },
       date: {
         value: newDate,
         confidence: 1,
-        edited: true,
+        ...edited(r.date, newDate),
         ...keepBox(r.date),
       },
       amount: {
         value: newAmount,
         confidence: 1,
-        edited: true,
+        ...edited(r.amount, newAmount),
         ...keepBox(r.amount),
       },
       currency: "USD", // USD-only app — a save normalizes any legacy value
-      category: { value: category, confidence: 1, edited: true },
+      category: { value: category, confidence: 1, ...edited(r.category, category) },
       // Edits change the fields the file is named after — keep it in sync
       // (same amount>0 gate as the pipeline: failed reads keep their name).
       ...(newAmount > 0
@@ -139,7 +193,6 @@
               category,
               date: newDate,
               vendor: newVendor,
-              fileName: r.originalFileName ?? r.fileName,
             }),
           }
         : {}),
@@ -150,8 +203,20 @@
   /** Apply a review patch, closing the improvement loop: locate each
    *  corrected value on the receipt, move its highlight there, re-bake the
    *  annotated copy, and log the correction for training. */
-  async function applyPatch(receipt: Receipt, patch: Partial<Receipt>): Promise<void> {
-    const r = $state.snapshot(receipt) as Receipt;
+  /** Saves are serialized: a field's change event and the Approve click it
+   *  precedes fire back to back, and two concurrent applyPatch calls logged
+   *  the correction twice and orphaned an annotated blob. Each call also
+   *  diffs against the receipt as STORED (not the snapshot taken before the
+   *  previous save landed), so the second call finds nothing new to log. */
+  let inflight: Promise<void> = Promise.resolve();
+  function applyPatch(receipt: Receipt, patch: Partial<Receipt>): Promise<void> {
+    const next = inflight.then(() => applyPatchNow(receipt, patch));
+    inflight = next.catch(() => {});
+    return next;
+  }
+
+  async function applyPatchNow(receipt: Receipt, patch: Partial<Receipt>): Promise<void> {
+    const r = ((await repo.getReceipt(receipt.id)) ?? $state.snapshot(receipt)) as Receipt;
     const lines = (r.ocrLines ?? []) as OcrLine[];
     const records = buildCorrectionRecords(r, patch, lines);
 
@@ -220,10 +285,28 @@
     await appendCorrections(records).catch(() => {});
   }
 
+  /** Flags that no longer apply once a human changed the field they
+   *  question: a save (onchange) used to keep "No date found" beside the
+   *  date the user just typed, and the card kept its warn banner. Only ever
+   *  REMOVES flags; approval, status and reviewRequired stay untouched — the
+   *  receipt still needs its explicit Approve. */
+  function flagsAfterEdit(r: Receipt, patch: Partial<Receipt>): Flag[] | undefined {
+    const changed = (["vendor", "date", "amount", "category"] as const).filter(
+      (k) => patch[k] !== undefined && patch[k]!.value !== r[k].value,
+    );
+    if (changed.length === 0) return undefined;
+    const gone = new Set<string>(changed);
+    const kept = r.flags.filter((f) => !gone.has(FLAG_FIELD[f.code] ?? ""));
+    return kept.length === r.flags.length ? undefined : kept;
+  }
+
   async function save(): Promise<void> {
     const r = current;
     if (!r) return;
-    await applyPatch(r, patchFromForm(r));
+    const patch = patchFromForm(r);
+    const flags = flagsAfterEdit($state.snapshot(r) as Receipt, patch);
+    if (flags) patch.flags = flags;
+    await applyPatch(r, patch);
   }
 
   async function approveAndNext(): Promise<void> {
@@ -277,8 +360,17 @@
     else close();
   }
 
+  async function retryRead(): Promise<void> {
+    const r = current;
+    if (!r) return;
+    if (await app.retryReceipt(r.id)) app.toast("Reading again…", "info");
+  }
+
   function onKey(e: KeyboardEvent): void {
     if (!current) return;
+    // A held Enter/"a" auto-repeats every ~30 ms: each repeat approved and
+    // advanced another receipt before the first save had landed.
+    if (e.repeat) return;
     const tag = (e.target as HTMLElement)?.tagName;
     const typing = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
     if (e.key === "Escape") {
@@ -287,6 +379,11 @@
         cancelDraw();
         return;
       }
+      // Escape from an edited field used to lose the edit: close() cleared
+      // the receipt synchronously and the unmount's change event found no
+      // `current`. A programmatic blur fires change (→ save) right now,
+      // while the receipt is still open — and only if the value changed.
+      if (typing) (e.target as HTMLElement).blur();
       close();
       return;
     }
@@ -296,13 +393,13 @@
     if (e.key === "Enter") {
       if (tag === "BUTTON" || tag === "A" || tag === "SUMMARY" || tag === "SELECT") return;
       e.preventDefault();
-      void approveAndNext();
+      if (!busy) void approveAndNext();
       return;
     }
     if (typing) return;
     if (e.key === "ArrowRight" || e.key.toLowerCase() === "n") go(1);
     else if (e.key === "ArrowLeft" || e.key.toLowerCase() === "p") go(-1);
-    else if (e.key.toLowerCase() === "a") void approveAndNext();
+    else if (e.key.toLowerCase() === "a" && !busy) void approveAndNext();
   }
 
   /** Svelte action: render a zoomed crop of the receipt around a bbox. */
@@ -423,6 +520,9 @@
     const f = patch[field] as Field<string | number>;
     f.bbox = box;
     f.manualBox = true;
+    // The autofill changed a value too: drop the flag that questioned it.
+    const flags = flagsAfterEdit($state.snapshot(current) as Receipt, patch);
+    if (flags) patch.flags = flags;
     await applyPatch(current, patch);
   }
 
@@ -476,6 +576,13 @@
       </header>
 
       <div class="m-body">
+        <!-- Always mounted: a live region inserted with its text already in
+             place is not reliably announced (VoiceOver on iOS especially). -->
+        <div class="sr-only" role="status">
+          {drawField
+            ? `Draw mode on: drag a box around the ${drawField === "amount" ? "total" : drawField}. Escape cancels.`
+            : ""}
+        </div>
         <div class="m-image">
           {#if imageUrl}
             <!-- svelte-ignore a11y_no_static_element_interactions -- the
@@ -542,6 +649,7 @@
                 type="button"
                 class="draw-btn db-vendor"
                 class:active={drawField === "vendor"}
+                aria-pressed={drawField === "vendor"}
                 onclick={() => (drawField = drawField === "vendor" ? null : "vendor")}
                 title="Draw a box on the receipt around the vendor name"
               >▣ mark on image</button>
@@ -550,7 +658,7 @@
             {@render fieldFlags("vendor")}
             {#if imgLoaded && current.vendor.bbox}
               {#key current.id}
-                <canvas class="callout" use:callout={current.vendor.bbox}></canvas>
+                <canvas class="callout" aria-hidden="true" use:callout={current.vendor.bbox}></canvas>
               {/key}
             {/if}
           </div>
@@ -562,6 +670,7 @@
                 type="button"
                 class="draw-btn db-date"
                 class:active={drawField === "date"}
+                aria-pressed={drawField === "date"}
                 onclick={() => (drawField = drawField === "date" ? null : "date")}
                 title="Draw a box on the receipt around the date"
               >▣ mark on image</button>
@@ -570,7 +679,7 @@
             {@render fieldFlags("date")}
             {#if imgLoaded && current.date.bbox}
               {#key current.id}
-                <canvas class="callout" use:callout={current.date.bbox}></canvas>
+                <canvas class="callout" aria-hidden="true" use:callout={current.date.bbox}></canvas>
               {/key}
             {/if}
           </div>
@@ -582,6 +691,7 @@
                 type="button"
                 class="draw-btn db-amount"
                 class:active={drawField === "amount"}
+                aria-pressed={drawField === "amount"}
                 onclick={() => (drawField = drawField === "amount" ? null : "amount")}
                 title="Draw a box on the receipt around the grand total"
               >▣ mark on image</button>
@@ -597,7 +707,7 @@
             {@render fieldFlags("amount")}
             {#if imgLoaded && current.amount.bbox}
               {#key current.id}
-                <canvas class="callout" use:callout={current.amount.bbox}></canvas>
+                <canvas class="callout" aria-hidden="true" use:callout={current.amount.bbox}></canvas>
               {/key}
             {/if}
           </div>
@@ -622,6 +732,13 @@
               {/each}
             </div>
           {/if}
+          {#if current.status === "failed"}
+            <!-- The card is itself a button, so the retry lives here. -->
+            <p class="retry-row">
+              <button class="btn btn-sm" onclick={() => void retryRead()}>↻ Retry reading</button>
+              <span class="muted small">Reads the image again; anything you typed here is kept.</span>
+            </p>
+          {/if}
 
           <p class="provenance muted">
             {current.methodUsed === "paid"
@@ -641,8 +758,16 @@
         <button class="btn btn-sm" onclick={() => go(1)} disabled={index >= list.length - 1}>Next →</button>
         <button class="btn btn-sm btn-danger" onclick={deleteCurrent}>Delete</button>
         <span class="spacer"></span>
+        {#if busy}
+          <span class="muted small">Still reading…</span>
+        {/if}
         <span class="kbd">Enter</span>
-        <button class="btn btn-primary" onclick={approveAndNext}>Approve &amp; Next</button>
+        <button
+          class="btn btn-primary"
+          onclick={approveAndNext}
+          disabled={busy}
+          title={busy ? "Wait for the read to finish, or enter the values yourself once it has" : undefined}
+        >Approve &amp; Next</button>
       </footer>
     </div>
   </div>
@@ -846,6 +971,13 @@
   .flags {
     display: grid;
     gap: 0.4rem;
+  }
+  .retry-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0.5rem 0 0;
   }
   .flag {
     display: flex;

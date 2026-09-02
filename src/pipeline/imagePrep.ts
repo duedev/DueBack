@@ -29,8 +29,6 @@ export interface CleanedImage {
   ocrBlob: Blob;
   ocrWidth: number;
   ocrHeight: number;
-  /** Object URL for display; caller is responsible for revoking. */
-  url: string;
 }
 
 /** Decode any supported input into a bitmap. PDFs are normally expanded into
@@ -138,13 +136,21 @@ function analysisFrame(
  *  background, not content. The uncovered wedges are filled with the photo's
  *  own border color: a hard-coded white fill against a dark table injects
  *  bright corner edges that defeat the auto-crop's content detection. */
+/** The deskew canvas is capped at twice the OCR render: a 48 MP phone photo
+ *  rotated at full size was a ~200 MB canvas beside the source bitmap
+ *  (iOS Safari's canvas budget), and every crop of half the frame or more
+ *  still reaches `ocrMaxEdge` at full resolution. Phone-typical ≤20 MP
+ *  frames pass through untouched. */
+const ROTATE_MAX_EDGE = IMAGE_PREP.ocrMaxEdge * 2;
+
 function rotateFrame(
   src: ImageBitmap | HTMLCanvasElement,
   deg: number,
   fill: [number, number, number] = [255, 255, 255],
 ): HTMLCanvasElement {
-  const w = src.width;
-  const h = src.height;
+  const s = Math.min(1, ROTATE_MAX_EDGE / Math.max(src.width, src.height));
+  const w = Math.max(1, Math.round(src.width * s));
+  const h = Math.max(1, Math.round(src.height * s));
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
@@ -153,7 +159,7 @@ function rotateFrame(
   ctx.fillRect(0, 0, w, h);
   ctx.translate(w / 2, h / 2);
   ctx.rotate((deg * Math.PI) / 180);
-  ctx.drawImage(src, -w / 2, -h / 2);
+  ctx.drawImage(src, -w / 2, -h / 2, w, h);
   return canvas;
 }
 
@@ -181,131 +187,143 @@ function renderRegion(
 export async function cleanImage(file: File | Blob): Promise<CleanedImage> {
   const bmp = await decode(file);
   let src: ImageBitmap | HTMLCanvasElement = bmp;
-
-  // Optional document straightening (angled phone photos). Best-effort and
-  // opt-in (VITE_PERSPECTIVE=1 + a vendored OpenCV.js) — null keeps the
-  // original decode.
-  if (perspectiveEnabled()) {
-    const warped = await correctPerspective(bmp).catch(() => null);
-    if (warped) {
-      bmp.close();
-      src = warped;
+  // Every exit releases the decoded bitmap (~4 bytes/pixel of GPU-backed
+  // memory that GC reclaims late): a throw from the perspective/deskew
+  // stages or from an encode used to leak it per failed receipt.
+  try {
+    // Optional document straightening (angled phone photos). Best-effort and
+    // opt-in (VITE_PERSPECTIVE=1 + a vendored OpenCV.js) — null keeps the
+    // original decode.
+    if (perspectiveEnabled()) {
+      const warped = await correctPerspective(bmp).catch(() => null);
+      if (warped) {
+        bmp.close();
+        src = warped;
+      }
     }
-  }
 
-  const bigEnough = src.width > 200 && src.height > 200;
-  // One analysis copy serves both deskew and autocrop; it is only recomputed
-  // when the frame was actually rotated.
-  let a = bigEnough ? analysisFrame(src) : null;
+    const bigEnough = src.width > 200 && src.height > 200;
+    // One analysis copy serves both deskew and autocrop; it is only recomputed
+    // when the frame was actually rotated.
+    let a = bigEnough ? analysisFrame(src) : null;
 
-  // --- deskew: estimate small tilt on the analysis copy, correct in full ---
-  if (IMAGE_PREP.deskew && a) {
-    const gray = toGrayscale(a.data, a.w, a.h);
-    const mask = bradleyBinarize(gray, a.w, a.h);
-    const angle = estimateSkewAngle(mask, a.w, a.h, {
-      maxAngle: IMAGE_PREP.deskewMaxAngle,
-    });
-    if (angle !== 0) {
-      const rotated = rotateFrame(src, angle, borderColor(a.data, a.w, a.h));
-      if (src instanceof ImageBitmap) src.close();
-      src = rotated;
-      a = analysisFrame(src);
+    // --- deskew: estimate small tilt on the analysis copy, correct in full ---
+    if (IMAGE_PREP.deskew && a) {
+      const gray = toGrayscale(a.data, a.w, a.h);
+      const mask = bradleyBinarize(gray, a.w, a.h);
+      const angle = estimateSkewAngle(mask, a.w, a.h, {
+        maxAngle: IMAGE_PREP.deskewMaxAngle,
+      });
+      if (angle !== 0) {
+        const rotated = rotateFrame(src, angle, borderColor(a.data, a.w, a.h));
+        if (src instanceof ImageBitmap) src.close();
+        src = rotated;
+        a = analysisFrame(src);
+      }
     }
-  }
 
-  const srcW = src.width;
-  const srcH = src.height;
+    const srcW = src.width;
+    const srcH = src.height;
 
-  // --- trim near-black scan borders (CamScanner-style sawtooth strips) ---
-  // Pre-scanned uploads arrive already cropped/deskewed, but with black edge
-  // strips the content-box crop alone keeps (they carry edge energy).
-  let inset = { left: 0, top: 0, right: 0, bottom: 0 };
-  if (a) {
-    inset = darkBorderInsets(toGrayscale(a.data, a.w, a.h), a.w, a.h);
-  }
+    // --- trim near-black scan borders (CamScanner-style sawtooth strips) ---
+    // Pre-scanned uploads arrive already cropped/deskewed, but with black edge
+    // strips the content-box crop alone keeps (they carry edge energy).
+    let inset = { left: 0, top: 0, right: 0, bottom: 0 };
+    if (a) {
+      inset = darkBorderInsets(toGrayscale(a.data, a.w, a.h), a.w, a.h);
+    }
 
-  // --- auto-crop analysis on the small copy of the (now upright) frame ---
-  let crop = { x: 0, y: 0, w: srcW, h: srcH };
-  if (a && (inset.left || inset.top || inset.right || inset.bottom)) {
-    crop = {
-      x: inset.left / a.scale,
-      y: inset.top / a.scale,
-      w: Math.max(1, (a.w - inset.left - inset.right) / a.scale),
-      h: Math.max(1, (a.h - inset.top - inset.bottom) / a.scale),
-    };
-  }
-  if (IMAGE_PREP.autoCrop && a) {
-    const inner = {
-      x1: inset.left,
-      y1: inset.top,
-      x2: a.w - inset.right,
-      y2: a.h - inset.bottom,
-    };
-    const clampInner = (b: { x: number; y: number; w: number; h: number }) => {
-      const x1 = Math.max(b.x, inner.x1);
-      const y1 = Math.max(b.y, inner.y1);
-      const x2 = Math.min(b.x + b.w, inner.x2);
-      const y2 = Math.min(b.y + b.h, inner.y2);
-      return { x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
-    };
-    const toCrop = (
-      b: { x: number; y: number; w: number; h: number },
-      pad: number,
-    ) => {
-      const px = b.w * pad;
-      const py = b.h * pad;
-      return {
-        x: Math.max(0, (b.x - px) / a.scale),
-        y: Math.max(0, (b.y - py) / a.scale),
-        w: Math.min(srcW, (b.w + 2 * px) / a.scale),
-        h: Math.min(srcH, (b.h + 2 * py) / a.scale),
+    // --- auto-crop analysis on the small copy of the (now upright) frame ---
+    let crop = { x: 0, y: 0, w: srcW, h: srcH };
+    if (a && (inset.left || inset.top || inset.right || inset.bottom)) {
+      crop = {
+        x: inset.left / a.scale,
+        y: inset.top / a.scale,
+        w: Math.max(1, (a.w - inset.left - inset.right) / a.scale),
+        h: Math.max(1, (a.h - inset.top - inset.bottom) / a.scale),
       };
+    }
+    if (IMAGE_PREP.autoCrop && a) {
+      const inner = {
+        x1: inset.left,
+        y1: inset.top,
+        x2: a.w - inset.right,
+        y2: a.h - inset.bottom,
+      };
+      const clampInner = (b: { x: number; y: number; w: number; h: number }) => {
+        const x1 = Math.max(b.x, inner.x1);
+        const y1 = Math.max(b.y, inner.y1);
+        const x2 = Math.min(b.x + b.w, inner.x2);
+        const y2 = Math.min(b.y + b.h, inner.y2);
+        return { x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
+      };
+      const toCrop = (
+        b: { x: number; y: number; w: number; h: number },
+        pad: number,
+      ) => {
+        const px = b.w * pad;
+        const py = b.h * pad;
+        return {
+          x: Math.max(0, (b.x - px) / a.scale),
+          y: Math.max(0, (b.y - py) / a.scale),
+          w: Math.min(srcW, (b.w + 2 * px) / a.scale),
+          h: Math.min(srcH, (b.h + 2 * py) / a.scale),
+        };
+      };
+
+      // First choice: the paper slab (largest bright, desaturated connected
+      // region). The edge-energy box keeps every textured thing in frame — a
+      // salad beside the receipt, a patterned table — so busy photos barely
+      // cropped; the slab detector goes after the receipt itself and is
+      // allowed to crop far tighter. Its own guards make null the answer for
+      // dark scenes and full-frame scans, which fall through to edge energy.
+      const paper = paperRegionBox(a.data, a.w, a.h);
+      let paperCropped = false;
+      if (paper) {
+        // Unclamped on purpose: the slab mask already excludes near-black
+        // strips, so its bbox only reaches into a dark-border inset band when
+        // that band holds bright paper — a long receipt on a dark car seat or
+        // counter with its top/bottom edge inside the outer 8%. Clamping cut
+        // the TOTAL line or the vendor header there (~5% of the frame per end
+        // even after the 3% pad); the edge-energy fallback keeps its clamp
+        // because sawtooth strips genuinely carry edge energy.
+        const pbox = paper;
+        const area = (pbox.w * pbox.h) / (a.w * a.h);
+        if (area >= 0.05 && area <= 0.92) {
+          crop = toCrop(pbox, 0.03);
+          paperCropped = true;
+        }
+      }
+      if (!paperCropped) {
+        const box = detectContentBox(a.data, a.w, a.h);
+        // Keep the content box inside the border-trimmed region.
+        const nbox = clampInner(box);
+        const area = (nbox.w * nbox.h) / (a.w * a.h);
+        // Only accept a crop that keeps a sensible region (guards over-cropping).
+        if (area > 0.45 && nbox.w > a.w * 0.4 && nbox.h > a.h * 0.4) {
+          crop = toCrop(nbox, 0.02);
+        }
+      }
+    }
+
+    // --- render the same frame twice: stored copy + transient OCR copy ---
+    const stored = renderRegion(src, crop, IMAGE_PREP.maxEdge);
+    const ocr = renderRegion(src, crop, IMAGE_PREP.ocrMaxEdge);
+    if (src instanceof ImageBitmap) src.close();
+
+    const blob = await canvasToBlob(stored, "image/jpeg", IMAGE_PREP.quality);
+    const ocrBlob = await canvasToBlob(ocr, "image/jpeg", IMAGE_PREP.ocrQuality);
+    return {
+      blob,
+      width: stored.width,
+      height: stored.height,
+      ocrBlob,
+      ocrWidth: ocr.width,
+      ocrHeight: ocr.height,
     };
-
-    // First choice: the paper slab (largest bright, desaturated connected
-    // region). The edge-energy box keeps every textured thing in frame — a
-    // salad beside the receipt, a patterned table — so busy photos barely
-    // cropped; the slab detector goes after the receipt itself and is
-    // allowed to crop far tighter. Its own guards make null the answer for
-    // dark scenes and full-frame scans, which fall through to edge energy.
-    const paper = paperRegionBox(a.data, a.w, a.h);
-    let paperCropped = false;
-    if (paper) {
-      const pbox = clampInner(paper);
-      const area = (pbox.w * pbox.h) / (a.w * a.h);
-      if (area >= 0.05 && area <= 0.92) {
-        crop = toCrop(pbox, 0.03);
-        paperCropped = true;
-      }
-    }
-    if (!paperCropped) {
-      const box = detectContentBox(a.data, a.w, a.h);
-      // Keep the content box inside the border-trimmed region.
-      const nbox = clampInner(box);
-      const area = (nbox.w * nbox.h) / (a.w * a.h);
-      // Only accept a crop that keeps a sensible region (guards over-cropping).
-      if (area > 0.45 && nbox.w > a.w * 0.4 && nbox.h > a.h * 0.4) {
-        crop = toCrop(nbox, 0.02);
-      }
-    }
+  } finally {
+    if (src instanceof ImageBitmap) src.close(); // idempotent
   }
-
-  // --- render the same frame twice: stored copy + transient OCR copy ---
-  const stored = renderRegion(src, crop, IMAGE_PREP.maxEdge);
-  const ocr = renderRegion(src, crop, IMAGE_PREP.ocrMaxEdge);
-  if (src instanceof ImageBitmap) src.close();
-
-  const blob = await canvasToBlob(stored, "image/jpeg", IMAGE_PREP.quality);
-  const ocrBlob = await canvasToBlob(ocr, "image/jpeg", IMAGE_PREP.ocrQuality);
-  return {
-    blob,
-    width: stored.width,
-    height: stored.height,
-    ocrBlob,
-    ocrWidth: ocr.width,
-    ocrHeight: ocr.height,
-    url: URL.createObjectURL(blob),
-  };
 }
 
 export interface BinarizedImage {

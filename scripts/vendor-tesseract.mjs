@@ -1,12 +1,16 @@
 // Copies the Tesseract worker + wasm core out of node_modules into
-// public/vendor/tesseract so they are served same-origin under stable names.
+// public/vendor/tesseract/<tesseract.js version> so they are served
+// same-origin under stable names — VERSIONED, because the service worker
+// caches everything under /vendor/ CacheFirst for a year: an unversioned
+// path kept serving the previous worker to a bundle built against the next
+// tesseract.js, and OCR broke after every upgrade until the cache expired.
 // Why not let the bundler handle it? The Emscripten ".wasm.js" loader fetches
 // its sibling ".wasm" by name at runtime; content-hashed bundling breaks that.
 // Serving the originals unhashed keeps the relative fetch intact and lets the
 // app run fully offline (the service worker caches them on first use).
 //
 // Runs automatically before `dev` and `build`. The output is gitignored.
-import { mkdir, copyFile, access, writeFile, stat } from "node:fs/promises";
+import { mkdir, copyFile, access, writeFile, stat, readFile, readdir, rm } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -19,10 +23,27 @@ export function tessdataFailureIsFatal(env = process.env) {
   return env.VITE_TESSDATA_LOCAL !== "0";
 }
 
+/** Where the worker + cores live under public/ (and dist/) for a given
+ *  tesseract.js version. ocr.ts builds the same path from the
+ *  `__TESSERACT_VERSION__` define in vite.config.ts — keep the three in sync
+ *  (tests/vendor_tesseract.test.ts pins it). */
+export function tesseractVendorDir(version) {
+  return `vendor/tesseract/${version}`;
+}
+
 async function main() {
   const here = dirname(fileURLToPath(import.meta.url));
   const root = join(here, "..");
-  const outDir = join(root, "public", "vendor", "tesseract");
+  const pkg = JSON.parse(
+    await readFile(join(root, "node_modules", "tesseract.js", "package.json"), "utf8"),
+  );
+  const outDir = join(root, "public", tesseractVendorDir(pkg.version));
+  // Drop stale version folders so dist/ doesn't ship every release ever vendored.
+  const parent = join(root, "public", "vendor", "tesseract");
+  await mkdir(parent, { recursive: true });
+  for (const entry of await readdir(parent)) {
+    if (entry !== pkg.version) await rm(join(parent, entry), { recursive: true, force: true });
+  }
   await mkdir(outDir, { recursive: true });
 
   const coreDir = join(root, "node_modules", "tesseract.js-core");
@@ -46,7 +67,7 @@ async function main() {
     }
     await copyFile(src, join(outDir, name));
   }
-  console.log(`vendored ${files.length} Tesseract assets → public/vendor/tesseract`);
+  console.log(`vendored ${files.length} Tesseract assets → public/${tesseractVendorDir(pkg.version)}`);
 
   // --- Language data -------------------------------------------------------
   // Fetch eng.traineddata.gz so OCR runs fully offline, same-origin, at $0 with
@@ -58,10 +79,13 @@ async function main() {
   await mkdir(tessDir, { recursive: true });
   const langFile = join(tessDir, `${LANG}.traineddata.gz`);
 
+  // gzip magic bytes: a CDN error page served with HTTP 200, or a partial
+  // write, would otherwise be vendored (and cached in browsers for a year).
+  const looksGzip = (buf) => buf.length > 1_000_000 && buf[0] === 0x1f && buf[1] === 0x8b;
   let haveLang = false;
   try {
     const s = await stat(langFile);
-    haveLang = s.size > 1_000_000; // sanity: real data is several MB
+    haveLang = s.size > 1_000_000 && looksGzip(await readFile(langFile));
   } catch {
     /* not present yet */
   }
@@ -74,10 +98,12 @@ async function main() {
     let ok = false;
     for (const url of sources) {
       try {
-        const res = await fetch(url);
+        // A CDN that accepts the connection and stalls used to hang prebuild
+        // for a CI job's whole 6-hour limit; the fallback source never ran.
+        const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const buf = Buffer.from(await res.arrayBuffer());
-        if (buf.length < 1_000_000) throw new Error("suspiciously small");
+        if (!looksGzip(buf)) throw new Error("not a gzip payload (or suspiciously small)");
         await writeFile(langFile, buf);
         console.log(
           `vendored ${LANG}.traineddata.gz (${(buf.length / 1e6).toFixed(1)} MB) → public/vendor/tessdata/4.0.0`,

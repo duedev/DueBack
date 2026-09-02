@@ -1,7 +1,13 @@
 <script lang="ts">
   // Steps open on hover and stay open (reading shouldn't require a click);
   // clicking the summary still toggles, so a click can close one again.
-  function openOnHover(e: MouseEvent): void {
+  // Touch must not open here: Chromium fires a compat mouseenter before the
+  // tap's click, so hover-open + click-toggle closed the step on the first
+  // tap (two taps per step on Android). pointerenter carries the pointer
+  // type, which a (hover: hover) media check can't see on a laptop with a
+  // touchscreen — only a real mouse opens on hover.
+  function openOnHover(e: PointerEvent): void {
+    if (e.pointerType !== "mouse") return;
     (e.currentTarget as HTMLDetailsElement).open = true;
   }
 </script>
@@ -17,7 +23,7 @@
   <div class="how-cols">
     <ol class="steps">
       <li>
-        <details class="card step" open onmouseenter={openOnHover}>
+        <details class="card step" open onpointerenter={openOnHover}>
           <summary>
             <span class="step-n">1</span>
             <span class="step-head">
@@ -46,7 +52,7 @@
         </details>
       </li>
       <li>
-        <details class="card step" onmouseenter={openOnHover}>
+        <details class="card step" onpointerenter={openOnHover}>
           <summary>
             <span class="step-n">2</span>
             <span class="step-head">
@@ -79,14 +85,14 @@
         </details>
       </li>
       <li>
-        <details class="card step" onmouseenter={openOnHover}>
+        <details class="card step" onpointerenter={openOnHover}>
           <summary>
             <span class="step-n">3</span>
             <span class="step-head">
               <span class="step-title">Download the Excel workbook</span>
               <span class="step-deck">
-                One click builds a themed Excel report, plus a CSV and an
-                images ZIP if you need them.
+                One click builds a themed Excel report and a print packet PDF
+                of the receipts for offices that keep paper.
               </span>
             </span>
           </summary>
@@ -234,6 +240,8 @@
   }
   /* .step's overflow:hidden clips the global focus ring — draw it inset. */
   .step summary:focus-visible {
+    outline: 2px solid transparent;
+    outline-offset: -4px;
     box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 4px var(--accent);
   }
   .step summary::after {

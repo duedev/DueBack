@@ -215,3 +215,34 @@ test("archive entry names keep the folder path for the card", () => {
     "trip.zip › session.pdf",
   );
 });
+
+// ── Audit round (2026-09) ─────────────────────────────────────────────────────
+import { archiveEntryName as entryName } from "../src/pipeline/unzip.ts";
+
+test("archive entry paths shed '..', '.' and drive prefixes (zip-slip into the tuning bundle)", () => {
+  assert.deepEqual(entryName("trip.zip", "../../etc/x.jpg"), {
+    fileName: "x.jpg",
+    originalFileName: "trip.zip › etc/x.jpg",
+  });
+  assert.deepEqual(entryName("trip.zip", "C:\\scans\\a.pdf"), {
+    fileName: "a.pdf",
+    originalFileName: "trip.zip › scans/a.pdf",
+  });
+  assert.deepEqual(entryName("trip.zip", "./2026/03/session.pdf"), {
+    fileName: "session.pdf",
+    originalFileName: "trip.zip › 2026/03/session.pdf",
+  });
+});
+
+test("backslash-separated entry names (Windows archivers) read as folders", async () => {
+  const blob = await buildZip([
+    { name: "__MACOSX\\trip\\._receipt.jpg", data: jpegish("stub") },
+    { name: "trip\\._receipt.jpg", data: jpegish("stub2") },
+    { name: "trip\\.DS_Store", data: bytes("junk") },
+    { name: "trip\\sub\\receipt.jpg", data: jpegish("real") },
+  ]);
+  const { entries, skipped } = await readZip(await blob.arrayBuffer(), { extensions: [".jpg"] });
+  assert.deepEqual(entries.map((e) => e.path), ["trip/sub/receipt.jpg"]);
+  assert.equal(skipped.length, 0);
+  assert.equal(archiveEntryName("t.zip", entries[0]!.path).originalFileName, "t.zip › trip/sub/receipt.jpg");
+});

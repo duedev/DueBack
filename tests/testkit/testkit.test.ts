@@ -10,7 +10,9 @@ import { fuseVendorIdentity } from "../../src/pipeline/logo/fuse.ts";
 // receipt_testkit.py). If a change drops a challenge, this test names it.
 
 const OVERALL_GATE = 0.95;
-const FIELD_GATE = 0.85;
+// The AMOUNT must be right on EVERY challenge: an averaged gate let one
+// challenge ship a 100x total (0.4 of one row) and still clear 95%.
+const FIELD_GATE = { vendor: 0.85, amount: 1, date: 0.85, category: 0.85 } as const;
 
 test("challenge suite meets the accuracy gate", () => {
   const rows: BenchmarkRow[] = challengeSuite().map((ch) => {
@@ -38,11 +40,18 @@ test("challenge suite meets the accuracy gate", () => {
         : ""),
   );
 
+  // No single challenge may collapse: the average hides one bad receipt.
+  assert.equal(
+    failing.length,
+    0,
+    `challenges below 0.9: ${failing.map((r) => `${r.id}(${JSON.stringify(r.got)})`).join(", ")}`,
+  );
+
   for (const field of ["vendor", "amount", "date", "category"] as const) {
     const rate = rows.filter((r) => r.fields[field]).length / rows.length;
     assert.ok(
-      rate >= FIELD_GATE,
-      `${field} accuracy ${(rate * 100).toFixed(0)}% < ${FIELD_GATE * 100}%`,
+      rate >= FIELD_GATE[field],
+      `${field} accuracy ${(rate * 100).toFixed(0)}% < ${FIELD_GATE[field] * 100}%`,
     );
   }
 });

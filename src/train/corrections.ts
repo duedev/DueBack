@@ -5,9 +5,10 @@ import type { Receipt, BBox, OcrLine } from "../types.ts";
 // The improvement loop: every human correction made in review is recorded
 // with WHERE the right value actually sits on the receipt (re-located on the
 // stored OCR lines) and what the pipeline believed beforehand. The log is a
-// labeled dataset over the user's own receipts — download it, pair it with
-// the images ZIP by receiptId/fileName, and tune the rules (or train a
-// model) against real failures instead of guesses.
+// labeled dataset over the user's own receipts — download it (the tuning
+// bundle in bundle.ts packs it with every receipt's extraction and its
+// original + annotated images, keyed by receiptId/fileName) and tune the
+// rules (or train a model) against real failures instead of guesses.
 
 export interface CorrectionRecord {
   ts: number;

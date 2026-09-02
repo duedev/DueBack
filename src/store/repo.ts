@@ -6,30 +6,27 @@ import type {
   StoredBlob,
   StoredBrand,
   ReceiptStatus,
-  Category,
 } from "../types.ts";
 import { uid } from "../util/id.ts";
+import { normalizeCategory } from "../config/categories.ts";
 import {
   appendPendingDelete,
+  OWNER_KEY,
   PENDING_DELETES_KEY,
   type PendingDelete,
   type SyncTable,
 } from "./syncMerge.ts";
 
-// Categories renamed since older data was stored (locally or in Supabase).
-// Normalized on every read so legacy receipts keep working untouched.
-const LEGACY_CATEGORIES: Record<string, Category> = {
-  "Meals & Entertainment": "Meals",
-};
-
+// Categories renamed since older data was stored are normalized on every
+// read (config/categories.ts LEGACY_CATEGORIES, Node-tested there).
 function normalizeReceipt(r: Receipt): Receipt {
-  const mapped = LEGACY_CATEGORIES[r.category?.value as string];
-  return mapped ? { ...r, category: { ...r.category, value: mapped } } : r;
+  const mapped = normalizeCategory(r.category?.value as string);
+  return mapped !== r.category?.value ? { ...r, category: { ...r.category, value: mapped } } : r;
 }
 
 function normalizeBrand(b: StoredBrand): StoredBrand {
-  const mapped = LEGACY_CATEGORIES[b.category as string];
-  return mapped ? { ...b, category: mapped } : b;
+  const mapped = normalizeCategory(b.category as string);
+  return mapped !== b.category ? { ...b, category: mapped } : b;
 }
 
 // Repository over the local stores. This is the one place that reads/writes the
@@ -39,6 +36,13 @@ function normalizeBrand(b: StoredBrand): StoredBrand {
 // drop in behind the same method shapes.
 
 type Listener = () => void;
+
+/** A lock older than this is a dead run. The queue heartbeats a running
+ *  job every 20 s, so a live job never looks more than ~20 s stale; 90 s is
+ *  four missed beats. It used to be 5 minutes (chosen before the heartbeat
+ *  existed), and after a reload mid-batch the in-flight receipts sat at
+ *  "Reading…" for five minutes — with nothing re-waking the pool even then. */
+export const STALE_LOCK_MS = 90_000;
 
 class Repo {
   private listeners = new Set<Listener>();
@@ -102,10 +106,12 @@ class Repo {
   }
 
   async updateBatch(id: string, patch: Partial<Batch>): Promise<void> {
-    const cur = await this.getBatch(id);
-    if (!cur) return;
-    await (await db()).put("batches", { ...cur, ...patch, updatedAt: Date.now() });
-    this.notify();
+    const conn = await db();
+    const tx = conn.transaction("batches", "readwrite");
+    const cur = await tx.store.get(id);
+    if (cur) await tx.store.put({ ...cur, ...patch, updatedAt: Date.now() });
+    await tx.done;
+    if (cur) this.notify();
   }
 
   async listBatches(): Promise<Batch[]> {
@@ -125,11 +131,31 @@ class Repo {
     return r ? normalizeReceipt(r) : undefined;
   }
 
-  async updateReceipt(id: string, patch: Partial<Receipt>): Promise<Receipt | undefined> {
-    const cur = await this.getReceipt(id);
-    if (!cur) return undefined;
-    const next: Receipt = { ...cur, ...patch, updatedAt: Date.now() };
-    await (await db()).put("receipts", next);
+  /** Read-modify-write in ONE transaction (no non-IDB await between the get
+   *  and the put, or the transaction auto-commits — the rule touchJob
+   *  follows). With `expect`, the write lands only while the stored
+   *  `updatedAt` still matches and returns null otherwise: the pipeline's
+   *  completion write uses it so a review save that slips between its
+   *  re-read and its put is never overwritten. */
+  async updateReceipt(
+    id: string,
+    patch: Partial<Receipt>,
+    expect?: { updatedAt: number },
+  ): Promise<Receipt | undefined | null> {
+    const conn = await db();
+    const tx = conn.transaction("receipts", "readwrite");
+    const cur = await tx.store.get(id);
+    if (!cur) {
+      await tx.done;
+      return undefined;
+    }
+    if (expect && cur.updatedAt !== expect.updatedAt) {
+      await tx.done;
+      return null;
+    }
+    const next: Receipt = { ...normalizeReceipt(cur), ...patch, updatedAt: Date.now() };
+    await tx.store.put(next);
+    await tx.done;
     this.notify();
     return next;
   }
@@ -144,19 +170,58 @@ class Repo {
     return all.map(normalizeReceipt);
   }
 
+  /** Store a new receipt — its original bytes, the row and its job — in ONE
+   *  transaction: a quota error mid-way used to leave an orphaned blob or a
+   *  "Queued" card with no job behind it, and the card now first renders
+   *  with its image already present. */
+  async addReceipt(receipt: Receipt, original: Blob): Promise<void> {
+    const conn = await db();
+    const tx = conn.transaction(["blobs", "receipts", "jobs"], "readwrite");
+    const job: Job = {
+      id: uid("job"),
+      receiptId: receipt.id,
+      attempts: 0,
+      lockedAt: null,
+      createdAt: receipt.createdAt,
+    };
+    await Promise.all([
+      tx.objectStore("blobs").put({
+        key: receipt.fileKey,
+        blob: original,
+        kind: "original",
+        createdAt: receipt.createdAt,
+      }),
+      tx.objectStore("receipts").put(receipt),
+      tx.objectStore("jobs").put(job),
+    ]);
+    await tx.done;
+    this.notify();
+  }
+
+  /** Row, blobs and any pending job go in ONE transaction; the sync
+   *  tombstone (kv) is recorded after the commit, as before. */
   async deleteReceipt(id: string): Promise<void> {
-    const r = await this.getReceipt(id);
+    const conn = await db();
+    const tx = conn.transaction(["blobs", "receipts", "jobs"], "readwrite");
+    const r = await tx.objectStore("receipts").get(id);
     const blobKeys = r
       ? [r.fileKey, r.cleanedKey, r.annotatedKey].filter((k): k is string => !!k)
       : [];
-    for (const key of blobKeys) await this.deleteBlob(key).catch(() => {});
-    const conn = await db();
-    await conn.delete("receipts", id);
-    // Drop any pending job too.
-    const jobs = await conn.getAllFromIndex("jobs", "byReceipt", id);
-    await Promise.all(jobs.map((j) => conn.delete("jobs", j.id)));
+    const jobKeys = await tx.objectStore("jobs").index("byReceipt").getAllKeys(id);
+    await Promise.all([
+      ...blobKeys.map((k) => tx.objectStore("blobs").delete(k)),
+      tx.objectStore("receipts").delete(id),
+      ...jobKeys.map((k) => tx.objectStore("jobs").delete(k)),
+    ]);
+    await tx.done;
     await this.recordPendingDelete("receipts", id, blobKeys);
     this.notify();
+  }
+
+  /** Receipt ids with a job in THIS browser's work-list — the board's way
+   *  of telling "reading here" from "another device is reading it". */
+  async listJobReceiptIds(): Promise<string[]> {
+    return (await (await db()).getAll("jobs")).map((j) => j.receiptId);
   }
 
   async countByStatus(batchId: string): Promise<Record<ReceiptStatus, number>> {
@@ -175,30 +240,37 @@ class Repo {
   // ---- Jobs (the cheap work-list) --------------------------------------
 
   async enqueue(receiptId: string): Promise<Job> {
-    const job: Job = { id: uid("job"), receiptId, attempts: 0, lockedAt: null };
+    const job: Job = {
+      id: uid("job"),
+      receiptId,
+      attempts: 0,
+      lockedAt: null,
+      createdAt: Date.now(),
+    };
     await (await db()).put("jobs", job);
     return job;
   }
 
-  /** Atomically claim the oldest unlocked job, if any. The stale window is
-   *  generous because a healthy run routinely exceeds a minute (serialized
-   *  OCR, binarize rescue, first-use model downloads); the queue heartbeats
-   *  `touchJob` while a job runs, so only a genuinely dead run goes stale. */
-  async claimNextJob(staleLockMs = 300_000): Promise<Job | null> {
+  /** Atomically claim the oldest unlocked job (by `createdAt` — upload
+   *  order), if any. The stale window is generous because a healthy run
+   *  routinely exceeds a minute (serialized OCR, binarize rescue, first-use
+   *  model downloads); the queue heartbeats `touchJob` while a job runs, so
+   *  only a genuinely dead run goes stale. The jobs table is tiny (one row
+   *  per unprocessed receipt), so a full scan per claim is fine. */
+  async claimNextJob(staleLockMs = STALE_LOCK_MS): Promise<Job | null> {
     const conn = await db();
     const tx = conn.transaction("jobs", "readwrite");
-    let claimed: Job | null = null;
-    let cursor = await tx.store.openCursor();
     const now = Date.now();
-    while (cursor) {
-      const job = cursor.value;
+    let oldest: Job | null = null;
+    for (const job of await tx.store.getAll()) {
       const available = job.lockedAt === null || now - job.lockedAt > staleLockMs;
-      if (available) {
-        claimed = { ...job, lockedAt: now, attempts: job.attempts + 1 };
-        await cursor.update(claimed);
-        break;
-      }
-      cursor = await cursor.continue();
+      if (!available) continue;
+      if (!oldest || (job.createdAt ?? 0) < (oldest.createdAt ?? 0)) oldest = job;
+    }
+    let claimed: Job | null = null;
+    if (oldest) {
+      claimed = { ...oldest, lockedAt: now, attempts: oldest.attempts + 1 };
+      await tx.store.put(claimed);
     }
     await tx.done;
     return claimed;
@@ -266,6 +338,28 @@ class Repo {
       PENDING_DELETES_KEY,
       appendPendingDelete(list, { table, id, blobKeys, at: Date.now() }),
     );
+  }
+
+  /** Clear this device's stores outright: batches, receipts, jobs, blobs,
+   *  taught brands, the pending-delete log and the owner mark. NOT through
+   *  deleteReceipt/deleteBrand — those queue tombstones, and these rows may
+   *  belong to another account (the foreign-owner sync block is the reason
+   *  this exists). Settings and preferences in kv survive. */
+  async wipeLocalData(): Promise<void> {
+    const conn = await db();
+    const stores = ["batches", "receipts", "jobs", "blobs", "brands", "kv"] as const;
+    const tx = conn.transaction(stores, "readwrite");
+    await Promise.all([
+      tx.objectStore("batches").clear(),
+      tx.objectStore("receipts").clear(),
+      tx.objectStore("jobs").clear(),
+      tx.objectStore("blobs").clear(),
+      tx.objectStore("brands").clear(),
+      tx.objectStore("kv").delete(PENDING_DELETES_KEY),
+      tx.objectStore("kv").delete(OWNER_KEY),
+    ]);
+    await tx.done;
+    this.notify();
   }
 
   // ---- Settings (small key/value) ---------------------------------------

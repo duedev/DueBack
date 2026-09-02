@@ -103,3 +103,84 @@ export function chooseAdoptionBatch(
   }
   return best?.id ?? null;
 }
+
+/** PostgREST caps a select at 1000 rows by default; an unpaginated pull
+ *  silently dropped everything past that once receipts — tombstones
+ *  included — accumulated, so a fresh device missed live rows. */
+export const PULL_PAGE = 1000;
+
+/** Page through a query until an EMPTY page arrives. `page(from, to)` runs
+ *  one `.range(from, to)` select over a STABLE ordering. The walk advances
+ *  by the rows actually returned and stops only on an empty page: a server
+ *  whose row cap is lower than `pageSize` (PostgREST `max-rows` is a
+ *  deployment setting) returns "short" pages that are not the end, and
+ *  stopping on the first of them silently dropped the rest. One extra,
+ *  empty request per table is the price. */
+export async function fetchAll<T>(
+  page: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  label: string,
+  pageSize = PULL_PAGE,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; ) {
+    const { data, error } = await page(from, from + pageSize - 1);
+    if (error) throw new Error(`${label} pull: ${error.message}`);
+    const rows = data ?? [];
+    if (rows.length === 0) return out;
+    out.push(...rows);
+    from += rows.length;
+  }
+}
+
+/** kv key (per account): the newest `updatedAt` this device has pushed. A
+ *  push used to upsert EVERY batch/receipt/brand row with its full payload
+ *  on every 1.5 s debounce tick while a batch processed — tens of MB of
+ *  uploads for a 200-receipt run. */
+export function lastPushKey(userId: string): string {
+  return `sync.lastPushAt.${userId}`;
+}
+
+/** The rows a push must carry: everything stamped at or after `since`
+ *  (`>=`, not `>`: a row edited in the same millisecond as the previous
+ *  push's newest row would otherwise be skipped; re-upserting is
+ *  idempotent under the LWW guard). `since` 0 = push everything (a fresh
+ *  sign-in). */
+export function changedSince<T extends { updatedAt: number }>(rows: readonly T[], since: number): T[] {
+  return rows.filter((r) => r.updatedAt >= since);
+}
+
+/** kv key: the account whose data this device's local store holds. Written
+ *  after the first successful push of a sign-in; cleared by a local wipe. */
+export const OWNER_KEY = "sync.ownerUserId";
+
+export type OwnerDecision = "adopt" | "continue" | "foreign";
+
+/** May `userId` sync this device's local store? "adopt": no owner recorded
+ *  (anonymous local data, a pre-owner install) or nothing local at all —
+ *  the sign-in claims it, which is the legitimate anonymous→account path.
+ *  "continue": same owner. "foreign": another account's data is still on
+ *  this device (a shared laptop where A signed out and B signed in) — the
+ *  engine fails closed rather than push A's receipts into B's workspace and
+ *  pull B's onto the board A left behind. */
+export function ownerDecision(
+  storedOwner: string | undefined,
+  userId: string,
+  hasLocalData: boolean,
+): OwnerDecision {
+  if (!storedOwner || !hasLocalData) return "adopt";
+  return storedOwner === userId ? "continue" : "foreign";
+}
+
+/** Whether a tombstone UPDATE actually landed. The lww_guard trigger keeps a
+ *  row a NEWER remote edit revived and returns it with deleted_at still null;
+ *  a never-pushed row returns nothing. Only a landed tombstone may take the
+ *  row's storage objects with it — removing them otherwise left a live,
+ *  revived receipt without its images on every device. */
+export function tombstoneLanded(
+  rows: readonly { deleted_at: string | null }[] | null | undefined,
+): boolean {
+  return (rows ?? []).some((r) => r.deleted_at != null);
+}

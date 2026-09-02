@@ -1,6 +1,8 @@
 <script lang="ts">
   import { app } from "./state.svelte.ts";
   import { repo } from "../store/repo.ts";
+  import { displayCategory, exportableReceipts, reportOrder } from "../export/order.ts";
+  import { employeeFilePart } from "../util/rename.ts";
   import { formatMoney, safeAmount } from "../util/money.ts";
   import { perDiemAmount, safePerDiemDays } from "../util/perdiem.ts";
   import {
@@ -40,12 +42,23 @@
   /** Year shown by the month picker — step freely, any year works. */
   let phYear = $state(new Date().getFullYear());
   let seededBatch: string | null = null;
+  /** The batch version the form was seeded from. A remote edit (sync
+   *  realtime, a pull) lands with a newer updatedAt and must re-seed — the
+   *  bar used to keep the stale copy and write it back over the other
+   *  device's employee/job on the next save. This device's own saves stamp
+   *  seededAt so they never re-seed. */
+  let seededAt = 0;
+  let barEl = $state<HTMLElement | null>(null);
   let building = $state(false);
 
   $effect(() => {
     const b = app.batch;
-    if (!b || b.id === seededBatch) return;
+    if (!b || (b.id === seededBatch && b.updatedAt <= seededAt)) return;
+    // Mid-edit: keep the human's form. seededAt stays put, so the next
+    // notify retries once focus has left the bar.
+    if (b.id === seededBatch && barEl?.contains(document.activeElement)) return;
     seededBatch = b.id;
+    seededAt = b.updatedAt;
     employee = b.employee;
     jobName = b.jobName;
     jobNumber = b.jobNumber;
@@ -84,14 +97,30 @@
   }
 
   async function saveMeta(): Promise<void> {
-    if (!app.batch) return;
-    await repo.updateBatch(app.batch.id, {
+    const b = app.batch;
+    if (!b) return;
+    const next = {
       employee,
       jobName,
       jobNumber,
       perDiem: currentPerDiem(),
       phoneService: currentPhoneService(),
-    });
+    };
+    // Nothing changed → no write: Preview/Generate used to bump updatedAt
+    // (and push a no-op row) on every click.
+    if (
+      b.employee === next.employee &&
+      b.jobName === next.jobName &&
+      b.jobNumber === next.jobNumber &&
+      JSON.stringify(b.perDiem ?? null) === JSON.stringify(next.perDiem) &&
+      JSON.stringify(b.phoneService ?? null) === JSON.stringify(next.phoneService)
+    ) {
+      return;
+    }
+    await repo.updateBatch(b.id, next);
+    // updateBatch stamps Date.now() before its await resolves: our own
+    // write is never newer than this, so it can't re-seed the form.
+    seededAt = Date.now();
   }
 
   // ---- Saved jobs: name ⇄ number always travel as a pair ------------------
@@ -171,8 +200,8 @@
   /** Letter-size PDF of the receipt images — what actually goes to the
    *  office printer. Receipts whose vendor/date/total boxes are all known
    *  (including hand-drawn ones) are cropped to that strip, so several fit
-   *  a page; each image carries its own job caption because a batch can
-   *  serve more than one job. */
+   *  a page; each image carries the batch's job caption (stamped per image,
+   *  so a batch may span jobs later without a layout change). */
   async function buildPrintPacket(): Promise<Blob | null> {
     const { buildPrintPdf, receiptStrip } = await import("../export/printPdf.ts");
     const { thumbnail, stripThumbnail } = await import("../export/images.ts");
@@ -180,32 +209,51 @@
       .filter(Boolean)
       .join(" ");
     const imgs: import("../export/printPdf.ts").PrintImage[] = [];
-    for (const r of exportable) {
-      const blob = await repo.getBlob(r.annotatedKey ?? r.cleanedKey ?? r.fileKey);
-      if (!blob) continue;
-      const strip = receiptStrip([r.vendor.bbox, r.date.bbox, r.amount.bbox]);
-      const t = strip
-        ? await stripThumbnail(blob, strip.y0, strip.y1, 1400, 0.8)
-        : await thumbnail(blob, 1400, 0.8);
-      imgs.push({
-        jpeg: new Uint8Array(t.buffer),
-        width: t.width,
-        height: t.height,
-        name: r.fileName,
-        amount: formatMoney(safeAmount(r.amount.value)),
-        ...(jobLabel ? { job: jobLabel } : {}),
-      });
+    // The workbook's own order and numbering (export/order.ts: category
+    // sections in taxonomy order, receipts by date then intake, "#n" within
+    // the section), so the paper packet reads alongside the Summary.
+    let skipped = 0;
+    for (const g of reportOrder(app.receipts)) {
+      for (const [i, r] of g.rows.entries()) {
+        // Per receipt, like the workbook's image loop: one receipt whose
+        // image is missing (a failed sync download) or won't decode must
+        // not sink the whole packet — or vanish from it silently.
+        try {
+          const blob = await repo.getBlob(r.annotatedKey ?? r.cleanedKey ?? r.fileKey);
+          if (!blob) {
+            skipped++;
+            continue;
+          }
+          const strip = receiptStrip([r.vendor.bbox, r.date.bbox, r.amount.bbox]);
+          const t = strip
+            ? await stripThumbnail(blob, strip.y0, strip.y1, 1400, 0.8)
+            : await thumbnail(blob, 1400, 0.8);
+          imgs.push({
+            jpeg: new Uint8Array(t.buffer),
+            width: t.width,
+            height: t.height,
+            label: `${displayCategory(g.cat)} #${i + 1}`,
+            name: r.fileName,
+            amount: formatMoney(safeAmount(r.amount.value)),
+            ...(jobLabel ? { job: jobLabel } : {}),
+          });
+        } catch {
+          skipped++;
+        }
+      }
+    }
+    if (skipped > 0) {
+      app.toast(
+        `Print packet skipped ${skipped} receipt${skipped === 1 ? "" : "s"} without a readable image.`,
+        "warn",
+      );
     }
     if (imgs.length === 0) return null;
-    const bytes = buildPrintPdf(imgs, { employee, jobName, jobNumber });
+    const bytes = buildPrintPdf(imgs, { employee });
     return new Blob([bytes.buffer as ArrayBuffer], { type: "application/pdf" });
   }
 
-  const exportable = $derived(
-    app.receipts.filter(
-      (r) => r.status !== "failed" && safeAmount(r.amount.value) > 0,
-    ),
-  );
+  const exportable = $derived(exportableReceipts(app.receipts));
   const flagged = $derived(
     app.receipts.filter((r) => r.reviewRequired && !r.approved),
   );
@@ -228,7 +276,7 @@
     try {
       const { buildZip } = await import("../export/zip.ts");
       const { thumbnail } = await import("../export/images.ts");
-      const entries: { name: string; data: Uint8Array }[] = [];
+      const entries: import("../export/zip.ts").ZipEntry[] = [];
       const used = new Set<string>();
       for (const r of exportable) {
         const blob = await repo.getBlob(r.annotatedKey ?? r.cleanedKey ?? r.fileKey);
@@ -239,14 +287,14 @@
         let name = `${base}.jpg`;
         for (let i = 2; used.has(name); i++) name = `${base}_${i}.jpg`;
         used.add(name);
-        entries.push({ name, data: new Uint8Array(t.buffer) });
+        entries.push({ name, data: new Uint8Array(t.buffer), compress: false }); // JPEG never shrinks
       }
       if (entries.length === 0) {
         app.toast("No receipt images to package.", "warn");
         return;
       }
       const zip = await buildZip(entries);
-      const employee = (app.batch.employee || "Employee").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_");
+      const employee = employeeFilePart(app.batch.employee);
       const now = new Date();
       // Local date, matching the workbook's filename stamp (UTC drifted a day).
       const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
@@ -309,7 +357,7 @@
           });
         }
         const zip = await buildZip(entries);
-        const who = (employee || "Employee").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_") || "Employee";
+        const who = employeeFilePart(employee);
         const now = new Date();
         const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
         download(zip, `Report_${who}_${stamp}.zip`);
@@ -350,6 +398,39 @@
     if (proceed) void doGenerate();
   }
 
+  // Focus management for the confirm (role=dialog + aria-modal promise it):
+  // focus moves into the dialog on open, Escape cancels, Tab cycles its two
+  // buttons instead of walking the page behind the scrim, and focus returns
+  // to the Generate button on close.
+  let confirmEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    const el = confirmEl;
+    if (!el) return;
+    const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    el.focus();
+    return () => prev?.focus();
+  });
+  function onConfirmKey(e: KeyboardEvent): void {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      confirmBlank(false);
+      return;
+    }
+    if (e.key !== "Tab" || !confirmEl) return;
+    const buttons = Array.from(confirmEl.querySelectorAll<HTMLElement>("button:not([disabled])"));
+    const first = buttons[0];
+    const last = buttons[buttons.length - 1];
+    if (!first || !last) return;
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === confirmEl)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
   // ---- Save to OneDrive (only rendered when the build is configured) ------
   const oneDriveOn = oneDriveConfigured();
   let odSaving = $state(false);
@@ -363,7 +444,25 @@
       await ensureConnected();
       const result = await buildReport();
       const saved = await uploadReport(result.fileName, result.blob);
-      app.toast(`Saved to OneDrive: ${saved.path}`, "ok");
+      // The print packet goes up beside the workbook (two browsable files,
+      // never a ZIP) — the download path ships both, so the cloud path
+      // should not silently leave the paper half behind. Seconds after
+      // ensureConnected, so the second upload reuses the stored token and
+      // can never need a popup outside the click.
+      let packetNote = "";
+      if (includePrint) {
+        try {
+          const packet = await buildPrintPacket();
+          if (packet) {
+            const { printPdfFileName } = await import("../export/printPdf.ts");
+            await uploadReport(printPdfFileName(employee), packet);
+            packetNote = " (+ print packet)";
+          }
+        } catch {
+          app.toast("Workbook saved; the print packet couldn't be built or uploaded.", "warn");
+        }
+      }
+      app.toast(`Saved to OneDrive: ${saved.path}${packetNote}`, "ok");
     } catch (err) {
       app.toast(
         err instanceof Error ? err.message : "Couldn't save to OneDrive.",
@@ -408,7 +507,7 @@
   }
 </script>
 
-<section class="bar card" aria-label="Report">
+<section class="bar card" aria-label="Report" bind:this={barEl}>
   <div class="meta">
     <div class="f">
       <label for="xb-emp">Employee</label>
@@ -435,7 +534,7 @@
         bind:value={jobNumber}
         oninput={onJobNumber}
         onchange={saveMeta}
-        placeholder="Optional"
+        placeholder="e.g. 24-117"
       />
     </div>
     <div class="jobsave">
@@ -488,7 +587,7 @@
               id="xb-pd-days"
               type="number"
               min="0"
-              step="1"
+              step="0.5"
               inputmode="decimal"
               placeholder="5"
               bind:value={pdDays}
@@ -588,7 +687,8 @@
       <span class="muted small">
         Downloads with the workbook: receipts cropped to their key lines and
         packed onto letter pages, labeled per receipt, sized for legible
-        printing.
+        printing. Your browser may ask once to allow the second download — or
+        pick Bundle below for a single file.
       </span>
     </div>
 
@@ -672,8 +772,16 @@
         if (e.target === e.currentTarget) confirmBlank(false);
       }}
     >
-      <div class="confirm card" role="dialog" aria-modal="true" aria-label="Missing report details">
-        <h4>Some report details are blank</h4>
+      <div
+        class="confirm card"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Missing report details"
+        tabindex="-1"
+        bind:this={confirmEl}
+        onkeydown={onConfirmKey}
+      >
+        <h2>Some report details are blank</h2>
         <p class="muted">
           {blankFields.join(", ")} will show empty in the workbook header.
         </p>
@@ -776,7 +884,7 @@
     gap: 0.6rem;
   }
   .yr-btn {
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--line-control);
     border-radius: 8px;
     background: var(--bg-raised);
     color: var(--ink);
@@ -795,7 +903,7 @@
     gap: 0.35rem;
   }
   .month-chip {
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--line-control);
     border-radius: 999px;
     background: var(--bg-raised);
     color: var(--ink-soft);
@@ -882,8 +990,11 @@
     gap: 0.6rem;
     padding: 1.1rem 1.2rem;
   }
-  .confirm h4 {
+  .confirm h2 {
     margin: 0;
+    font: 650 1.05rem/1.3 var(--font-ui);
+    letter-spacing: 0;
+    text-wrap: auto;
   }
   .confirm p {
     margin: 0;

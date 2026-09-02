@@ -117,3 +117,28 @@ test("the built-in free key backs only the OpenRouter free router", () => {
   assert.equal(effectiveApiKey(cfg({})), "");
   assert.equal(hasBuiltInOpenRouterKey(), false);
 });
+
+// ── Audit round (2026-09) ─────────────────────────────────────────────────────
+import { parseVisionJson as parseVJ } from "../src/pipeline/vision/schema.ts";
+
+test("parseVisionJson survives leaked think-blocks and prose with stray braces", () => {
+  const json = `{"vendor":"Shell","amount":45.2,"date":"2026-03-14","category":"Fuel"}`;
+  assert.deepEqual(parseVJ(`<think>the total {looks} like 45.20</think>\n${json}`), JSON.parse(json));
+  assert.deepEqual(parseVJ(`Sure! Here is {your} receipt: ${json} — done.`), JSON.parse(json));
+  assert.deepEqual(parseVJ("```json\n" + json + "\n```"), JSON.parse(json));
+  assert.deepEqual(parseVJ(`{"a":1} trailing ${json}`), { a: 1 });
+  assert.equal(parseVJ("no json here"), null);
+  assert.equal(parseVJ("[1,2,3]"), null);
+});
+
+import { priceFor } from "../src/pipeline/vision/providers/anthropic.ts";
+
+test("Anthropic pricing resolves dated snapshots and never prices an unknown model at $0", () => {
+  assert.deepEqual(priceFor("claude-haiku-4-5"), { in: 1, out: 5 });
+  assert.deepEqual(priceFor("claude-haiku-4-5-20251001"), { in: 1, out: 5 }); // a dated id a console lists
+  assert.deepEqual(priceFor("claude-sonnet-4-6"), { in: 3, out: 15 });
+  assert.deepEqual(priceFor("claude-sonnet-5"), { in: 2, out: 10 }); // not the 4-6 prefix
+  assert.deepEqual(priceFor("claude-opus-5"), { in: 5, out: 25 });
+  // Unknown → the top rate, so the spend cap engages instead of reading $0.00.
+  assert.deepEqual(priceFor("claude-something-new"), { in: 10, out: 50 });
+});

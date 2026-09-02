@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app } from "./state.svelte.ts";
+  import { app, type ThemePref } from "./state.svelte.ts";
   import { repo } from "../store/repo.ts";
   import { CATEGORIES } from "../config/categories.ts";
   import {
@@ -30,19 +30,41 @@
   let provider = $state<ProviderId>(cfg0.provider);
   let model = $state(cfg0.model);
   let apiKey = $state(cfg0.apiKey);
-  let spendCap = $state(cfg0.spendCapUsd);
+  let spendCap = $state<number | null>(cfg0.spendCapUsd);
   let spent = $state(cfg0.spentUsd);
   let testMsg = $state("");
   let testing = $state(false);
 
+  // The panel used to read the config once at mount and then show — and
+  // write back — stale values: sign-in flips `enabled` on and every assisted
+  // receipt bumps `spent` while the panel is closed. Re-read on each open.
+  $effect(() => {
+    if (!app.settingsOpen) return;
+    const cfg = getVisionConfig();
+    aiEnabled = cfg.enabled;
+    provider = cfg.provider;
+    model = cfg.model;
+    apiKey = cfg.apiKey;
+    spendCap = cfg.spendCapUsd;
+    spent = cfg.spentUsd;
+  });
+
   function saveAi(): void {
+    // An emptied cap field is "unchanged", not "$0 — never assist"; a
+    // negative is clamped; the persisted value is echoed back so an uncap
+    // is visible.
+    const cap =
+      spendCap === null || (spendCap as unknown) === ""
+        ? getVisionConfig().spendCapUsd
+        : Math.max(0, Number(spendCap) || 0);
     const next = saveVisionConfig({
       enabled: aiEnabled,
       provider,
       model,
       apiKey: apiKey.trim(),
-      spendCapUsd: Number(spendCap) || 0,
+      spendCapUsd: cap,
     });
+    spendCap = next.spendCapUsd;
     spent = next.spentUsd;
   }
 
@@ -108,7 +130,10 @@
       const bundle = await buildTuningBundle($state.snapshot(app.receipts) as Receipt[]);
       downloadBundle(bundle);
       app.toast(
-        `Tuning bundle packaged: ${bundle.receiptCount} receipts, ${bundle.correctionCount} corrections.`,
+        `Tuning bundle packaged: ${bundle.receiptCount} receipts, ${bundle.correctionCount} corrections.` +
+          (bundle.omittedOriginals > 0
+            ? ` ${bundle.omittedOriginals} originals were left out to keep it under 200 MB.`
+            : ""),
         "ok",
       );
     } catch (err) {
@@ -203,6 +228,17 @@
     else emailSent = true;
   }
 
+  /** The way out of the foreign-owner sync block: another account's data
+   *  is on this device. Wipes the local stores WITHOUT queuing tombstones
+   *  (those rows were never this account's) and starts sync over. */
+  async function resetLocalCopy(): Promise<void> {
+    const ok = confirm(
+      "Remove every receipt, batch and taught brand stored on this device? Your own cloud workspace is not touched — this device will sync it afresh.",
+    );
+    if (!ok) return;
+    await app.resetLocalCopy();
+  }
+
   function close(): void {
     app.settingsOpen = false;
   }
@@ -266,15 +302,36 @@
       onkeydown={trapTab}
     >
       <header class="p-head">
-        <strong>Settings</strong>
+        <h2 class="p-title">Settings</h2>
         <span class="spacer"></span>
         <button class="btn btn-ghost btn-sm" onclick={close}>Close ✕</button>
       </header>
 
       <div class="p-body">
+        <!-- ============== appearance ============== -->
+        <section>
+          <h3>Appearance</h3>
+          <!-- The header button only flips light/dark; "Match system" is
+               reachable here (it used to be unreachable once toggled). -->
+          <div class="theme-row" role="radiogroup" aria-label="Theme">
+            {#each [["auto", "Match system"], ["light", "Light"], ["dark", "Dark"]] as const as [v, label] (v)}
+              <label class="theme-opt">
+                <input
+                  type="radio"
+                  name="theme"
+                  value={v}
+                  checked={app.theme === v}
+                  onchange={() => app.applyTheme(v as ThemePref)}
+                />
+                {label}
+              </label>
+            {/each}
+          </div>
+        </section>
+
         <!-- ============== account & sync ============== -->
         <section>
-          <h4>Account &amp; sync</h4>
+          <h3>Account &amp; sync</h3>
           {#if !app.syncConfigured}
             <p class="muted small">
               Sign-in (Google or email) needs a cloud workspace configured at
@@ -296,6 +353,16 @@
                       : ''}">{app.syncStatus}</span
                 >
               </p>
+              {#if app.syncStatus === "error" && app.syncError}
+                <p class="sync-error small" role="alert">{app.syncError}</p>
+                {#if app.syncForeign}
+                  <p>
+                    <button class="btn btn-sm btn-danger" onclick={() => void resetLocalCopy()}>
+                      Remove this device's local copy
+                    </button>
+                  </p>
+                {/if}
+              {/if}
               <p class="muted small">
                 Batches, receipts and taught brands are mirrored to your own
                 private cloud workspace (row-level security, only you). The AI
@@ -334,7 +401,7 @@
 
         <!-- ============== OneDrive ============== -->
         <section>
-          <h4>OneDrive</h4>
+          <h3>OneDrive</h3>
           {#if !odConfigured}
             <p class="muted small">
               Saving workbooks straight to OneDrive needs a (free) Microsoft
@@ -353,15 +420,17 @@
             </p>
             <p class="muted small">
               "Save to OneDrive" in the report bar uploads the generated
-              workbook to <code>OneDrive / Apps / DueBack</code>. Sign-in
-              tokens stay in this browser; disconnecting forgets them.
+              workbook — and, when the print packet is enabled, the packet
+              PDF beside it — to <code>OneDrive / Apps / DueBack</code>.
+              Sign-in tokens stay in this browser; disconnecting forgets them.
             </p>
             <button class="btn btn-sm" onclick={disconnectOd}>Disconnect</button>
           {:else}
             <p class="muted small">
-              Connect a Microsoft account to save generated workbooks straight
-              to <code>OneDrive / Apps / DueBack</code>. Receipts are still
-              read on this device — only the reports you explicitly save are
+              Connect a Microsoft account to save generated reports (the
+              workbook and its print packet) straight to
+              <code>OneDrive / Apps / DueBack</code>. Receipts are still read
+              on this device — only the reports you explicitly save are
               uploaded.
             </p>
             <button class="btn" onclick={() => void connectOd()} disabled={odBusy}>
@@ -372,7 +441,7 @@
 
         <!-- ============== saved jobs ============== -->
         <section>
-          <h4>Saved jobs</h4>
+          <h3>Saved jobs</h3>
           <p class="muted small">
             Job names and numbers travel as a pair: in the report bar, typing
             (or picking) a saved one autofills the other. Save a pair with the
@@ -401,7 +470,7 @@
 
         <!-- ============== AI assist ============== -->
         <section>
-          <h4>AI assist (for hard receipts)</h4>
+          <h3>AI assist (for hard receipts)</h3>
           <p class="muted small">
             Off = everything stays on this device. On = receipts the on-device
             reader isn't confident about are sent to the model below for a
@@ -460,14 +529,15 @@
               <button class="btn btn-sm" onclick={testConnection} disabled={testing}>
                 {testing ? "Testing…" : "Test connection"}
               </button>
-              {#if testMsg}<span class="muted small">{testMsg}</span>{/if}
+              <!-- Always present so its insertion is announced. -->
+              <span class="muted small" role="status" aria-live="polite">{testMsg}</span>
             </div>
           {/if}
         </section>
 
         <!-- ============== teach a brand ============== -->
         <section>
-          <h4>Teach a brand (logo recognition)</h4>
+          <h3>Teach a brand (logo recognition)</h3>
           <p class="muted small">
             When a merchant prints its name only as a logo, the text reader
             can't spell it. Upload one clear image of the logo and the app will
@@ -517,12 +587,13 @@
 
         <!-- ============== improvement log ============== -->
         <section>
-          <h4>Improvement log</h4>
+          <h3>Improvement log</h3>
           <p class="muted small">
             Every correction you make in review is recorded with where the
             right value sits on the receipt and what the reader believed
-            beforehand. Download it (and the images ZIP) to tune extraction
-            against your real receipts. Stays on this device.
+            beforehand. Download the tuning bundle below — the log plus every
+            receipt's extraction and images — to tune extraction against your
+            real receipts. Stays on this device.
           </p>
           <div class="test-row">
             <span class="chip">{correctionCount} corrections</span>
@@ -548,6 +619,21 @@
 {/if}
 
 <style>
+  .theme-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  .theme-opt {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+  }
+  .sync-error {
+    color: var(--err);
+    margin: 0.25rem 0 0.5rem;
+  }
   .scrim {
     position: fixed;
     inset: 0;
@@ -586,10 +672,21 @@
     gap: 0.6rem;
     align-content: start;
   }
-  section h4 {
+  .p-title {
+    margin: 0;
+    font: 600 1rem/1.2 var(--font-ui);
+    letter-spacing: 0;
+    text-wrap: auto;
+  }
+  /* h3s (they were h4s under no h2/h3 — a heading list that jumped from
+     the page's h1 to level 4); the UI-font look is re-pinned. */
+  section h3 {
     margin: 0;
     padding-bottom: 0.35rem;
     border-bottom: 1px solid var(--line);
+    font: 650 1rem/1.3 var(--font-ui);
+    letter-spacing: 0;
+    text-wrap: auto;
   }
   .small {
     font-size: 0.84rem;

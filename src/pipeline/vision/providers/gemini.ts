@@ -5,7 +5,7 @@ import {
   userInstruction,
   parseVisionJson,
 } from "../schema.ts";
-import { blobToBase64, errorBody, type ProviderInit } from "./shared.ts";
+import { blobToBase64, errorBody, visionFetch, type ProviderInit } from "./shared.ts";
 
 // Google Gemini — a no-card free tier (e.g. gemini-2.5-flash), native vision,
 // and structured output via responseSchema. Browser CORS is supported; the key
@@ -21,10 +21,12 @@ export function createGeminiProvider(init: ProviderInit): VisionProvider {
     async extract(image) {
       const { base64, mediaType } = await blobToBase64(image);
       const baseUrl = init.baseUrl || "https://generativelanguage.googleapis.com/v1beta";
-      const url = `${baseUrl}/models/${init.model}:generateContent?key=${encodeURIComponent(init.apiKey)}`;
-      const res = await fetch(url, {
+      // The key rides the x-goog-api-key header Google's own clients use — a
+      // ?key= query string was logged by proxies, history and HAR exports.
+      const url = `${baseUrl}/models/${init.model}:generateContent`;
+      const res = await visionFetch("Gemini", url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": init.apiKey },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
           contents: [

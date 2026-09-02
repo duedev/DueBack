@@ -5,9 +5,10 @@ import { STATE_PREFIX } from "./core.ts";
 // hand the full callback URL to the opener and stop — booting the whole app
 // (OCR workers, IndexedDB, …) inside a throwaway popup would be waste.
 //
-// The `dueback-od-` state prefix is the discriminator: Supabase magic links
-// also return to the app with a `?code=` query param, and they must keep
-// booting the app normally.
+// The `dueback-od-` state prefix is the discriminator: Supabase's own auth
+// callbacks also return to the app (as `#access_token=…` under the implicit
+// flow, or `?code=` if the client were switched to PKCE), and they must
+// keep booting the app normally.
 
 export const POPUP_MESSAGE_TYPE = "dueback:onedrive:callback";
 
@@ -21,13 +22,26 @@ export function relayOneDriveAuthPopup(): boolean {
   }
   if (!state.startsWith(STATE_PREFIX)) return false;
 
+  // Not the live popup (a history/tab restore, a copied URL): there is no
+  // opener to relay to and the single-use code is stale. Strip the query
+  // BEFORE mount — Supabase's detectSessionInUrl would otherwise try to
+  // exchange Microsoft's ?code= — and boot the app normally.
+  if (!window.opener) {
+    try {
+      history.replaceState(null, "", location.pathname + location.hash);
+    } catch {
+      /* ignore */
+    }
+    return false;
+  }
+
   try {
-    window.opener?.postMessage(
+    window.opener.postMessage(
       { type: POPUP_MESSAGE_TYPE, url: location.href },
       location.origin,
     );
   } catch {
-    /* opener gone — the poller in the opener still reads our location */
+    /* postMessage threw on a live opener — its location poll still reads our URL */
   }
 
   const target = document.getElementById("app");

@@ -1,19 +1,19 @@
 <script lang="ts">
   import { app } from "./state.svelte.ts";
-
-  const isDark = (): boolean =>
-    app.theme === "dark" ||
-    (app.theme === "auto" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches);
 </script>
 
+<!-- State is exposed ONE way (aria-pressed, like the landing's Nerd-mode
+     button) under a fixed label; the action lives in the title. A
+     "Switch to light theme" label plus aria-pressed would read as
+     "Switch to light theme, pressed". -->
 <button
   class="btn btn-ghost theme-btn"
   onclick={() => app.toggleTheme()}
-  aria-label="Toggle light/dark theme"
-  title="Toggle theme"
+  aria-label="Dark theme"
+  aria-pressed={app.isDark}
+  title={app.isDark ? "Switch to light theme" : "Switch to dark theme"}
 >
-  {#if app.theme === "dark" || (app.theme === "auto" && isDark())}
+  {#if app.isDark}
     <!-- sun -->
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
       <circle cx="12" cy="12" r="4.2" />

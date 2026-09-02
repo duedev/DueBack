@@ -13,20 +13,35 @@
   const finished = $derived(app.counts.done + app.counts.needs_review + app.counts.failed);
 
   // ---- Board view + sorting -------------------------------------------------
+  // localStorage throws in a storage-blocked iframe (the Carrd embed) and in
+  // some private modes — every other access in the app is guarded, and an
+  // unguarded one here took the whole workspace down at mount.
+  function readPref(key: string): string | null {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+  function writePref(key: string, value: string): void {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      /* storage blocked — the preference just won't stick */
+    }
+  }
   type BoardView = "grid" | "kanban";
   type SortKey = "added" | "date" | "amount" | "vendor" | "category";
-  let view = $state<BoardView>(
-    (localStorage.getItem("board.view") as BoardView) || "kanban",
-  );
-  const storedSort = localStorage.getItem("board.sort");
+  let view = $state<BoardView>((readPref("board.view") as BoardView) || "kanban");
+  const storedSort = readPref("board.sort");
   let sortKey = $state<SortKey>(
     // "status" was a sort option before the kanban lanes made it redundant.
     // Default: category, then date — receipts group the way the workbook
     // files them, so the board previews the report.
     storedSort && storedSort !== "status" ? (storedSort as SortKey) : "category",
   );
-  $effect(() => localStorage.setItem("board.view", view));
-  $effect(() => localStorage.setItem("board.sort", sortKey));
+  $effect(() => writePref("board.view", view));
+  $effect(() => writePref("board.sort", sortKey));
 
   function compare(a: Receipt, b: Receipt): number {
     switch (sortKey) {
@@ -66,7 +81,7 @@
     new Set(
       (() => {
         try {
-          const raw = localStorage.getItem("board.hiddenCats");
+          const raw = readPref("board.hiddenCats");
           return raw ? (JSON.parse(raw) as string[]) : [];
         } catch {
           return [];
@@ -74,9 +89,7 @@
       })(),
     ),
   );
-  $effect(() =>
-    localStorage.setItem("board.hiddenCats", JSON.stringify([...hiddenCats])),
-  );
+  $effect(() => writePref("board.hiddenCats", JSON.stringify([...hiddenCats])));
   function toggleCat(c: string): void {
     const next = new Set(hiddenCats);
     if (next.has(c)) next.delete(c);
@@ -92,6 +105,13 @@
     }
     return [...m.entries()].map(([cat, items]) => ({ cat, items }));
   });
+  // The chip row must appear whenever a present category is hidden, not only
+  // when there are several: the hidden set persists across batches, so a
+  // single-category batch whose category was hidden last time rendered a
+  // blank grid with nothing to click.
+  const showCatFilter = $derived(
+    catGroups.length > 1 || catGroups.some((g) => hiddenCats.has(g.cat)),
+  );
 
   let cameraInput = $state<HTMLInputElement | null>(null);
 
@@ -115,7 +135,9 @@
         <BrandLogo size={28} />
       </button>
       {#if total > 0}
-        <div class="progress" aria-label="Processing progress">
+        <!-- role=status: aria-label is not permitted on a plain div, and a
+             live region lets screen readers hear the count advance. -->
+        <div class="progress" role="status" aria-live="polite" aria-atomic="true">
           <span class="muted">{finished}/{total} processed</span>
           {#if app.counts.needs_review > 0}
             <span class="chip chip-warn">{app.counts.needs_review} to review</span>
@@ -124,7 +146,19 @@
       {/if}
       <div class="head-actions">
         {#if app.userEmail}
-          <span class="chip chip-ok" title="Synced to your cloud workspace">☁ synced</span>
+          {#if app.syncStatus === "error"}
+            <!-- The chip used to say "synced" whatever the engine's state;
+                 an error is the one state the user must act on. -->
+            <button
+              class="chip chip-err chip-btn"
+              title={app.syncError || "Sync error — open Settings"}
+              onclick={() => (app.settingsOpen = true)}
+            >☁ sync error</button>
+          {:else if app.syncStatus === "syncing"}
+            <span class="chip" title="Syncing with your cloud workspace">☁ syncing…</span>
+          {:else}
+            <span class="chip chip-ok" title="Synced to your cloud workspace">☁ synced</span>
+          {/if}
         {/if}
         {#if total > 0}
           <button
@@ -156,11 +190,15 @@
   </header>
 
   <main class="wrap ws-main">
+    <!-- The board had no heading at all once receipts existed: a screen
+         reader's heading list was empty. Text must not match /Receipts in/
+         (both test suites key on the landing's h1). -->
+    <h1 class="sr-only">DueBack — your receipts</h1>
     <Dropzone compact={total > 0} />
 
     {#if total === 0}
       <div class="empty">
-        <h3>No receipts yet</h3>
+        <h2>No receipts yet</h2>
         <p class="muted">
           Add a few receipts above; they'll appear here as they're read, and
           anything uncertain gets flagged for a quick review.
@@ -186,7 +224,7 @@
       </div>
 
       {#if view === "grid"}
-        {#if catGroups.length > 1}
+        {#if showCatFilter}
           <div class="cat-filter" role="group" aria-label="Categories shown">
             {#each catGroups as g (g.cat)}
               <button
@@ -201,12 +239,20 @@
             {/each}
           </div>
         {/if}
+        {#if catGroups.length > 0 && catGroups.every((g) => hiddenCats.has(g.cat))}
+          <!-- The hidden set persists across batches, so a board can open
+               with every one of its categories struck through. -->
+          <p class="muted small all-hidden">
+            Every category on this board is hidden.
+            <button class="btn btn-ghost btn-sm" onclick={() => (hiddenCats = new Set())}>Show all</button>
+          </p>
+        {/if}
         {#each catGroups as g (g.cat)}
           {#if !hiddenCats.has(g.cat)}
             <section class="cat-group">
               {#if catGroups.length > 1}
                 <header class="cat-head">
-                  <span>{g.cat}</span>
+                  <h2>{g.cat}</h2>
                   <span class="lane-count">{g.items.length}</span>
                 </header>
               {/if}
@@ -223,8 +269,15 @@
           {#each lanes as lane (lane.key)}
             <section class="lane lane-{lane.key}">
               <header class="lane-head">
-                <span>{lane.label}</span>
+                <h2>{lane.label}</h2>
                 <span class="lane-count">{lane.items.length}</span>
+                {#if lane.key === "failed"}
+                  <button
+                    class="btn btn-ghost btn-sm lane-action"
+                    onclick={() => void app.retryFailed()}
+                    title="Read every failed receipt again"
+                  >↻ Retry all</button>
+                {/if}
               </header>
               <div class="lane-cards">
                 {#each lane.items as r (r.id)}
@@ -364,8 +417,10 @@
   .camera-fab {
     display: none;
     position: fixed;
-    right: 1.1rem;
-    bottom: 1.3rem;
+    /* Clear the home indicator / rounded corners in a standalone install
+       (same idiom as Toasts): 1.3rem sat inside the 34pt bottom inset. */
+    right: max(1.1rem, calc(env(safe-area-inset-right, 0px) + 0.6rem));
+    bottom: max(1.3rem, calc(env(safe-area-inset-bottom, 0px) + 0.6rem));
     z-index: 45;
     width: 3.6rem;
     height: 3.6rem;
@@ -383,6 +438,15 @@
     .camera-fab {
       display: grid;
       place-items: center;
+    }
+    /* 13.6px focused a zoom on iOS; the bar wraps, so 16px fits at 390px. */
+    .sort select {
+      font-size: 1rem;
+    }
+    /* The last card (and its right-aligned amount) clears the FAB at the
+       end of the scroll. */
+    .ws-main {
+      padding-bottom: calc(3rem + 3.6rem + env(safe-area-inset-bottom, 0px));
     }
   }
 
@@ -415,6 +479,8 @@
   }
   /* .seg's overflow:hidden clips the global focus ring — draw it inset. */
   .seg-btn:focus-visible {
+    outline: 2px solid transparent; /* painted by forced colors; negative offset keeps it inside the clip */
+    outline-offset: -4px;
     box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 4px var(--accent);
   }
   .sort {
@@ -425,7 +491,7 @@
   .sort select {
     padding: 0.4rem 0.55rem;
     border-radius: 8px;
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--line-control);
     background: var(--bg-raised);
     color: var(--ink);
     font: 500 0.85rem/1.2 var(--font-ui);
@@ -492,8 +558,34 @@
     color: var(--ink-soft);
     padding: 0.25rem 0.3rem 0.6rem;
   }
+  /* Real headings for the heading list; the eyebrow look is re-pinned
+     because theme.css gives h2 Lora, a margin and balanced wrapping. */
+  .lane-head h2,
+  .cat-head h2 {
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: inherit;
+    margin: 0;
+    text-wrap: auto;
+  }
   .lane-review .lane-head { color: var(--gold-text); }
   .lane-failed .lane-head { color: var(--err); }
+  .all-hidden {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.5rem 0;
+  }
+  .lane-action {
+    margin-left: auto;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.75rem;
+  }
+  .chip-btn {
+    cursor: pointer;
+    font-family: inherit;
+  }
   .lane-count {
     background: var(--line);
     color: var(--ink);

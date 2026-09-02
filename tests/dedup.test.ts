@@ -33,3 +33,15 @@ test("does not match itself or genuinely different receipts", () => {
     null,
   );
 });
+
+// ── Audit round (2026-09) ─────────────────────────────────────────────────────
+import { semanticKey as semKey } from "../src/pipeline/dedup.ts";
+
+test("a receipt missing its vendor or its date never keys as a duplicate", () => {
+  assert.equal(semKey({ vendor: "", date: "", amount: 12 }), null);
+  // Vendor-only matched every same-price fill-up on a trip; date-only
+  // matched two different lunches. Both fields, or no key at all.
+  assert.equal(semKey({ vendor: "Shop", date: "", amount: 12 }), null);
+  assert.equal(semKey({ vendor: "", date: "2026-03-14", amount: 12 }), null);
+  assert.equal(semKey({ vendor: "Shop", date: "2026-03-14", amount: 12 }), "shop|2026-03-14|12.00");
+});

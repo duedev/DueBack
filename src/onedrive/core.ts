@@ -125,6 +125,29 @@ interface TokenResponse {
   error_description?: string;
 }
 
+/** The token endpoint answered with a definitive refusal (invalid_grant —
+ *  expired or revoked, a consent problem, …): the grant is DEAD, unlike a
+ *  transport failure or a 5xx, which say nothing about it. */
+export class TokenEndpointError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TokenEndpointError";
+  }
+}
+
+/** Graph answered with an HTTP error; `status` lets callers tell a dead
+ *  token (401) from a consent problem (403) or a transient 5xx without
+ *  parsing the message. */
+export class GraphError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "GraphError";
+  }
+}
+
 /** Map a token-endpoint response to our stored shape. `prev` keeps the
  *  refresh token / account when a refresh response omits them. */
 export function tokensFromResponse(
@@ -133,7 +156,7 @@ export function tokensFromResponse(
   prev?: OneDriveTokens,
 ): OneDriveTokens {
   if (!json.access_token) {
-    throw new Error(
+    throw new TokenEndpointError(
       json.error_description || json.error || "Microsoft sign-in failed.",
     );
   }
@@ -193,7 +216,7 @@ async function graphError(res: Response, fallback: string): Promise<Error> {
   } catch {
     /* non-JSON body */
   }
-  return new Error(`${fallback} (${res.status}${detail ? `: ${detail}` : ""})`);
+  return new GraphError(`${fallback} (${res.status}${detail ? `: ${detail}` : ""})`, res.status);
 }
 
 export interface DriveItem {

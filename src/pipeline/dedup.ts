@@ -2,7 +2,9 @@
 // `_detect_duplicates`. The image-hash dedup in the pipeline only catches a
 // *byte-identical* re-upload; this catches the same receipt photographed twice
 // (different pixels, same data) by keying on vendor + date + amount. A non-zero
-// amount is required — without it there's nothing reliable to match on.
+// amount is required — without it there's nothing reliable to match on — and
+// so is a vendor OR a date: two unreadable receipts that happen to share an
+// amount are not duplicates of each other.
 
 export interface DupRecord {
   /** Stable identity so a record never matches itself. */
@@ -20,6 +22,10 @@ export function semanticKey(r: Pick<DupRecord, "vendor" | "date" | "amount">): s
   if (amount <= 0) return null;
   const vendor = (r.vendor || "").trim().toLowerCase();
   const date = (r.date || "").trim();
+  // Both identity fields are required: a vendor-only key ("shell", $45.20)
+  // matched every same-price fill-up on a trip, and a date-only key matched
+  // two different lunches — real receipts flagged as duplicates.
+  if (!vendor || !date) return null;
   return `${vendor}|${date}|${amount.toFixed(2)}`;
 }
 

@@ -11,10 +11,10 @@ works from a domain root, a GitHub Pages subpath, or inside an iframe.
 
 ```html
 <iframe
-  src="https://YOUR-PAGES-URL/"
+  src="https://dueback.duanehamilton.net/"
   style="width:100%;min-height:100dvh;border:0;border-radius:12px"
   allow="camera"
-  title="Reimbursements F5">
+  title="DueBack">
 </iframe>
 ```
 

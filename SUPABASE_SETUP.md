@@ -41,11 +41,17 @@ logo search. Skip it until you have thousands of taught brands.
 
 ## 3. Auth providers
 
-In **Authentication → Providers**:
-- **Email** (magic links) works out of the box.
-- **Google**: add your OAuth client id/secret. Add your deployed origin (for
-  this deployment `https://dueback.duanehamilton.net`) and any Carrd page that
-  embeds the app to the **redirect URLs**.
+First, in **Authentication → URL Configuration**, set the **Site URL** to
+your deployed origin (for this deployment `https://dueback.duanehamilton.net`)
+and add that origin — plus any Carrd page that embeds the app — to
+**Redirect URLs**. Both Google sign-in and the email magic link return the
+user there (as `#access_token=…`, the implicit flow); a URL that is not on
+the list falls back to the Site URL (default `http://localhost:3000`).
+
+Then, in **Authentication → Providers**:
+- **Email** (magic links): enabled by default; nothing else to configure
+  once the URLs above are set.
+- **Google**: add your OAuth client id/secret.
 
 ## 4. Edge Functions (the server-keyed AI assist)
 
@@ -90,5 +96,11 @@ already forwards `vars.VITE_SUPABASE_URL` / `vars.VITE_SUPABASE_ANON_KEY`).
 - **What syncs:** batches, receipts (full records), taught logo brands, and the
   original/cleaned receipt images (private storage). Reconciliation is
   last-write-wins per record on `updatedAt`.
-- **Privacy:** nothing syncs until a user signs in. Anonymous use never touches
-  the network beyond fetching the app itself (and the OCR/logo models).
+- **Privacy:** nothing syncs until a user signs in. A build with no optional
+  keys makes no network requests beyond fetching the app and the OCR/logo
+  models. Two build-time knobs change that for anonymous users too:
+  `OPENROUTER_API_KEY` bakes in the free AI assist, which sends
+  low-confidence receipts (confidence below 0.8, or no amount found) to
+  OpenRouter unless the user switches it off in Settings → AI assist; and
+  `VITE_CF_ANALYTICS_TOKEN` loads Cloudflare's page-view beacon (page views
+  only, no receipt data).

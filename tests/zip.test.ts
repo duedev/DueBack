@@ -29,3 +29,14 @@ test("buildZip fails loudly past the 65,535-entry ZIP limit", async () => {
   }));
   await assert.rejects(() => buildZip(entries), /Too many files/);
 });
+
+test("compress: false stores the entry verbatim (method 0)", async () => {
+  const data = new Uint8Array(4000).fill(0x41); // deflates to almost nothing
+  const stored = await buildZip([{ name: "a.jpg", data, compress: false }]);
+  const deflated = await buildZip([{ name: "a.jpg", data }]);
+  assert.ok(stored.size > deflated.size, "the stored form is the full payload");
+  const bytes = new Uint8Array(await stored.arrayBuffer());
+  // Local header: signature, version, flags, then the compression method.
+  assert.equal(bytes[8]! | (bytes[9]! << 8), 0, "method 0 = stored");
+  assert.ok(stored.size >= data.length, "payload present in full");
+});

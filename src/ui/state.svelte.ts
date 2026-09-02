@@ -36,14 +36,32 @@ class AppState {
   pendingJobs = $state(0);
   toasts = $state<Toast[]>([]);
   theme = $state<ThemePref>("auto");
+  /** The OS scheme, tracked live — "auto" follows it, and the toggle's icon
+   *  used to go stale when the OS flipped while the page was open. */
+  osDark = $state(false);
+  isDark = $derived(this.theme === "dark" || (this.theme === "auto" && this.osDark));
 
+  /** Receipt ids whose job lives in THIS browser's work-list. A queued or
+   *  processing receipt without one arrived through sync and is being read
+   *  on another device — the card says so instead of "Reading on your
+   *  device…", which nothing here was doing. */
+  localJobIds = $state(new Set<string>());
   /** Receipt currently open in the review modal (id), if any. */
   reviewId = $state<string | null>(null);
   settingsOpen = $state(false);
 
+  /** Boot could not open IndexedDB (a storage-blocked embed, some private
+   *  modes): the landing shows it and every add explains itself with it. */
+  storageError = $state<string | null>(null);
+  /** A new build is installed and waiting; calling this reloads into it. */
+  updateReady = $state<null | (() => void)>(null);
   /** Signed-in Supabase user (null when signed out or sync unconfigured). */
   userEmail = $state<string | null>(null);
   syncStatus = $state<"off" | "syncing" | "idle" | "error">("off");
+  /** The engine's last error message (shown in Settings and on the chip). */
+  syncError = $state("");
+  /** Sync refused because this device's data belongs to another account. */
+  syncForeign = $state(false);
   readonly syncConfigured = syncConfigured();
 
   counts = $derived.by(() => {
@@ -65,8 +83,24 @@ class AppState {
     !this.wentHome && (this.entered || this.receipts.length > 0),
   );
 
-  /** Object URLs for stored blobs, keyed by blob key (revoked on refresh). */
+  /** Object URLs for stored blobs, keyed by blob key. Revoked when the
+   *  receipt that owns them is deleted — they otherwise pinned every
+   *  thumbnail's blob for the life of the tab. */
   private urlCache = new Map<string, string>();
+
+  private revokeBlobUrls(r: Receipt): void {
+    for (const key of [r.fileKey, r.cleanedKey, r.annotatedKey]) {
+      if (!key) continue;
+      const url = this.urlCache.get(key);
+      if (!url) continue;
+      this.urlCache.delete(key);
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
 
   async init(): Promise<void> {
     try {
@@ -75,10 +109,9 @@ class AppState {
       // Storage refused (blocked third-party IndexedDB in an embed, private
       // mode, …): the splash must still clear so the landing page renders.
       console.error("init failed", err);
-      this.toast(
-        "Couldn't open this browser's storage — receipts won't save here.",
-        "err",
-      );
+      this.storageError =
+        "Couldn't open this browser's storage, so receipts can't be saved here. Open dueback.duanehamilton.net directly, or allow site data for it.";
+      this.toast(this.storageError, "err");
     } finally {
       this.booting = false;
     }
@@ -93,6 +126,13 @@ class AppState {
     } catch {
       // storage blocked
     }
+    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      this.osDark = mq.matches;
+      mq.addEventListener("change", (e) => {
+        this.osDark = e.matches;
+      });
+    }
     this.applyTheme(saved ?? "auto");
 
     let batchId = await repo.getSetting<string>(ACTIVE_BATCH_KEY);
@@ -103,7 +143,7 @@ class AppState {
     }
     this.batch = batch;
 
-    repo.subscribe(() => void this.refresh());
+    repo.subscribe(() => this.scheduleRefresh());
     queue.onProgress((remaining) => {
       this.pendingJobs = remaining;
     });
@@ -118,6 +158,8 @@ class AppState {
     if (this.syncConfigured) {
       sync.onStatus((s) => {
         this.syncStatus = s;
+        this.syncError = sync.lastError;
+        this.syncForeign = sync.foreignOwner;
       });
       const boot = await currentUser();
       if (boot) void this.onSignedIn(boot.id, boot.email ?? "");
@@ -140,8 +182,11 @@ class AppState {
       saveVisionConfig({ enabled: true });
       await repo.setSetting("ai.autoEnabledOnSignIn", true);
     }
-    await sync.start(userId);
-    await this.maybeAdoptSyncedBatch();
+    // Adopt a synced batch only when this call actually started the engine
+    // (its initial pull just ran). Auth fires this for every TOKEN_REFRESHED
+    // too — hourly, and on tab focus — and re-running adoption then repointed
+    // an intentionally fresh empty batch at the last non-empty one.
+    if (await sync.start(userId)) await this.maybeAdoptSyncedBatch();
   }
 
   /** A fresh device pins a brand-new empty batch before sync runs, so pulled
@@ -168,9 +213,43 @@ class AppState {
     if (this.receipts.length > 0) this.entered = true;
   }
 
+  /** Coalesce bursts of repo notifications into one board read. Every
+   *  pipeline write, every one of a clear-all's 200 deletes and every synced
+   *  row notified, and each notification re-read and re-deserialized the
+   *  whole batch — O(N²) over a batch run. */
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private scheduleRefresh(): void {
+    if (this.refreshTimer) return;
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      void this.refresh();
+    }, 40);
+  }
+
   async refresh(): Promise<void> {
     if (!this.batch) return;
     this.receipts = await repo.listReceipts(this.batch.id);
+    // Drop object URLs for blobs no receipt on the board references any
+    // more (deleted, re-baked by a review save, replaced by sync) — the
+    // cache only ever grew and pinned every stale Blob for the tab's life.
+    const live = new Set(
+      this.receipts.flatMap((r) =>
+        [r.fileKey, r.cleanedKey, r.annotatedKey].filter((k): k is string => !!k),
+      ),
+    );
+    for (const [key, url] of this.urlCache) {
+      if (live.has(key)) continue;
+      this.urlCache.delete(key);
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        /* already gone */
+      }
+    }
+    // Receipts first, then jobs: a receipt and its job land in one
+    // transaction, so this order can only ever see a job for a receipt
+    // already listed — never a listed receipt whose job is still coming.
+    this.localJobIds = new Set(await repo.listJobReceiptIds());
     const fresh = await repo.getBatch(this.batch.id);
     if (fresh) this.batch = fresh;
   }
@@ -195,6 +274,7 @@ class AppState {
    *  explicit enough and a blocking confirm popup was unwanted friction. */
   async clearAll(): Promise<void> {
     const ids = this.receipts.map((r) => r.id);
+    for (const r of this.receipts) this.revokeBlobUrls(r);
     for (const id of ids) await repo.deleteReceipt(id);
     this.toast(
       ids.length === 0
@@ -204,6 +284,56 @@ class AppState {
           : `Deleted ${ids.length} receipts.`,
       "info",
     );
+  }
+
+  /** Re-queue a failed receipt for a fresh read — the text reader may have
+   *  failed to start, the network may be back. Never touches an approved
+   *  receipt (a human's work outranks a retry) and re-runs the same intake
+   *  path as addFiles, so the pipeline's completion write lands a full
+   *  extraction: the retry's updatedAt precedes the claim. Fields a human
+   *  already edited stay theirs (`touchedBeforeClaim`). */
+  async retryReceipt(id: string): Promise<boolean> {
+    const r = await repo.getReceipt(id);
+    if (!r || r.status !== "failed" || r.approved) return false;
+    await repo.updateReceipt(id, {
+      status: "queued",
+      error: undefined,
+      flags: [],
+      reviewRequired: false,
+    });
+    await repo.enqueue(id);
+    void queue.wake();
+    return true;
+  }
+
+  /** Retry every failed receipt on the board. */
+  async retryFailed(): Promise<void> {
+    let n = 0;
+    for (const r of this.receipts) {
+      if (r.status === "failed" && (await this.retryReceipt(r.id))) n++;
+    }
+    this.toast(
+      n === 0 ? "Nothing to retry." : n === 1 ? "Reading 1 receipt again." : `Reading ${n} receipts again.`,
+      "info",
+    );
+  }
+
+  /** Wipe every receipt, batch, job, blob, taught brand and queued delete on
+   *  THIS device — the way out of the foreign-owner sync block (another
+   *  account's data is here) without pushing tombstones for rows that were
+   *  never this account's. Starts over on a fresh empty batch and, when
+   *  signed in, lets sync adopt it. */
+  async resetLocalCopy(): Promise<void> {
+    for (const r of this.receipts) this.revokeBlobUrls(r);
+    this.reviewId = null;
+    await repo.wipeLocalData();
+    const batch = await repo.createBatch({ employee: "", jobName: "", jobNumber: "" });
+    await repo.setSetting(ACTIVE_BATCH_KEY, batch.id);
+    this.batch = batch;
+    await this.refresh();
+    this.toast("This device's local copy was removed.", "info");
+    const user = await currentUser();
+    if (user && (await sync.start(user.id))) await this.maybeAdoptSyncedBatch();
   }
 
   applyTheme(pref: ThemePref): void {
@@ -232,20 +362,23 @@ class AppState {
     }
   }
 
+  /** The header button flips between light and dark; "auto" (follow the OS)
+   *  is reachable from Settings → Appearance. */
   toggleTheme(): void {
-    const dark =
-      this.theme === "dark" ||
-      (this.theme === "auto" &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches);
-    this.applyTheme(dark ? "light" : "dark");
+    this.applyTheme(this.isDark ? "light" : "dark");
   }
 
   toast(message: string, kind: Toast["kind"] = "info"): void {
     const t: Toast = { id: uid("toast"), message, kind };
-    this.toasts = [...this.toasts, t];
-    setTimeout(() => {
-      this.toasts = this.toasts.filter((x) => x.id !== t.id);
-    }, 4200);
+    // A drop of twenty rejected files used to stack twenty toasts down the
+    // page; keep the newest few. Errors stay long enough to be read.
+    this.toasts = [...this.toasts, t].slice(-5);
+    setTimeout(
+      () => {
+        this.toasts = this.toasts.filter((x) => x.id !== t.id);
+      },
+      kind === "err" ? 8000 : 4200,
+    );
   }
 
   /** Validate, store, and enqueue a set of dropped/picked files. Two inputs
@@ -254,11 +387,36 @@ class AppState {
    *  ZIP becomes one receipt per usable entry, however deeply the archive
    *  nests its folders. Processing only page 1 / ignoring the archive
    *  silently dropped the rest. */
-  async addFiles(files: Iterable<File>): Promise<void> {
-    if (!this.batch) return;
+  addFiles(files: Iterable<File>): Promise<void> {
+    if (!this.batch) {
+      // Boot couldn't open storage; the toast it showed is long gone by the
+      // time the user drops files, so say it again here.
+      this.toast(
+        this.storageError ?? "Storage is unavailable in this browser, so receipts can't be added.",
+        "err",
+      );
+      return Promise.resolve();
+    }
     this.entered = true;
     this.wentHome = false;
-    const existing = this.receipts.length;
+    // Snapshot NOW: a drop hands over the live dataTransfer.files, which
+    // empties once the event is over (the picker's FileList has the same
+    // trap) — iterating it after waiting on an earlier intake lost files.
+    const list = Array.from(files);
+    // Serialized: two overlapping intakes (a drop while a ZIP is still
+    // unpacking) each counted the batch from the same stale board and
+    // together overshot the cap.
+    const run = this.intake.then(() => this.addFilesNow(list));
+    this.intake = run.catch(() => {});
+    return run;
+  }
+
+  private intake: Promise<void> = Promise.resolve();
+
+  private async addFilesNow(files: File[]): Promise<void> {
+    // The store's count, not the reactive array's: the board lags the
+    // async refresh, and the previous intake's receipts may not be in it yet.
+    const existing = (await repo.listReceipts(this.batch!.id)).length;
     let accepted = 0;
     let capped = false;
 
@@ -280,12 +438,11 @@ class AppState {
       mimeType: string,
       originalFileName?: string,
     ): Promise<void> => {
-      const fileKey = await repo.putBlob(blob, "original");
       const now = Date.now();
       const receipt: Receipt = {
         id: uid("rcpt"),
         batchId: this.batch!.id,
-        fileKey,
+        fileKey: uid("blob"),
         fileName,
         originalFileName,
         mimeType,
@@ -305,8 +462,8 @@ class AppState {
         createdAt: now,
         updatedAt: now,
       };
-      await repo.putReceipt(receipt);
-      await repo.enqueue(receipt.id);
+      // Blob, row and job in one transaction — all or nothing.
+      await repo.addReceipt(receipt, blob);
       accepted++;
     };
 
@@ -333,15 +490,28 @@ class AppState {
 
       if (isPdf(file)) {
         let pages: import("../pipeline/pdf.ts").PdfPageImage[] = [];
+        let failedPages: number[] = [];
         try {
           const { expandPdf } = await import("../pipeline/pdf.ts");
           // Only render pages the batch still has room for — rasterizing a
           // 1000-page statement the cap would discard anyway OOMs the tab.
-          pages = await expandPdf(
+          const out = await expandPdf(
             file,
             LIMITS.maxReceiptsPerBatch - (existing + accepted),
           );
-        } catch {
+          pages = out.pages;
+          failedPages = out.failedPages;
+        } catch (err) {
+          const { isPasswordProtectedPdf } = await import("../pipeline/pdf.ts");
+          if (isPasswordProtectedPdf(err)) {
+            // Queuing it would only produce a guaranteed failure with pdf.js
+            // internals as the message.
+            this.toast(
+              `Skipped ${shown}: this PDF is password-protected — remove the password and add it again.`,
+              "warn",
+            );
+            return;
+          }
           // Unreadable/odd PDF: store it as-is — the pipeline still decodes
           // the first page (the pre-expansion behavior).
           pages = [];
@@ -355,7 +525,15 @@ class AppState {
             await enqueueOne(p.blob, names.fileName, "image/jpeg", names.originalFileName);
           }
           const pageCount = pages[0]!.pageCount;
-          if (pages.length < pageCount) {
+          if (failedPages.length > 0) {
+            this.toast(
+              failedPages.length === 1
+                ? `${shown}: page ${failedPages[0]} couldn't be rendered and was skipped.`
+                : `${shown}: ${failedPages.length} pages couldn't be rendered and were skipped.`,
+              "warn",
+            );
+          }
+          if (pages.length + failedPages.length < pageCount) {
             this.toast(
               `${shown}: only the first ${pages.length} of ${pageCount} pages were read.`,
               "warn",
@@ -391,11 +569,18 @@ class AppState {
       }
       const unzip = await import("../pipeline/unzip.ts");
       let result: import("../pipeline/unzip.ts").ZipReadResult;
+      // Inflate only what the batch still has room for: with 199 receipts on
+      // the board, a 250-photo ZIP used to inflate all 250 (up to 400 MB) to
+      // enqueue exactly one. The PDF path already budgets its pages this way.
+      const room = Math.min(
+        LIMITS.maxArchiveEntries,
+        Math.max(1, LIMITS.maxReceiptsPerBatch - (existing + accepted)),
+      );
       try {
         result = await unzip.readZip(await file.arrayBuffer(), {
           extensions: LIMITS.acceptedExtensions,
           maxEntryBytes: LIMITS.maxFileBytes,
-          maxEntries: LIMITS.maxArchiveEntries,
+          maxEntries: room,
           maxTotalBytes: LIMITS.maxArchiveInflatedBytes,
         });
       } catch {
@@ -438,7 +623,7 @@ class AppState {
       }
       if (result.truncated) {
         this.toast(
-          `${label}: only the first ${LIMITS.maxArchiveEntries} files were read.`,
+          `${label}: only the first ${room} files were read${room < LIMITS.maxArchiveEntries ? " — the batch is nearly full" : ""}.`,
           "warn",
         );
       }
@@ -481,6 +666,8 @@ class AppState {
   }
 
   async deleteReceipt(id: string): Promise<void> {
+    const r = this.receipts.find((x) => x.id === id);
+    if (r) this.revokeBlobUrls(r);
     await repo.deleteReceipt(id);
     this.toast("Receipt removed.", "info");
   }

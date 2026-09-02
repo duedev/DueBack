@@ -6,7 +6,11 @@
  * Handles "$1,234.56", "1.234,56" (EU), "USD 12.00", trailing "-", etc.
  * Also accepts a plain number — Svelte binds `<input type="number">` to a
  * number, and a `.replace` call on it threw, silently discarding the edit.
- * Returns null for anything not safely finite and non-negative.
+ * Returns null for anything not safely finite or beyond the 1,000,000
+ * magnitude guard. The result is SIGNED (a leading or trailing "-" negates;
+ * accounting parentheses are stripped, not negated) — callers that persist or
+ * export must clamp with `safeAmount`, and the extraction rules filter sign
+ * on their side.
  */
 export function parseAmount(raw: string | number | null | undefined): number | null {
   if (raw === null || raw === undefined || raw === "") return null;
@@ -52,7 +56,8 @@ export function parseAmount(raw: string | number | null | undefined): number | n
   const n = Number.parseFloat(normalized);
   if (!Number.isFinite(n)) return null;
   const value = neg ? -n : n;
-  // Reject absurd magnitudes that indicate a misread, and negatives for totals.
+  // Reject absurd magnitudes that indicate a misread. The sign is preserved
+  // here — `safeAmount` is the negative clamp for anything persisted/exported.
   if (!Number.isFinite(value) || Math.abs(value) > 1_000_000) return null;
   return Math.round(value * 100) / 100;
 }

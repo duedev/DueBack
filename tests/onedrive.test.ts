@@ -11,6 +11,8 @@ import {
   randomToken,
   tokensFromResponse,
   uploadToFolder,
+  GraphError,
+  TokenEndpointError,
   GRAPH_ROOT,
   ONEDRIVE_SCOPES,
   SIMPLE_UPLOAD_MAX,
@@ -108,14 +110,14 @@ test("a refresh response keeps the previous refresh token and account", () => {
   assert.deepEqual(next.account, prev.account);
 });
 
-test("tokensFromResponse surfaces the endpoint's error text", () => {
+test("tokensFromResponse surfaces the endpoint's error text as a TokenEndpointError", () => {
   assert.throws(
     () =>
       tokensFromResponse(
         { error: "invalid_grant", error_description: "AADSTS70000: expired" },
         0,
       ),
-    /AADSTS70000/,
+    (e: unknown) => e instanceof TokenEndpointError && /AADSTS70000/.test((e as Error).message),
   );
 });
 
@@ -236,7 +238,10 @@ test("ensureFolders surfaces real Graph errors", async () => {
   const { fetchFn } = scriptedFetch(() =>
     json({ error: { code: "accessDenied", message: "Access denied" } }, 403),
   );
-  await assert.rejects(() => ensureFolders(fetchFn, "tok"), /403.*Access denied/);
+  await assert.rejects(
+    () => ensureFolders(fetchFn, "tok"),
+    (e: unknown) => e instanceof GraphError && e.status === 403 && /403.*Access denied/.test(e.message),
+  );
 });
 
 test("upload failures produce a readable message", async () => {

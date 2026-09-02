@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { toCsv, csvFileName } from "../src/export/csv.ts";
+import { toCsv, toCsvBytes, csvFileName } from "../src/export/csv.ts";
 import type { Receipt, Category } from "../src/types.ts";
 
 function receipt(f: {
@@ -77,4 +77,32 @@ test("the Currency column is pinned to USD, even for legacy stored codes", () =>
 test("csvFileName is sanitized and dated", () => {
   assert.match(csvFileName({ jobName: "Q1 Travel" }), /^Q1_Travel_\d{4}-\d{2}-\d{2}\.csv$/);
   assert.match(csvFileName({}), /^reimbursement_\d{4}-\d{2}-\d{2}\.csv$/);
+});
+
+test("toCsvBytes is UTF-8 with a BOM, wrapping exactly toCsv", () => {
+  const r = receipt({ vendor: "Café — Olé", amount: 9, category: "Meals", date: "2026-05-02" });
+  const bytes = toCsvBytes([r]);
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+  // TextDecoder strips the BOM by default.
+  assert.equal(new TextDecoder().decode(bytes), toCsv([r]));
+  assert.deepEqual([...toCsvBytes([]).subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+});
+
+test("a vendor that reads as a formula is neutralised with a leading apostrophe", () => {
+  const csv = toCsv([
+    receipt({ vendor: '=HYPERLINK("http://x","y")', amount: 5, category: "Other", date: "2026-05-02" }),
+    receipt({ vendor: "-SHELL", amount: 5, category: "Fuel", date: "2026-05-01" }),
+  ]);
+  assert.ok(csv.includes(`"'=HYPERLINK(""http://x"",""y"")"`), csv);
+  assert.ok(csv.includes(",'-SHELL,"), csv);
+});
+
+test("same-day receipts keep intake order (the workbook's order)", () => {
+  const a = receipt({ vendor: "Second", amount: 5, category: "Fuel", date: "2026-05-01" });
+  const b = receipt({ vendor: "First", amount: 5, category: "Fuel", date: "2026-05-01" });
+  a.createdAt = 2000;
+  b.createdAt = 1000;
+  const rows = toCsv([a, b]).split("\r\n");
+  assert.ok(rows[1]!.includes(",First,"), rows.join(" | "));
+  assert.ok(rows[2]!.includes(",Second,"), rows.join(" | "));
 });

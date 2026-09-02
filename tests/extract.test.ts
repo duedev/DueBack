@@ -891,3 +891,327 @@ test("readValueInBox reads the OCR lines under a hand-drawn box", () => {
   // A box over empty space autofills nothing (the box itself still stands).
   assert.equal(readValueInBox(lines, "amount", { x: 0, y: 0.85, w: 1, h: 0.1 }), null);
 });
+
+// ── Audit round (2026-09): silent-wrong-money and vendor-hijack regressions ───
+import { matchKnownVendor } from "../src/pipeline/extract.ts";
+
+test("a garbled tax below the subtotal never rewrites a printed total to subtotal + tax", () => {
+  for (const tail of [["TOTAL 45.46", "VISA 45.46"], ["TOTAL 45.46"]]) {
+    const r = parseReceipt(
+      ocr(["ACE HARDWARE", "SCREWS 42.00", "SUBTOTAL 42.00", "TAX 34.60", ...tail]),
+    );
+    assert.equal(r.amount.value, 45.46, `amount ${r.amount.value}`);
+    assert.ok(
+      r.flags.some((f) => f.code === "total_suspect" && f.severity === "warn"),
+      JSON.stringify(r.flags),
+    );
+    assert.ok(forcesManualReview(r.flags));
+  }
+  // A misread SUBTOTAL is the same class (it used to become $7.66 silently).
+  const sub = parseReceipt(ocr(["SHOP", "SCREWS 42.00", "SUBTOTAL 4.20", "TAX 3.46", "TOTAL 45.46"]));
+  assert.equal(sub.amount.value, 45.46);
+  assert.ok(forcesManualReview(sub.flags));
+  // A legitimately high tax (60%) is left alone.
+  const legit = parseReceipt(ocr(["SHOP", "SUBTOTAL 100.00", "TAX 60.00", "TOTAL 160.00"]));
+  assert.equal(legit.amount.value, 160);
+  assert.equal(forcesManualReview(legit.flags), false);
+});
+
+test("fuzzy header hits: only merchant-shaped lines feed the sweep, keywords beat an edited brand", () => {
+  const w = parseReceipt(
+    ocr(["WINTZELL'S OYSTER HOUSE", "605 DAUPHIN ST", "MOBILE, AL 36602", "08/20/2026", "TOTAL 41.50"]),
+  );
+  assert.match(w.vendor.value, /WINTZELL/);
+  const d = parseReceipt(ocr(["CITY OF DENVER", "PUBLIC PARKING", "08/20/2026", "TOTAL 8.00"]));
+  assert.match(d.vendor.value, /DENVER/);
+  assert.equal(d.category.value, "Ground Transportation");
+  const c = parseReceipt(
+    ocr(["CORNER CAFE", "123 MAIN", "08/20/2026", "BLACK COFFEE 2.50", "TOTAL 2.50"]),
+  );
+  assert.match(c.vendor.value, /CORNER CAFE/);
+  assert.equal(c.category.value, "Meals");
+  const b = parseReceipt(ocr(["BLACKWATER GRILL", "123 MAIN", "MILTON, FL 32570", "TOTAL 20.00"]));
+  assert.match(b.vendor.value, /BLACKWATER/);
+  assert.equal(b.category.value, "Meals");
+  // The pinned garbles still resolve.
+  assert.equal(
+    parseReceipt(ocr(["WELC0ME TO", "MOBTL", "GALLONS 10.000", "PRICE/GAL 4.000", "TOTAL 40.00"])).vendor.value,
+    "Mobil",
+  );
+  assert.equal(parseReceipt(ocr(["CTATER BROS", "TOTAL 40.00"])).vendor.value, "Stater Bros. Markets");
+  assert.equal(parseReceipt(ocr(["FARMER 80YS", "TOTAL 12.00"])).vendor.value, "Farmer Boys");
+});
+
+test("a known non-fuel brand files as Fuel only when pump math verifies", () => {
+  const costco = parseReceipt(
+    ocr(["COSTCO WHOLESALE", "#1234 GAS STATION", "REGULAR", "GALLONS 12.345", "PRICE/GAL 3.899", "FUEL TOTAL 48.13"]),
+  );
+  assert.equal(costco.vendor.value, "Costco");
+  assert.equal(costco.category.value, "Fuel");
+  const paint = parseReceipt(
+    ocr(["THE HOME DEPOT", "BEHR PAINT 5 GAL 149.00", "PRICE PER GALLON 29.80", "TOTAL 160.92"]),
+  );
+  assert.equal(paint.category.value, "Materials");
+});
+
+test("ordinary receipt words one edit from a short brand alias never rename the vendor", () => {
+  const gloves = parseReceipt(ocr(["ABC INDUSTRIAL", "VERNON, CA 90058", "GLOVES NITRILE 12.99", "TOTAL 12.99"]));
+  assert.notEqual(gloves.vendor.value, "Love's");
+  assert.notEqual(gloves.category.value, "Fuel");
+  const marco = parseReceipt(ocr(["MARCO ISLAND GRILL", "MARCO ISLAND FL", "TOTAL 20.00"]));
+  assert.match(marco.vendor.value, /MARCO ISLAND GRILL/);
+  assert.equal(marco.category.value, "Meals");
+  assert.notEqual(parseReceipt(ocr(["ACME PAINT", "LOWEST PRICE GUARANTEE", "TOTAL 20.00"])).vendor.value, "Lowe's");
+  const petro = parseReceipt(
+    ocr(["PETRO", "TRUCK STOP", "GALLONS 80.000", "PRICE/GAL 3.899", "FUEL TOTAL 311.92"]),
+  );
+  assert.equal(petro.vendor.value, "Petro Stopping Centers");
+  assert.equal(petro.category.value, "Fuel");
+  const diner = parseReceipt(ocr(["JOES DINER", "REWARDS MEMBER #1234", "TOTAL 12.00"]));
+  assert.equal(diner.vendor.value, "JOES DINER");
+  assert.equal(diner.category.value, "Meals");
+  const welding = parseReceipt(ocr(["MOBILE WELDING SUPPLY", "TOTAL 12.00"]));
+  assert.equal(welding.vendor.value, "MOBILE WELDING SUPPLY");
+  assert.equal(welding.category.value, "Materials");
+});
+
+test("a SUPER fuel-grade line never becomes Super 8, and pump structure still files as Fuel", () => {
+  const r = parseReceipt(
+    ocr(["JOE'S GAS", "SUPER 93 OCTANE", "GALLONS 10.000", "PRICE/GAL 4.199", "TOTAL 41.99"]),
+  );
+  assert.equal(r.vendor.value, "JOE'S GAS");
+  assert.equal(r.category.value, "Fuel");
+});
+
+test("generic brand words on address, tender, footer, staff and item lines don't name the merchant", () => {
+  const cases: [string[], RegExp][] = [
+    [["CORNER CAFE", "123 MAIN ST", "THANK YOU! REVIEW US ON GOOGLE", "TOTAL 5.00"], /CORNER CAFE/],
+    [["JOES DINER", "Burger 22.00", "TOTAL 24.05", "PAID WITH GOOGLE PAY"], /JOES DINER/],
+    [["SUNSET DINER", "6000 GULF BLVD", "TOTAL 12.00"], /SUNSET DINER/],
+    [["VINE BAR", "NAPA, CA 94559", "TOTAL 40.00"], /VINE BAR/],
+    [["SALTY DOG CAFE", "HILTON HEAD ISLAND, SC", "TOTAL 40.00"], /SALTY DOG/],
+    [["KEYS FISHERIES", "MARATHON, FL 33050", "TOTAL 40.00"], /KEYS FISHERIES/],
+    [["TUCSON TACOS", "2545 E SPEEDWAY BLVD, TUCSON", "TOTAL 12.00"], /TUCSON TACOS/],
+    [["JOES SHOP", "123 COURTYARD DR", "TOTAL 12.00"], /JOES SHOP/],
+    [["JOES SHOP", "RACETRACK RD", "TOTAL 12.00"], /JOES SHOP/],
+    [["JOES DINER", "YOUR SERVER WAS CASEY", "TOTAL 12.00"], /JOES DINER/],
+    [["MURPHY'S PUB & GRILL", "TOTAL 12.00"], /MURPHY'S PUB/],
+    [["TACO SPOT", "HARD SHELL TACO 3.50", "TOTAL 3.50"], /TACO SPOT/],
+    [["JOES AUTO", "MOBIL 1 5W-30 QT 9.99", "TOTAL 9.99"], /JOES AUTO/],
+    [["JOES OFFICE", "PILOT G2 PENS 4.99", "TOTAL 4.99"], /JOES OFFICE/],
+    [["ADOBE GRILL, SANTA FE", "TOTAL 40.00"], /ADOBE GRILL/],
+  ];
+  for (const [lines, want] of cases) {
+    const r = parseReceipt(ocr(lines));
+    assert.match(r.vendor.value, want, `${lines.join(" | ")} → ${r.vendor.value}`);
+  }
+  // …while distinctive aliases, slogans and generic words on real header
+  // lines still name the brand.
+  const keep: [string[], string][] = [
+    [["SHELL", "123 MAIN ST", "TOTAL 40.00"], "Shell"],
+    [["ITEM 1.00", "TOTAL 1.00", "THANK YOU FOR SHOPPING AT WALMART"], "Walmart"],
+    [["A", "B", "C", "D", "E", "F", "G", "H", "STARBUCKS.COM", "TOTAL 4.00"], "Starbucks"],
+    [["SPEEDWAY #4321", "2545 E SPEEDWAY BLVD", "TOTAL 40.00"], "Speedway"],
+    [["HILTON GARDEN INN", "TOTAL 140.00"], "Hilton"],
+    [["Google LLC", "Google Workspace", "TOTAL 14.00"], "Google"],
+    [["Adobe Inc.", "Creative Cloud", "TOTAL 54.99"], "Adobe"],
+    [["How doers get more done.", "1234 CONTRACTOR BLVD", "TOTAL 88.12"], "The Home Depot"],
+  ];
+  for (const [lines, want] of keep) {
+    assert.equal(parseReceipt(ocr(lines)).vendor.value, want, lines.join(" | "));
+  }
+  // The pipeline's logo-gate call uses the same scoped scan.
+  const o = ocr(["SUNSET DINER", "6000 GULF BLVD", "TOTAL 12.00"]);
+  assert.equal(matchKnownVendor(o.lines, o.text), null);
+});
+
+test("a total below the printed subtotal with nothing explaining it demands review", () => {
+  const r = parseReceipt(
+    ocr(["BLUE BOTTLE COFFEE", "Date: 03/14/2026", "Latte 4.50", "Muffin 3.75", "Bagel 13.75", "SUBTOTAL 22.00", "XAX 1.76", "GRAND TOTAL 4.05", "VISA 24.05"]),
+  );
+  assert.equal(r.amount.value, 4.05);
+  assert.ok(r.flags.some((f) => f.code === "total_suspect" && f.severity === "warn"));
+  assert.ok(forcesManualReview(r.flags));
+  const coupon = parseReceipt(ocr(["SHOP", "SUBTOTAL 20.00", "COUPON -5.00", "TOTAL 15.00", "VISA 15.00"]));
+  assert.equal(coupon.amount.value, 15);
+  assert.equal(forcesManualReview(coupon.flags), false);
+  const exempt = parseReceipt(ocr(["SHOP", "SUBTOTAL 20.00", "TOTAL 20.00"]));
+  assert.equal(forcesManualReview(exempt.flags), false);
+});
+
+test("a wallet tender line never renames the merchant", () => {
+  const r = parseReceipt(
+    ocr(["JOES DINER", "123 Main St", "Date: 03/14/2026", "Burger 22.00", "TOTAL 24.05", "GOOGLE PAY 24.05"]),
+  );
+  assert.equal(r.vendor.value, "JOES DINER");
+  assert.equal(r.category.value, "Meals");
+  const lumber = parseReceipt(ocr(["ACME SUPPLY", "Invoice #123", "Lumber 400.00", "TOTAL 400.00"]));
+  assert.notEqual(lumber.vendor.value, "84 Lumber");
+});
+
+test("a merchant header containing 'total' never donates its store number as the amount", () => {
+  const r = parseReceipt(
+    ocr(["TOTAL WINE & MORE #1234", "123 Main St", "Date: 03/14/2026", "Cabernet 45.99", "TOTAL 49.67", "VISA 49.67"]),
+  );
+  assert.equal(r.amount.value, 49.67, `amount ${r.amount.value}`);
+  assert.equal(r.vendor.value, "TOTAL WINE & MORE");
+  const noHash = parseReceipt(ocr(["TOTAL WINE & MORE STORE 1234", "Cabernet 45.99", "TOTAL", "$49.67"]));
+  assert.equal(noHash.amount.value, 49.67);
+  // The lenient integer read on a real label+value line survives, garbled label included.
+  assert.equal(parseReceipt(ocr(["SHOP", "T0TAL 10", "05/01/2026"])).amount.value, 10);
+});
+
+test("pre-discount MERCHANDISE TOTAL / TOTAL BEFORE COUPONS never beat the real TOTAL", () => {
+  for (const pre of ["MERCHANDISE TOTAL 60.00", "TOTAL BEFORE COUPONS 60.00", "ORIGINAL TOTAL 60.00"]) {
+    const r = parseReceipt(
+      ocr(["KOHLS", "Date: 03/14/2026", "SHIRT 60.00", pre, "COUPON -10.00", "TOTAL 50.00", "VISA 50.00"]),
+    );
+    assert.equal(r.amount.value, 50, pre);
+  }
+  const c = parseReceipt(ocr(["SHOP", "ITEM 12.00", "TOTAL COUPONS 10.00", "TOTAL 2.00", "CASH 2.00"]));
+  assert.equal(c.amount.value, 2);
+});
+
+test("a no-tax window recovery equal to the subtotal gates review; one above it stays advisory", () => {
+  const garble = parseReceipt(
+    ocr(["BLUE BOTTLE COFFEE", "Date: 03/14/2026", "Widget 20.00", "SUBTOTAL 20.00", "XAX 1.60", "TOTAL 2160", "VISA 21.60"]),
+  );
+  assert.equal(garble.amount.value, 20);
+  assert.ok(garble.flags.some((f) => f.code === "total_suspect" && f.severity === "warn"));
+  assert.ok(forcesManualReview(garble.flags));
+  const above = parseReceipt(
+    ocr(["SHOP", "Widget 20.00", "SUBTOTAL 20.00", "XAX 1.60", "AMOUNT 21.60", "TOTAL 2160"]),
+  );
+  assert.equal(above.amount.value, 21.6);
+  assert.equal(forcesManualReview(above.flags), false);
+});
+
+test("a multi-word city + state line inside an address block never becomes the vendor", () => {
+  const multi = parseReceipt(
+    ocr(["", "1200 N Main St", "SANTA ANA CA", "92701", "DATE 9/23/24", "Item 12.00", "TOTAL 12.00"]),
+  );
+  assert.notEqual(multi.vendor.value, "SANTA ANA CA");
+  const zipBelow = parseReceipt(ocr(["", "SAN DIEGO CA", "92101", "TOTAL 12.00"]));
+  assert.notEqual(zipBelow.vendor.value, "SAN DIEGO CA");
+  assert.equal(parseReceipt(ocr(["GRILL IN LA", "TOTAL 12.00"])).vendor.value, "GRILL IN LA");
+  assert.equal(parseReceipt(ocr(["SMITH SUPPLY CO", "Anaheim CA", "TOTAL 12.00"])).vendor.value, "SMITH SUPPLY CO");
+});
+
+test("a line that IS a date or timestamp never becomes the vendor", () => {
+  const r = parseReceipt(
+    ocr(["", "WED SEPTEMBER 11, 2024 12:30 PM", "CHECK #606564-1", "1 BIG CHEESE CMB $12.49", "TOTAL $12.49"]),
+  );
+  assert.equal(r.vendor.value, "");
+  assert.ok(r.flags.some((f) => f.code === "no_vendor"));
+  assert.equal(r.date.value, "2024-09-11");
+  const named = parseReceipt(ocr(["JOE'S DINER", "WED SEPTEMBER 11, 2024 12:30 PM", "TOTAL $12.49"]));
+  assert.equal(named.vendor.value, "JOE'S DINER");
+  assert.notEqual(
+    parseReceipt(ocr(["SHOP", "TUE SEP 11 12:30 PM", "TOTAL 12.00"])).vendor.value,
+    "TUE SEP 11 12:30 PM",
+  );
+});
+
+test("refund/return totals keep their magnitude and demand review", () => {
+  const cases = [
+    ["THE HOME DEPOT", "RETURN", "SUBTOTAL -99.00", "SALES TAX -8.17", "TOTAL -107.17", "REFUND TO AMEX 107.17"],
+    ["SHOP", "TOTAL -12.00"],
+    ["SHOP", "TOTAL 12.00-"],
+    ["SHOP", "TOTAL 12.00 CR"],
+    ["SHOP", "TOTAL (12.00)"],
+    ["SHOP", "REFUND TOTAL 12.00"],
+  ];
+  for (const lines of cases) {
+    const r = parseReceipt(ocr(lines));
+    assert.ok(r.amount.value > 0, lines.join(" | "));
+    assert.ok(
+      r.flags.some((f) => f.code === "total_suspect" && f.severity === "warn"),
+      lines.join(" | "),
+    );
+    assert.ok(forcesManualReview(r.flags), lines.join(" | "));
+  }
+  assert.equal(parseReceipt(ocr(cases[0]!)).amount.value, 107.17);
+  const controls = [
+    ["SHOP", "ITEM 12.00", "TOTAL 12.00", "RETURN POLICY DEFINITIONS"],
+    ["SHOP", "ITEM 10.64", "COUPON -2.00", "TOTAL 8.64"],
+    ["SHOP", "TOTAL 12.00 CREDIT CARD"],
+    ["SHOP", "TOTAL 12.00 (2 items)"],
+  ];
+  for (const lines of controls) {
+    const r = parseReceipt(ocr(lines));
+    assert.equal(r.flags.some((f) => f.code === "total_suspect"), false, lines.join(" | "));
+    assert.equal(forcesManualReview(r.flags), false, lines.join(" | "));
+  }
+});
+
+test("component tax lines sum when the footing corroborates them; TOTAL TAX wins outright", () => {
+  const printed = parseReceipt(
+    ocr(["OFFICE DEPOT", "Date: 03/14/2026", "SUBTOTAL 100.00", "STATE TAX 6.00", "COUNTY TAX 1.00", "CITY TAX 1.25", "TOTAL TAX 8.25", "TOTAL 108.25", "VISA 108.25"]),
+  );
+  assert.equal(printed.tax.value, 8.25);
+  assert.equal(printed.flags.some((f) => f.code === "total_mismatch"), false);
+  assert.ok(printed.confidence >= 0.8, `confidence ${printed.confidence}`);
+  const summed = parseReceipt(
+    ocr(["OFFICE DEPOT", "Date: 03/14/2026", "SUBTOTAL 100.00", "STATE TAX 6.00", "COUNTY TAX 1.00", "CITY TAX 1.25", "TOTAL 108.25", "VISA 108.25"]),
+  );
+  assert.equal(summed.tax.value, 8.25);
+  const walmart = parseReceipt(
+    ocr(["WALMART", "SUBTOTAL 30.00", "TAX 1 7.000 % 2.10", "TAX 2 2.000 % 0.30", "TOTAL 32.40"]),
+  );
+  assert.equal(walmart.tax.value, 2.4);
+  // A duplicated customer/merchant copy must not double the tax.
+  const dup = parseReceipt(
+    ocr(["OFFICE DEPOT", "SUBTOTAL 100.00", "TAX 8.25", "TOTAL 108.25", "SUBTOTAL 100.00", "TAX 8.25", "TOTAL 108.25"]),
+  );
+  assert.equal(dup.tax.value, 8.25);
+});
+
+test("a clock time never donates its hour as the year of a month-name date", () => {
+  const r = parseReceipt(ocr(["SHOP", "TUE SEP 11 12:30 PM", "TOTAL 12.00"]));
+  assert.equal(r.date.value, "");
+  assert.ok(r.flags.some((f) => f.code === "no_date"));
+  // ctime order recovers the trailing year.
+  assert.equal(parseReceipt(ocr(["SHOP", "Wed Sep 11 12:30:45 PDT 2024", "TOTAL 12.00"])).date.value, "2024-09-11");
+  assert.equal(parseReceipt(ocr(["SHOP", "WEL SEPTEMBER 11.2024", "TOTAL 12.00"])).date.value, "2024-09-11");
+});
+
+test("Due Date printed above Invoice Date never becomes the expense date", () => {
+  const r = parseReceipt(
+    ocr(["ACME SUPPLY", "Invoice #123", "Due Date: 04/15/2026", "Invoice Date: 03/14/2026", "Lumber 400.00", "TOTAL 500.00"]),
+  );
+  assert.equal(r.date.value, "2026-03-14");
+  // A labeled deadline also ranks below an unlabeled printed date…
+  const bare = parseReceipt(ocr(["ACME SUPPLY", "03/14/2026", "Due Date: 04/15/2026", "TOTAL 500.00"]));
+  assert.equal(bare.date.value, "2026-03-14");
+  // …but still dates the receipt when it is the only date on it.
+  const only = parseReceipt(ocr(["ACME SUPPLY", "Due Date: 04/15/2026", "TOTAL 500.00"]));
+  assert.equal(only.date.value, "2026-04-15");
+});
+
+test("trailing store numbers are dropped from heuristic vendor names; bare digits stay", () => {
+  assert.equal(parseReceipt(ocr(["PRICE CHOPPER #123", "GALLONS 5.000", "TOTAL 20.00"])).vendor.value, "PRICE CHOPPER");
+  assert.equal(parseReceipt(ocr(["TOTAL WINE & MORE #1234", "TOTAL 20.00"])).vendor.value, "TOTAL WINE & MORE");
+  assert.equal(parseReceipt(ocr(["STUDIO 54", "TOTAL 20.00"])).vendor.value, "STUDIO 54");
+});
+
+test("locateValue/readValueInBox read a bare-integer labeled total the way findAmount does", () => {
+  const lines = ocr(["SHOP", "TOTAL 9", "05/01/2026"]).lines;
+  assert.equal(locateValue(lines, "amount", 9)?.lineText, "TOTAL 9");
+  assert.equal(locateValue(ocr(["Total: 12"]).lines, "amount", 12)?.lineText, "Total: 12");
+  assert.equal(locateValue(lines, "amount", 2026), null);
+  assert.equal(locateValue(ocr(["TOTAL ITEMS 3"]).lines, "amount", 3), null);
+  assert.equal(locateValue(ocr(["Item 9"]).lines, "amount", 9), null);
+  assert.equal(readValueInBox(lines, "amount", { x: 0, y: 0, w: 1, h: 1 }), 9);
+  assert.equal(readValueInBox(ocr(["TOTAL   $24.11"]).lines, "amount", { x: 0, y: 0, w: 1, h: 1 }), 24.11);
+});
+
+test("a garbled tax at or above the total is dropped even with no subtotal printed", () => {
+  const r = parseReceipt(ocr(["SHOP", "Date: 03/14/2026", "TAX 289.00", "TOTAL 43.20"]));
+  assert.equal(r.amount.value, 43.2);
+  assert.equal(r.tax.value, 0, "implausible tax is dropped");
+  const fuel = parseReceipt(
+    ocr(["SHELL", "03/14/2026", "GALLONS 10.000", "PRICE/GAL 4.320", "TAX 289.00", "FUEL TOTAL 43.20"]),
+  );
+  assert.equal(fuel.amount.value, 43.2);
+  assert.equal(fuel.tax.value, 0, "pump-verified total still sheds the garbled tax");
+});

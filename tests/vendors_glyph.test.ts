@@ -82,3 +82,27 @@ test("merged DB is present (curated + exported original brands)", () => {
   assert.ok(sheetz, "expected Sheetz from the original fuel DB");
   assert.equal(sheetz.category, "Fuel");
 });
+
+// ── Audit round (2026-09) ─────────────────────────────────────────────────────
+import { fuzzyMatchVendorLines } from "../src/config/vendors.ts";
+
+test("fuzzy header sweep: ordinary words and digit-bearing aliases never produce a brand", () => {
+  for (const w of ["MOBILE", "PUBLIC", "GLOVES", "SHEETS", "SHELF", "LOWEST", "MARCO", "GATEWAY", "VERNON", "MILTON", "WESTON", "SUPER", "MOTEL", "LUMBER"]) {
+    assert.equal(fuzzyMatchVendorLines([w]), null, w);
+  }
+  assert.equal(fuzzyMatchVendorLines(["JOE'S GAS", "SUPER 93 OCTANE"]), null);
+  // Two edits concentrated in a multi-word brand's first word is a different company.
+  assert.notEqual(fuzzyMatchVendorLines(["ABC INDUSTRIAL"])?.name, "MSC Industrial");
+  // The pinned garbles still resolve.
+  assert.equal(fuzzyMatchVendorLines(["WELC0ME TO", "MOBTL"])?.name, "Mobil");
+  assert.equal(fuzzyMatchVendorLines(["CTATER BROS"])?.name, "Stater Bros. Markets");
+  assert.equal(fuzzyMatchVendorLines(["FARMER 80YS"])?.name, "Farmer Boys");
+  assert.equal(fuzzyMatchVendorLines(["CHEVR0N"])?.name, "Chevron");
+});
+
+test("curated brands win alias claims at merge time", () => {
+  assert.equal(matchVendor("FEDEX OFFICE PRINT & SHIP")?.name, "FedEx");
+  assert.equal(matchVendor("FEDEX OFFICE PRINT & SHIP")?.category, "Shipping & Postage");
+  assert.equal(matchVendor("COMCAST BUSINESS")?.name, "Comcast");
+  assert.equal(matchVendor("KINKOS")?.name, "FedEx Office");
+});

@@ -47,28 +47,54 @@ let dbPromise: Promise<IDBPDatabase<ReimburseDB>> | null = null;
 
 export function db(): Promise<IDBPDatabase<ReimburseDB>> {
   if (!dbPromise) {
-    dbPromise = openDB<ReimburseDB>(DB_NAME, DB_VERSION, {
-      upgrade(database) {
-        const batches = database.createObjectStore("batches", {
-          keyPath: "id",
-        });
-        batches.createIndex("byCreated", "createdAt");
+    // A local handle: the callbacks below must only forget THIS open, never
+    // a newer one that replaced it.
+    const p = openDB<ReimburseDB>(DB_NAME, DB_VERSION, {
+      upgrade(database, oldVersion) {
+        // Stepped, never unconditional: a future `if (oldVersion < 2)` adds
+        // its stores/indexes below, and an unconditional createObjectStore
+        // would throw ConstraintError on every existing install.
+        if (oldVersion < 1) {
+          const batches = database.createObjectStore("batches", {
+            keyPath: "id",
+          });
+          batches.createIndex("byCreated", "createdAt");
 
-        const receipts = database.createObjectStore("receipts", {
-          keyPath: "id",
-        });
-        receipts.createIndex("byBatch", "batchId");
-        receipts.createIndex("byStatus", "status");
-        receipts.createIndex("byHash", "imageHash");
+          const receipts = database.createObjectStore("receipts", {
+            keyPath: "id",
+          });
+          receipts.createIndex("byBatch", "batchId");
+          receipts.createIndex("byStatus", "status");
+          receipts.createIndex("byHash", "imageHash");
 
-        const jobs = database.createObjectStore("jobs", { keyPath: "id" });
-        jobs.createIndex("byReceipt", "receiptId");
+          const jobs = database.createObjectStore("jobs", { keyPath: "id" });
+          jobs.createIndex("byReceipt", "receiptId");
 
-        database.createObjectStore("blobs", { keyPath: "key" });
-        database.createObjectStore("brands", { keyPath: "id" });
-        database.createObjectStore("kv", { keyPath: "key" });
+          database.createObjectStore("blobs", { keyPath: "key" });
+          database.createObjectStore("brands", { keyPath: "id" });
+          database.createObjectStore("kv", { keyPath: "key" });
+        }
+      },
+      // The browser closed the connection under us (Safari storage pressure,
+      // a backgrounded PWA, Chrome's "connection closed unexpectedly"):
+      // forget it so the next repo call reopens instead of throwing
+      // InvalidStateError until a reload.
+      terminated() {
+        if (dbPromise === p) dbPromise = null;
+      },
+      // Another tab is opening a newer version: an open connection would
+      // block its upgrade forever (its boot would never clear the splash).
+      blocking() {
+        void p.then((d) => d.close()).catch(() => {});
+        if (dbPromise === p) dbPromise = null;
       },
     });
+    // A failed open (quota, VersionError, UnknownError) must not be cached
+    // for the session; callers still see p's own rejection.
+    p.catch(() => {
+      if (dbPromise === p) dbPromise = null;
+    });
+    dbPromise = p;
   }
   return dbPromise;
 }

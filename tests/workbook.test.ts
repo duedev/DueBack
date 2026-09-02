@@ -11,6 +11,17 @@ import { rowPtToPx } from "../src/export/anchor.ts";
 import { APP_URL } from "../src/config/constants.ts";
 import type { Batch, Receipt, Category } from "../src/types.ts";
 
+/** The Summary "#" cells are HYPERLINK formulas with a numeric result (a
+ *  hyperlink-typed cell would be text and trip Excel's error triangle);
+ *  accept either shape so the contract, not the encoding, is pinned. */
+function linkTarget(v: unknown): string | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as { hyperlink?: string; formula?: string };
+  if (o.hyperlink) return o.hyperlink;
+  const m = /^HYPERLINK\("(#'[^']+'!A\d+)",\d+\)$/.exec(o.formula ?? "");
+  return m ? m[1]! : null;
+}
+
 function receipt(f: {
   vendor: string;
   amount: number;
@@ -120,11 +131,19 @@ test("buildWorkbook produces a valid multi-sheet workbook with footing totals", 
   // category image sheet (the ported linking feature).
   const links: string[] = [];
   summary.eachRow((row) => {
-    const v = row.getCell(1).value as { hyperlink?: string } | null;
-    if (v && typeof v === "object" && v.hyperlink) links.push(v.hyperlink);
+    const t = linkTarget(row.getCell(1).value);
+    if (t) links.push(t);
   });
   assert.equal(links.length, 4, `one link per receipt (got ${JSON.stringify(links)})`);
   assert.ok(links.every((l) => /^#'[^']+'!A\d+$/.test(l)), links.join(", "));
+  // …as a formula carrying the receipt NUMBER, so Excel sees a number, not
+  // "1" stored as text under a hyperlink.
+  let numeric = 0;
+  summary.eachRow((row) => {
+    const v = row.getCell(1).value as { formula?: string; result?: unknown } | null;
+    if (v && typeof v === "object" && v.formula && typeof v.result === "number") numeric++;
+  });
+  assert.equal(numeric, 4, "every # cell is a numeric-result formula");
   // …and each target sheet block exists ("Receipt 1  ·  <file>").
   const travel = wb.getWorksheet("Travel")!;
   let foundBand = false;
@@ -269,8 +288,7 @@ test("Summary amounts are live references to the category sheets", async () => {
   const summary = wb.getWorksheet("Summary")!;
   let checked = 0;
   summary.eachRow((row) => {
-    const link = row.getCell(1).value as { hyperlink?: string } | null;
-    if (!link || typeof link !== "object" || !link.hyperlink) return;
+    if (!linkTarget(row.getCell(1).value)) return;
     const amt = row.getCell(6).value as { formula?: string; result?: number };
     assert.ok(
       amt && typeof amt === "object" && /^'[^']+'!F\d+$/.test(amt.formula ?? ""),
@@ -300,8 +318,15 @@ test("Insights KPIs and tables derive from Summary cells", async () => {
   assert.ok(fx.some((f) => /COUNT\(Summary!/.test(f)), "Receipts KPI counts Summary ranges");
   assert.ok(fx.some((f) => f === "A6/C6"), "Avg derives from the Total and Receipts tiles");
   assert.ok(fx.some((f) => /^MAX\(Summary!/.test(f)), "Largest is a MAX over Summary ranges");
-  assert.ok(fx.some((f) => /SUMIF\(Summary!\$C:\$C,E\d+,Summary!\$F:\$F\)/.test(f)), "Top Vendors SUMIFs the Summary");
-  assert.ok(fx.some((f) => /COUNTIF\(Summary!\$C:\$C,E\d+\)/.test(f)), "vendor counts too");
+  assert.ok(
+    fx.some((f) => /^SUMIF\(Summary!C\d+:C\d+,E\d+,Summary!F\d+:F\d+\)/.test(f)),
+    "Top Vendors SUMIFs the Summary's receipt rows",
+  );
+  assert.ok(fx.some((f) => /^COUNTIF\(Summary!C\d+:C\d+,E\d+\)/.test(f)), "vendor counts too");
+  assert.ok(
+    !fx.some((f) => /\$C:\$C/.test(f)),
+    "no whole-column criteria — the employee cell and the section headers live in C too",
+  );
 });
 
 test("no Default Job placeholders; blank batch fields read as an em-dash", async () => {
@@ -552,4 +577,35 @@ test("the carrier band always covers the image it carries", () => {
   for (let h = 1; h <= 800; h++) {
     assert.ok(imageRows({ h }) * carrierPx >= h, `${h}px image fits its band`);
   }
+});
+
+test("Top Vendors never counts the employee cell or section headers as a vendor", async () => {
+  // Blank employee → Summary C2 is "—"; a blank-vendor receipt also renders
+  // "—". A whole-column COUNTIF matched both (3 on recalc, 2 cached).
+  const blankBatch = { ...batch, employee: "" };
+  const rows = [
+    receipt({ vendor: "", amount: 12, category: "Fuel", date: "2026-01-04" }),
+    receipt({ vendor: "", amount: 8, category: "Meals", date: "2026-01-05" }),
+    receipt({ vendor: "Store", amount: 5, category: "Meals", date: "2026-01-06" }),
+  ];
+  const result = await buildWorkbook(blankBatch, rows, async () => undefined, { insights: true });
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  const ws = wb.getWorksheet("Insights")!;
+  const fx: string[] = [];
+  ws.eachRow((row) =>
+    row.eachCell((cell) => {
+      const v = cell.value as { formula?: string } | null;
+      if (v && typeof v === "object" && v.formula) fx.push(v.formula);
+    }),
+  );
+  const vendorFx = fx.filter((f) => /^(COUNTIF|SUMIF)\(Summary!C/.test(f));
+  assert.ok(vendorFx.length >= 2, "vendor table has COUNTIF/SUMIF formulas");
+  for (const f of vendorFx) {
+    for (const m of f.matchAll(/Summary!C(\d+):C(\d+)/g)) {
+      assert.ok(Number(m[1]) >= 3, `range starts below the header block: ${f}`);
+      assert.ok(Number(m[2]) >= Number(m[1]), `range is well-formed: ${f}`);
+    }
+  }
+  assert.ok(!fx.some((f) => /\$C:\$C/.test(f)), "no whole-column vendor criteria");
 });

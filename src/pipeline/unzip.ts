@@ -227,7 +227,12 @@ export async function readZip(
       localOffset: view.getUint32(p + 42, true),
     };
     const nameStart = p + 46;
-    const path = decoder.decode(bytes.subarray(nameStart, nameStart + nameLen));
+    // Some Windows archivers write backslash separators (the spec says "/");
+    // normalize once here so the junk filter, the extension check, the
+    // card's path and the tuning bundle all see one shape.
+    const path = decoder
+      .decode(bytes.subarray(nameStart, nameStart + nameLen))
+      .replace(/\\/g, "/");
     applyZip64Extra(view, nameStart + nameLen, extraLen, sizes);
     p = nameStart + nameLen + extraLen + commentLen;
 
@@ -327,8 +332,15 @@ export function archiveEntryName(
   archiveName: string,
   path: string,
 ): { fileName: string; originalFileName: string } {
-  const base = path.split("/").pop() || "receipt";
-  const folders = path.split("/").slice(0, -1).filter(Boolean);
+  // Drop "." / ".." segments and any drive/root prefix: the inner path is
+  // echoed into the tuning bundle's ZIP entry names, where "../" would be a
+  // zip-slip for whoever extracts it.
+  const segments = path
+    .replace(/^[A-Za-z]:/, "")
+    .split(/[\\/]+/)
+    .filter((s) => s && s !== "." && s !== "..");
+  const base = segments.pop() || "receipt";
+  const folders = segments;
   const inner = folders.length ? `${folders.join("/")}/${base}` : base;
   return {
     fileName: base,

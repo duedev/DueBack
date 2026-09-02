@@ -24,14 +24,23 @@
 // SUPABASE_SERVICE_ROLE_KEY.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { allowedModels, capMaxTokens, dailyLimit } from "./policy.ts";
+import {
+  allowedModels,
+  capMaxTokens,
+  CORS_ALLOWED_REQUEST_HEADERS,
+  dailyLimit,
+  messagesProblem,
+  policeBody,
+} from "./policy.ts";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const MAX_BODY_BYTES = 8 * 1024 * 1024; // images are downscaled client-side
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, content-type",
+  // The client also sends OpenRouter's attribution pair (HTTP-Referer, X-Title);
+  // a preflight that omits them blocks the whole signed-in path.
+  "Access-Control-Allow-Headers": CORS_ALLOWED_REQUEST_HEADERS,
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -62,7 +71,13 @@ Deno.serve(async (req) => {
   const key = Deno.env.get("OPENROUTER_API_KEY");
   if (!key) return json(503, { error: "OPENROUTER_API_KEY secret not set" });
 
-  // 2. Bounded, policed chat-completions payload.
+  // 2. Bounded, policed chat-completions payload. The declared length is
+  //    checked BEFORE buffering — the byte check below only ran after the
+  //    whole body had been read into memory.
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    return json(413, { error: "body too large" });
+  }
   const raw = await req.arrayBuffer();
   if (raw.byteLength > MAX_BODY_BYTES) return json(413, { error: "body too large" });
   let body: Record<string, unknown>;
@@ -81,7 +96,15 @@ Deno.serve(async (req) => {
   if (!allowed.includes(model)) {
     return json(403, { error: `model "${model}" is not allowed by this deployment` });
   }
+  // Only allowlisted fields go upstream: a sibling `models`/`route`/`plugins`
+  // field would otherwise route around the model check on the server key.
+  body = policeBody(body);
   body.max_tokens = capMaxTokens(body.max_tokens);
+  // The messages themselves: the receipt request shape only (one inline
+  // image, bounded text) — the server key must not fetch remote URLs or
+  // relay arbitrary prompts.
+  const problem = messagesProblem(body.messages);
+  if (problem) return json(400, { error: problem });
 
   // 3. Per-user daily cap, counted server-side in ai_usage (service role —
   // the table's RLS denies clients so counts can't be forged or read).
@@ -93,22 +116,41 @@ Deno.serve(async (req) => {
     p_user: userRes.user.id,
   });
   if (usageErr) {
-    return json(503, { error: `usage tracking unavailable: ${usageErr.message}` });
+    // The deployer's cue goes to the function log, not to the browser
+    // (PostgREST text named schema internals).
+    console.error("[ai-extract] ai_increment_usage failed", usageErr);
+    return json(503, { error: "usage tracking unavailable (is migration 0003 applied?)" });
   }
   if ((used ?? 0) > dailyLimit(Deno.env.get("AI_DAILY_LIMIT"))) {
     return json(429, { error: "daily AI request limit reached" });
   }
 
-  const upstream = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${key}`,
-      "http-referer": "https://dueback.duanehamilton.net",
-      "x-title": "DueBack",
-    },
-    body: JSON.stringify(body),
-  });
+  // Answer BEFORE the client's own 90 s deadline (vision/providers/shared.ts)
+  // with a clean JSON 504, instead of the browser seeing a network error —
+  // and never hold the function open on a stalled upstream.
+  const UPSTREAM_TIMEOUT_MS = 85_000;
+  let upstream: Response;
+  try {
+    upstream = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${key}`,
+        "http-referer": "https://dueback.duanehamilton.net",
+        "x-title": "DueBack",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    const timedOut = name === "TimeoutError" || name === "AbortError";
+    return json(timedOut ? 504 : 502, {
+      error: timedOut
+        ? `upstream timed out after ${UPSTREAM_TIMEOUT_MS / 1000} s`
+        : `upstream unreachable: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
 
   const resBody = await upstream.text();
   return new Response(resBody, {

@@ -29,8 +29,42 @@ OUT = HERE.parent / "src" / "data" / "vendorDb.extra.json"
 # already the win — category can be corrected in review).
 CATEGORY_BASE = {"fuel": "Fuel", "mats": "Materials", "misc": "Other"}
 
+# Brands whose names carry no category word at all. Mirrors the curated
+# entries in src/config/vendors.ts KNOWN_VENDORS (which win at merge time
+# anyway) so a regenerated JSON agrees with the curated table instead of
+# fighting it. Keep the two in sync when adding a brand to either.
+NAME_OVERRIDES: dict[str, str] = {
+    **{
+        n: "Meals"
+        for n in (
+            "Chick-fil-A", "Arby's", "Five Guys", "Jack in the Box", "Popeyes",
+            "Whataburger", "Cracker Barrel", "Red Lobster", "Cheesecake Factory",
+            "Panda Express", "Papa John's", "Little Caesars", "Raising Cane's",
+            "Shake Shack", "Sonic Drive-In", "Tim Hortons", "Wingstop", "Zaxby's",
+            "Jimmy John's", "Jersey Mike's", "Culver's", "Hardee's", "Carl's Jr.",
+            "Bojangles", "Dutch Bros", "Qdoba", "Moe's Southwest", "Trader Joe's",
+        )
+    },
+    **{
+        n: "Lodging"
+        for n in ("DoubleTree", "Wyndham", "Super 8", "Extended Stay America", "Vrbo")
+    },
+    **{
+        n: "Utilities & Phone"
+        for n in ("Boost Mobile", "Cricket Wireless", "MetroPCS", "Sprint")
+    },
+    **{n: "Software & Subscriptions" for n in ("Netflix", "Spotify")},
+    "JetBlue": "Travel",
+}
+
+# Entertainment left with the "Meals & Entertainment" rename: theatres and
+# cinemas are Other, like every other recognized-but-unbucketed merchant.
 MISC_REFINE: list[tuple[str, re.Pattern[str]]] = [
     ("Lodging", re.compile(r"\b(hotel|hotels|inn|suites|resort|lodge|motel)\b", re.I)),
+    # Matched per alias (not against the joined string): a "$"-anchored pattern
+    # over a set join depended on which alias happened to come LAST — Python
+    # set order varies with PYTHONHASHSEED, so a regen could flip a brand
+    # between Travel and Other from run to run.
     ("Travel", re.compile(r"\b(air lines|airlines|airways|air)\b$", re.I)),
     (
         "Meals",
@@ -39,7 +73,7 @@ MISC_REFINE: list[tuple[str, re.Pattern[str]]] = [
             r"restaurant|steakhouse|sushi|bbq|barbecue|chicken|sandwich(es)?|subs?|"
             r"wings|diner|bistro|brewing|brewery|bar & grill|ice cream|smoothie|"
             r"juice|bagels?|pancakes?|waffle|noodle|ramen|pho|kitchen|eatery|"
-            r"roadhouse|cantina|chophouse|buffet|theatres?|cinemas?|cinema)\b",
+            r"roadhouse|cantina|chophouse|buffet)\b",
             re.I,
         ),
     ),
@@ -49,9 +83,13 @@ MISC_REFINE: list[tuple[str, re.Pattern[str]]] = [
 
 
 def refine_misc(name: str, aliases: set[str]) -> str:
-    hay = " ".join([name, *aliases])
+    override = NAME_OVERRIDES.get(name)
+    if override:
+        return override
     for category, rx in MISC_REFINE:
-        if rx.search(hay):
+        # Per-string matching keeps the result independent of set iteration
+        # order (the aliases are a set).
+        if any(rx.search(s) for s in (name, *sorted(aliases))):
             return category
     return "Other"
 

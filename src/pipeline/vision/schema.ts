@@ -57,17 +57,39 @@ export function userInstruction(): string {
  *  surrounding prose). Returns a loose record or null. */
 export function parseVisionJson(text: string): Record<string, unknown> | null {
   if (!text) return null;
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const body = fenced ? fenced[1]! : text;
-  const start = body.indexOf("{");
+  // Reasoning models on the free router leak <think>…</think> blocks, whose
+  // braces used to defeat the first-"{"-to-last-"}" slice.
+  const stripped = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  const fenced = stripped.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const body = fenced ? fenced[1]! : stripped;
+  const tryParse = (s: string): Record<string, unknown> | null => {
+    try {
+      const parsed: unknown = JSON.parse(s);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  };
+  // Widest slice first (the common case), then every balanced object from
+  // each "{" — prose or a stray brace before the JSON no longer sinks it.
   const end = body.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
-  try {
-    const parsed: unknown = JSON.parse(body.slice(start, end + 1));
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
-  } catch {
-    return null;
+  for (let start = body.indexOf("{"); start >= 0 && start < end; start = body.indexOf("{", start + 1)) {
+    const wide = tryParse(body.slice(start, end + 1));
+    if (wide) return wide;
+    let depth = 0;
+    for (let i = start; i <= end; i++) {
+      const ch = body[i];
+      if (ch === "{") depth++;
+      else if (ch === "}" && --depth === 0) {
+        const balanced = tryParse(body.slice(start, i + 1));
+        if (balanced) return balanced;
+        break;
+      }
+    }
   }
+  return null;
 }
 
 function coerceAmount(v: unknown): number {

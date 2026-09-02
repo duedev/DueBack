@@ -29,9 +29,10 @@
   --bg-sunken: #efebe4;
   --ink: #1c1917;
   --ink-soft: #55524d;
-  --ink-faint: #7d7871;
+  --ink-faint: #6b665f; /* 5.2:1 on --bg, 4.8:1 on --bg-sunken — the old #7d7871 was 3.7–4.3:1, below AA for the small copy it colours */
   --line: #e4dfd6;
   --line-strong: #cfc8bc;
+  --line-control: #8a837a; /* form-control borders: 3.4:1 on --bg (WCAG 1.4.11 needs 3:1) — --line-strong is 1.5:1 and was the inputs' only boundary */
 
   --accent: #147246; /* primary actions — 5.5:1 on --bg */
   --accent-strong: #0c5433;
@@ -63,7 +64,6 @@
   --cat-4-ink: #ffffff; /* 5.70:1 on --cat-4 */
   --err-ink: #ffffff; /* 6.55:1 on --err */
 
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
   color-scheme: light;
 }
 
@@ -79,6 +79,7 @@
   --ink-faint: #8b8379;
   --line: #2a251f;
   --line-strong: #453e35;
+  --line-control: #736b5f; /* 3.3:1 on --bg-raised */
 
   --accent: #3ecf82; /* 9.4:1 on --bg */
   --accent-strong: #7fe6ab;
@@ -109,7 +110,6 @@
   --shadow-2: 0 2px 6px rgb(0 0 0 / 0.45), 0 10px 28px rgb(0 0 0 / 0.5);
   --shadow-3: 0 6px 16px rgb(0 0 0 / 0.5), 0 24px 60px rgb(0 0 0 / 0.6);
 
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
   color-scheme: dark;
 }
 
@@ -125,6 +125,7 @@
     --ink-faint: #8b8379;
     --line: #2a251f;
     --line-strong: #453e35;
+    --line-control: #736b5f; /* 3.3:1 on --bg-raised */
 
     --accent: #3ecf82;
     --accent-strong: #7fe6ab;
@@ -189,7 +190,10 @@ body {
 body {
   margin: 0;
   font-family: var(--font-ui);
-  font-size: 16px;
+  /* 100%, not 16px: every component size is rem (root-relative), so a
+     pinned body size made copy ignore the browser's font-size preference
+     while buttons and inputs followed it — the inversion nobody wants. */
+  font-size: 100%;
   line-height: 1.55;
   color: var(--ink);
   background: var(--bg);
@@ -238,8 +242,15 @@ small,
 }
 
 :focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring); /* follows the element's own border-radius */
+  /* An OUTLINE, not a box-shadow ring: the ring used to live in box-shadow,
+     where every later box-shadow rule (.btn-primary, .card, .btn:hover, the
+     breathing next-action keyframes) silently cancelled it — keyboard focus
+     on a receipt card or a primary button was invisible. Outline is its own
+     property, follows border-radius, and survives forced-colors mode. Same
+     look as before: a 2px gap, then a 2px accent ring. Controls inside
+     overflow:hidden containers set outline: none and draw an inset ring. */
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 img {
@@ -337,7 +348,7 @@ textarea {
   font: 400 0.95rem/1.4 var(--font-ui);
   color: var(--ink);
   background: var(--bg-raised);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line-control);
   border-radius: var(--radius-s);
   padding: 0.55rem 0.7rem;
   width: 100%;
@@ -351,8 +362,38 @@ textarea:hover {
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
+  /* Transparent, not none: normally the accent border + soft shadow carry
+     focus; under forced colors those are stripped and the (transparent)
+     outline is what the OS paints in its Highlight colour. */
+  outline: 2px solid transparent;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Forced colors (Windows High Contrast) drop backgrounds and shadows, and the
+   pressed toggles — seg buttons, category chips, month chips, Nerd mode —
+   are background-only fills, so their state vanished. All of them carry
+   aria-pressed. Underline, not outline: outline is the focus channel. */
+@media (forced-colors: active) {
+  [aria-pressed="true"] {
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+  }
+}
+/* iOS Safari zooms the viewport into any field under 16px on focus; the
+   0.95rem fields (15.2px) made every Employee/Job/Amount tap a zoom. Touch
+   pointers get 16px; desktop keeps the denser size. */
+@media (pointer: coarse) {
+  input[type="text"],
+  input[type="date"],
+  input[type="number"],
+  input[type="password"],
+  input[type="email"],
+  select,
+  textarea {
+    font-size: 1rem;
+  }
 }
 
 label {
@@ -451,6 +492,10 @@ label {
 .wrap {
   width: min(1120px, calc(100% - 2.5rem));
   margin-inline: auto;
+  /* Edge-to-edge (viewport-fit=cover): in notched landscape the sticky
+     headers and the board ran under the sensor housing. Zero everywhere
+     else; border-box, so the padding comes out of the width. */
+  padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
 }
 
 .section-label {

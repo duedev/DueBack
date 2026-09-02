@@ -52,7 +52,7 @@ test("the employee header labels every page; the job is per image", () => {
         fakeImage({ job: "Warehouse Refit #77" }),
         fakeImage({ job: "Q1 Coffee Run #42" }),
       ],
-      { employee: "Ada Lovelace", jobName: "Q1 Coffee Run", jobNumber: "42" },
+      { employee: "Ada Lovelace" },
     ),
   );
   const headers = pdf.match(/Receipt packet - Ada Lovelace/g);
@@ -105,21 +105,78 @@ test("pages are Letter-size and the media box never changes", () => {
   assert.ok(pdf.includes("/MediaBox [0 0 612 792]"));
 });
 
-test("xref offsets point at their objects", () => {
-  const bytes = buildPrintPdf([fakeImage(), fakeImage()], { employee: "A" });
-  const pdf = ascii(bytes);
+/** Every xref entry must land exactly on its "N 0 obj". */
+function assertXrefValid(pdf: string): void {
   const xrefAt = Number(pdf.match(/startxref\n(\d+)\n/)![1]);
   assert.equal(pdf.slice(xrefAt, xrefAt + 4), "xref");
-  // Every in-use entry must land exactly on "N 0 obj".
   const entries = pdf.slice(xrefAt).match(/^\d{10} 00000 n /gm)!;
   entries.forEach((e, i) => {
     const off = Number(e.slice(0, 10));
     assert.match(pdf.slice(off, off + 12), new RegExp(`^${i + 1} 0 obj`), `object ${i + 1}`);
   });
+}
+
+test("xref offsets point at their objects", () => {
+  assertXrefValid(ascii(buildPrintPdf([fakeImage(), fakeImage()], { employee: "A" })));
+});
+
+test("every stream /Length is its exact byte count, even with non-ASCII text and a JPEG full of delimiters", () => {
+  // xref offsets come from the bytes actually pushed, so they can't catch a
+  // /Length that disagrees with the stream — a reader would then mis-parse
+  // every object after it.
+  const jpeg = new Uint8Array([0xff, 0xd8, 0x0a, 0x0d, 0x0a, 0x65, 0x6e, 0x64, 0xff, 0xd9]);
+  const pdf = ascii(
+    buildPrintPdf([fakeImage({ jpeg, name: "Café_Zoë.jpg", job: "Übung #1" })], { employee: "Renée" }),
+  );
+  const streams = [...pdf.matchAll(/\/Length (\d+) >>\nstream\n/g)];
+  assert.equal(streams.length, 2, "one content stream + one image");
+  for (const m of streams) {
+    const start = m.index! + m[0].length;
+    const n = Number(m[1]);
+    assert.equal(pdf.slice(start + n, start + n + 11), "\nendstream\n", `stream at ${m.index}`);
+  }
+  const img = streams[1]!;
+  const imgStart = img.index! + img[0].length;
+  assert.equal(pdf.slice(imgStart, imgStart + jpeg.length), ascii(jpeg), "JPEG bytes embedded verbatim");
+  assertXrefValid(pdf);
+});
+
+test("an empty batch still yields one valid page", () => {
+  const pdf = ascii(buildPrintPdf([], {}));
+  assert.equal(pdf.match(/\/Type \/Page\b/g)?.length, 1);
+  assert.ok(pdf.includes("/Count 1"));
+  assert.match(pdf, /\/XObject <<\s*>>/);
+  assertXrefValid(pdf);
 });
 
 test("printPdfFileName is sanitized and date-stamped", () => {
   const d = new Date(2026, 7, 26);
   assert.equal(printPdfFileName("Ada Lovelace", d), "Receipt_Packet_Ada_Lovelace_20260826.pdf");
   assert.equal(printPdfFileName(undefined, d), "Receipt_Packet_Employee_20260826.pdf");
+});
+
+test("accented names render as Latin-1 under WinAnsi instead of '?'", () => {
+  const pdf = ascii(buildPrintPdf([fakeImage({ job: "Señor's job #42" })], { employee: "José García" }));
+  assert.ok(pdf.includes("Receipt packet - Jos\xe9 Garc\xeda"), "header keeps é/í");
+  assert.ok(pdf.includes("Se\xf1or's job #42"), "caption keeps ñ");
+  // A decomposed e + combining acute collapses to the one Latin-1 byte.
+  const nfd = ascii(buildPrintPdf([fakeImage()], { employee: "Jose\u0301" }));
+  assert.ok(nfd.includes("Receipt packet - Jos\xe9"));
+  // Past Latin-1 still degrades — but to one "?", not mojibake.
+  const far = ascii(buildPrintPdf([fakeImage()], { employee: "Łukasz" }));
+  assert.ok(far.includes("Receipt packet - ?ukasz"));
+  assert.equal(printPdfFileName("José García", new Date(2026, 7, 26)), "Receipt_Packet_Jose_Garcia_20260826.pdf");
+});
+
+test("the section label precedes the file name in the caption and is never truncated", () => {
+  const pdf = ascii(
+    buildPrintPdf(
+      [fakeImage({ label: "Ground Transportation #12", name: "transport_06-25-26_uber_technologies_inc.jpg" })],
+      {},
+    ),
+  );
+  assert.ok(pdf.includes("Ground Transportation #12  transport_"), "label first, then the (shortened) name");
+  assert.ok(!pdf.includes("uber_technologies_inc.jpg"), "the file name gave way, not the label");
+  const plain = ascii(buildPrintPdf([fakeImage({ name: "receipt (page 1).jpg" })], {}));
+  assert.ok(plain.includes("receipt \\(page 1\\).jpg"));
 });

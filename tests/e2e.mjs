@@ -2,7 +2,7 @@
 // headless Chromium. Proves the browser-only paths the unit tests can't:
 // the landing hero, IndexedDB storage, canvas image-prep, on-device Tesseract
 // OCR, the board/review UI, and xlsx export. Run with: node tests/e2e.mjs
-import { chromium } from "playwright";
+import { chromium, devices } from "playwright";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -18,6 +18,9 @@ const BASE = `http://localhost:${PORT}/`;
 
 const log = (...a) => console.log("•", ...a);
 let failures = 0;
+// Uncaught exceptions and console errors used to be logged and ignored; a
+// run that threw inside the pipeline could still print "all checks passed".
+let pageErrors = 0;
 function check(cond, msg) {
   if (cond) log("PASS:", msg);
   else {
@@ -319,9 +322,18 @@ function anchorPx(ws, range) {
 
 async function main() {
   log("starting preview server…");
+  // Run vite's bin directly (not through npx): killing the npx wrapper left
+  // the preview server orphaned on the port, and the next run then tested
+  // whatever stale build was still bound there.
   const server = spawn(
-    "npx",
-    ["vite", "preview", "--port", String(PORT), "--strictPort"],
+    process.execPath,
+    [
+      join(root, "node_modules", "vite", "bin", "vite.js"),
+      "preview",
+      "--port",
+      String(PORT),
+      "--strictPort",
+    ],
     { cwd: root, stdio: "ignore" },
   );
   let browser;
@@ -333,7 +345,14 @@ async function main() {
     const ctx = await browser.newContext({ acceptDownloads: true });
     const page = await ctx.newPage();
     page.on("console", (m) => {
-      if (m.type() === "error") console.error("  [page error]", m.text());
+      if (m.type() === "error") {
+        pageErrors++;
+        console.error("  [page error]", m.text());
+      }
+    });
+    page.on("pageerror", (e) => {
+      pageErrors++;
+      console.error("  [uncaught]", e.message);
     });
     page.on("dialog", (d) => d.accept()); // auto-accept confirms
 
@@ -428,7 +447,7 @@ async function main() {
 
     // Files adopt the original app's {category}_{MM-DD-YY}_{vendor} convention.
     check(
-      /^fuel_06-12-26_shell\.png$/.test(gas.renamed || ""),
+      /^fuel_06-12-26_shell\.jpg$/.test(gas.renamed || ""),
       `gas: renamed to the naming convention (got ${gas.renamed})`,
     );
 
@@ -503,7 +522,7 @@ async function main() {
       );
       check(
         pdfRaw.includes("Receipt packet - Ada Lovelace"),
-        "print packet header carries the employee and job",
+        "print packet header carries the employee",
       );
     }
     const xlsxPath = join(dlDir, download.suggestedFilename());
@@ -528,7 +547,9 @@ async function main() {
     let linkCount = 0;
     summarySheet.eachRow((row) => {
       const v = row.getCell(1).value;
-      if (v && typeof v === "object" && v.hyperlink) linkCount++;
+      // HYPERLINK("#'Sheet'!A4", n) formulas (numeric result) — a hyperlink
+      // -typed cell would be "1" stored as text.
+      if (v && typeof v === "object" && (v.hyperlink || /^HYPERLINK\("#'/.test(v.formula ?? ""))) linkCount++;
     });
     check(linkCount === 4, `summary links every receipt to its image (got ${linkCount})`);
 
@@ -718,6 +739,33 @@ async function main() {
       (await page.locator(".drop-veil").count()) === 0,
       "the drop veil clears after the drop",
     );
+
+    // Touch: ONE tap opens a How step. Chromium fires a compat mouseenter
+    // before the tap's click, so a hover-open handler plus the click's
+    // toggle closed the step again (two taps per step on Android).
+    {
+      const touch = await browser.newContext({ ...devices["Pixel 7"] });
+      const tp = await touch.newPage();
+      await tp.goto(BASE, { waitUntil: "load" });
+      const second = tp.locator("#how .steps li:nth-child(2) details");
+      await second.locator("summary").tap();
+      check(await second.evaluate((d) => d.open), "one tap opens a How step on a touch device");
+      await touch.close();
+    }
+    // …and a real mouse hover still opens one without a click. A fresh
+    // context: the main one holds receipts, so its origin boots straight
+    // into the workspace.
+    {
+      const mouse = await browser.newContext();
+      const hp = await mouse.newPage();
+      await hp.goto(BASE, { waitUntil: "load" });
+      const third = hp.locator("#how .steps li:nth-child(3) details");
+      await third.locator("summary").hover();
+      check(await third.evaluate((d) => d.open), "hovering a How step with a mouse opens it");
+      await mouse.close();
+    }
+
+    check(pageErrors === 0, `no uncaught or console errors during the run (got ${pageErrors})`);
   } finally {
     if (browser) await browser.close();
     server.kill("SIGKILL");

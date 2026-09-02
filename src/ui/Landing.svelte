@@ -204,7 +204,7 @@
     {
       id: "privacy",
       q: "Where do my receipts go?",
-      a: "Nowhere. Images are stored in your browser and processed on your device — the reading, the logo matching and the Excel build all run on your hardware. Close the tab and they're still there; clear your browser data and they're gone. Nothing is uploaded.",
+      a: "Nowhere, by default. Images are stored in your browser and processed on your device — the reading, the logo matching and the Excel build all run on your hardware. Close the tab and they're still there; clear your browser data and they're gone. The one exception is the optional AI assist: when it is on (Settings → AI assist; a build that ships a free key turns it on for you, and one click turns it off), only the receipts the reader can't make out confidently are sent to the model you picked. If the site's operator turned on the optional visit counter (Cloudflare Web Analytics), it records a page view — never a receipt.",
     },
     {
       q: "What do I hand to my office?",
@@ -222,12 +222,12 @@
       id: "account",
       nerd: true,
       q: "What about cloud sync and the AI assist?",
-      a: "They're rolling out now; the roadmap below tracks them. Signing in will sync your batches, receipts and taught brands to your own private workspace behind row-level security, so you can pick up on any device — and the AI assist will send low-confidence receipts to the model you configure. Both will always be opt-in and off by default.",
+      a: "They're rolling out now; the roadmap below tracks them. Signing in will sync your batches, receipts and taught brands to your own private workspace behind row-level security, so you can pick up on any device — and the AI assist sends only low-confidence receipts to the model you configure. Sync is opt-in (nothing leaves the device until you sign in); the assist is one switch in Settings, on by default only on a build that ships a free key.",
     },
     {
       nerd: true,
       q: "Can it watch a Google Drive or OneDrive folder?",
-      a: "Not yet. Both are on the roadmap: automatic Drive-folder scanning that keeps a workbook current, and saving reports straight to OneDrive. The full roadmap is right below this FAQ.",
+      a: "Watching a folder, not yet: automatic Drive-folder scanning that keeps a workbook current is planned. Saving the finished workbook (and its print packet) straight to OneDrive is built and rolling out: on deployments configured for it, connect in Settings → OneDrive and use Save to OneDrive in the report bar. The full roadmap is right below this FAQ.",
     },
     {
       q: "What is Nerd mode?",
@@ -247,7 +247,15 @@
   tabindex="-1"
 />
 
-<div class="landing" class:nerd-on={prefs.nerd}>
+<!-- id="home": the footer/nav "#home" links used to change no fragment when
+     the page already sat at #home (every return from the workspace lands
+     there), so no hashchange fired and nothing scrolled. A real target lets
+     the browser's own fragment navigation scroll to the top regardless. -->
+<div class="landing" id="home" class:nerd-on={prefs.nerd}>
+  <!-- Landmarks: the page had no <main> (the hero <header> read as the
+       banner and a screen reader's "jump to main" found nothing). The nav
+       is the banner, hero → contact is main, the footer stays outside. -->
+  <a class="skip-link" href="#main">Skip to content</a>
   {#if dragging}
     <div class="drop-veil" aria-hidden="true">
       <div class="drop-box">
@@ -261,7 +269,7 @@
   {/if}
 
   <!-- ======================= sticky anchor nav ======================= -->
-  <div class="nav-bar">
+  <header class="nav-bar">
     <nav class="wrap nav" aria-label="Site">
       <a class="brand" href="#home" aria-label="DueBack home">
         <BrandLogo size={30} />
@@ -290,12 +298,16 @@
         <ThemeToggle />
       </div>
     </nav>
-  </div>
+  </header>
 
+  <main id="main">
   <Hero onAdd={pick} />
 
   <!-- ======================= the pitch, in one breath ================ -->
-  <section class="wrap why">
+  <!-- id'd so the shared .landing [id] scroll-margin clears the sticky nav:
+       the hero cue used to scroll .why to y=0 and its label sat under the
+       nav. -->
+  <section id="why" class="wrap why">
     <p class="section-label">Why DueBack</p>
     <h2>Stop retyping vendors, dates and totals.</h2>
     <p>
@@ -351,7 +363,8 @@
         row-level security (<strong>user_id = auth.uid()</strong>),
         reconciled last-write-wins on <strong>updatedAt</strong> in both
         directions: a stale device can't clobber a newer edit, and deletes
-        propagate as tombstones so nothing you removed ever resurrects.
+        propagate as tombstones that a stale device can't undo — only a
+        genuinely newer edit brings a record back.
       </p>
       <p>
         The optional AI assist never sees a raw API key: calls route through
@@ -371,7 +384,7 @@
         <ul>
           <li>On-device reading: OCR, cleanup passes and total reconciliation</li>
           <li>Teach-a-brand visual logo recognition</li>
-          <li>Themed Excel workbook, insights dashboard, CSV and image archive</li>
+          <li>Themed Excel workbook, insights dashboard and a print packet PDF</li>
           <li>Installable app (PWA) that works offline</li>
         </ul>
       </div>
@@ -380,7 +393,7 @@
         <ul>
           <li>Cloud sync: sign in and pick up your batches on any device</li>
           <li>AI second opinion for low-confidence receipts, behind a policed proxy</li>
-          <li>Save the workbook straight to OneDrive</li>
+          <li>Save the workbook and print packet straight to OneDrive (built; on where a deployment is configured for it)</li>
         </ul>
       </div>
       <div class="card road">
@@ -399,6 +412,7 @@
   </section>
 
   <ContactSection />
+  </main>
 
   <footer class="foot">
     <div class="wrap foot-in">
@@ -412,14 +426,14 @@
         </p>
       </div>
       <nav class="foot-col" aria-label="Product sections">
-        <h4>Product</h4>
+        <h3>Product</h3>
         <a href="#how">How it works</a>
         <a href="#workbook">The Excel workbook</a>
         <a href="#privacy">Your data</a>
         <a href="#faq">Help &amp; FAQ</a>
       </nav>
       <nav class="foot-col" aria-label="Project links">
-        <h4>Project</h4>
+        <h3>Project</h3>
         <a href="https://github.com/duedev/DueBack" rel="noopener">GitHub</a>
         <a href="#contact">Contact</a>
         {#if prefs.nerd}<a href="#roadmap">Roadmap</a>{/if}
@@ -484,6 +498,20 @@
   }
 
   /* ---- nav ---- */
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: 0.5rem;
+    z-index: 100;
+    padding: 0.5rem 0.9rem;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    color: var(--accent-ink);
+    font: 600 0.9rem/1 var(--font-ui);
+  }
+  .skip-link:focus {
+    left: 0.75rem;
+  }
   .nav-bar {
     position: sticky;
     top: 0;
@@ -536,7 +564,8 @@
   /* .nav-tabs scrolls horizontally, which clips the global outside focus
      halo — draw the ring inset. */
   .nav-tabs .tab:focus-visible {
-    outline: none;
+    outline: 2px solid transparent; /* forced colors paints this; inset so the clip keeps it */
+    outline-offset: -4px;
     box-shadow:
       inset 0 0 0 2px var(--bg),
       inset 0 0 0 4px var(--accent);
@@ -637,7 +666,9 @@
   .qa summary {
     cursor: pointer;
     font: 600 1rem/1.3 var(--font-ui);
-    padding: 1rem 1.2rem;
+    /* Right padding clears the absolute "+" marker: a long question that
+       wrapped at phone width ran its first line under the glyph. */
+    padding: 1rem 2.8rem 1rem 1.2rem;
     list-style: none;
     position: relative;
   }
@@ -646,6 +677,8 @@
   }
   /* .qa's overflow:hidden clips the global focus ring — draw it inset. */
   .qa summary:focus-visible {
+    outline: 2px solid transparent;
+    outline-offset: -4px;
     box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 4px var(--accent);
   }
   .qa summary::after {
@@ -777,11 +810,13 @@
     align-content: start;
     justify-items: start;
   }
-  .foot-col h4 {
+  /* h3 (the page's sections are h2s — h4 skipped a level); --ink-soft
+     because 0.75rem uppercase is small copy and --ink-faint read 3.7:1. */
+  .foot-col h3 {
     font: 700 0.75rem/1 var(--font-ui);
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--ink-faint);
+    color: var(--ink-soft);
     margin: 0 0 0.3rem;
   }
   .foot-col a {

@@ -67,9 +67,35 @@ function composite(rgbA: string, bg: Rgb): Rgb {
 // ── the two dark palettes stay identical ─────────────────────────────────────
 
 test("prefers-color-scheme fallback matches the [data-theme=dark] palette", () => {
+  // Both directions: a token declared in only one dark block used to slip
+  // through (the walk only checked the fallback's keys against the toggle).
+  assert.deepEqual([...dark.keys()].sort(), [...darkAuto.keys()].sort(), "dark blocks declare the same tokens");
   for (const [name, value] of darkAuto) {
     assert.equal(dark.get(name), value, `${name} differs between dark blocks`);
   }
+});
+
+test("--ink-faint meets AA on every paper tone in both palettes", () => {
+  for (const [label, pal] of [["light", root], ["dark", dark]] as const) {
+    const ink = hex(pal.get("--ink-faint")!);
+    for (const bg of ["--bg", "--bg-raised", "--bg-sunken"]) {
+      assert.ok(contrast(ink, hex(pal.get(bg)!)) >= 4.5, `${label} --ink-faint on ${bg}`);
+    }
+  }
+});
+
+test("--line-control is the form-control boundary in all three palettes and clears 3:1", () => {
+  for (const pal of [root, dark, darkAuto]) assert.ok(pal.get("--line-control"), "declared");
+  for (const [label, pal] of [["light", root], ["dark", dark]] as const) {
+    const line = hex(pal.get("--line-control")!);
+    assert.ok(contrast(line, hex(pal.get("--bg-raised")!)) >= 3, `${label} control border on --bg-raised (WCAG 1.4.11)`);
+  }
+  // Inputs use it — the hairline --line-strong was 1.6:1, invisible as a field edge.
+  assert.match(themeCss, /textarea \{[^}]*border: 1px solid var\(--line-control\)/);
+});
+
+test("pressed toggles keep a state under forced colors", () => {
+  assert.match(themeCss, /@media \(forced-colors: active\)\s*\{\s*\[aria-pressed="true"\]\s*\{[^}]*text-decoration: underline/);
 });
 
 test("--gold-text exists in all three palettes", () => {
@@ -90,10 +116,15 @@ test("light --gold-text meets AA everywhere the warn chips render", () => {
   assert.ok(contrast(goldText, chipBg) >= 4.5, "on gold-soft chip fill");
 });
 
-test("light --ink-soft meets AA on both paper tones (fname, footer)", () => {
+test("light --ink-soft meets AA on every paper tone (fname, footer)", () => {
   const ink = hex(root.get("--ink-soft")!);
   assert.ok(contrast(ink, hex(root.get("--bg")!)) >= 4.5);
   assert.ok(contrast(ink, hex(root.get("--bg-raised")!)) >= 4.5);
+  // The footer's actual ground: its 12px bold column heads are --ink-soft
+  // (--ink-faint only reached 3.7:1 there).
+  assert.ok(contrast(ink, hex(root.get("--bg-sunken")!)) >= 4.5, "on --bg-sunken (footer)");
+  const darkInk = hex(dark.get("--ink-soft")!);
+  assert.ok(contrast(darkInk, hex(dark.get("--bg-sunken")!)) >= 4.5, "dark footer");
 });
 
 test("dark --gold-text meets AA everywhere the warn chips render", () => {
@@ -152,10 +183,17 @@ test(".chip-warn text uses the small-copy gold, not --gold", () => {
   assert.match(m![1]!, /color:\s*var\(--gold-text\)/);
 });
 
-test("the global focus ring doesn't reshape the focused element", () => {
+test("the global focus ring doesn't reshape the focused element and lives in the outline channel", () => {
   const m = themeCss.match(/^:focus-visible\s*\{([^}]*)\}/m);
   assert.ok(m, "global :focus-visible rule exists");
   assert.doesNotMatch(m![1]!, /border-radius/);
+  // Outline survives forced colors and can't be cancelled by a later
+  // box-shadow (.btn-primary/.card used to erase the ring).
+  assert.match(m![1]!, /outline: 2px solid/);
+  assert.doesNotMatch(m![1]!, /outline: none/);
+  // Inputs keep a transparent outline for the same reason, never none.
+  const inputs = themeCss.match(/textarea:focus-visible\s*\{([^}]*)\}/);
+  assert.ok(inputs && !/outline: none/.test(inputs[1]!), "input focus rule has no outline: none");
 });
 
 // ── pre-paint theme stamp + manifest ─────────────────────────────────────────
@@ -193,4 +231,31 @@ test("html/body clip horizontal overflow, hidden fallback declared first", () =>
   // No overscroll-behavior-x — it would disable swipe back/forward history
   // navigation, which the hash-routed landing relies on.
   assert.doesNotMatch(themeCss, /overscroll-behavior-x/);
+});
+
+// ── landing copy vs the real report bar ──────────────────────────────────────
+// The CSV button was removed and the images ZIP is hidden by product call;
+// the landing advertised both for weeks afterwards. Pinned only while the
+// bar still hides them, so the guard relaxes on its own when they return.
+test("the landing does not advertise the retired CSV or the hidden images ZIP", () => {
+  const bar = read("src/ui/ExportBar.svelte");
+  const zipHidden = bar.includes("const includeZip = false");
+  const csvGone = !/\bCSV\b/.test(bar.replace(/\/\/.*$/gm, "").replace(/<!--[\s\S]*?-->/g, ""));
+  if (!zipHidden && !csvGone) return;
+  for (const f of ["src/ui/landing/HowSection.svelte", "src/ui/landing/WorkbookSection.svelte", "src/ui/Landing.svelte"]) {
+    const copy = read(f).replace(/<!--[\s\S]*?-->/g, "").replace(/\/\/.*$/gm, "");
+    if (zipHidden) assert.ok(!/images ZIP|image archive/i.test(copy), `${f} still advertises the images ZIP`);
+    if (csvGone) assert.ok(!/\bCSV\b/.test(copy), `${f} still advertises a CSV`);
+  }
+});
+
+test("the PWA chrome colour is one value across theme.css, index.html, state.svelte.ts and the manifest", () => {
+  const bg = dark.get("--bg")!;
+  const vite = read("vite.config.ts");
+  assert.ok(vite.includes(`theme_color: "${bg}"`), "manifest theme_color");
+  assert.ok(vite.includes(`background_color: "${bg}"`), "manifest background_color");
+  assert.ok(read("index.html").includes(`content="${bg}"`), "index.html theme-color meta");
+  assert.ok(read("src/ui/state.svelte.ts").includes(`dark: "${bg}"`), "applyTheme's dark meta colour");
+  const light = root.get("--bg")!;
+  assert.ok(read("src/ui/state.svelte.ts").includes(`light: "${light}"`), "applyTheme's light meta colour");
 });

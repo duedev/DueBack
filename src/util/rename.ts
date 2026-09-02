@@ -2,7 +2,7 @@ import type { Category } from "../types.ts";
 
 // Receipt file naming — the original Python app's convention, adopted
 // verbatim (process_receipts.rename_receipt_image):
-//   {category}_{MM-DD-YY}_{vendor}.ext   e.g.  fuel_12-30-24_chevron.jpg
+//   {category}_{MM-DD-YY}_{vendor}.jpg   e.g.  fuel_12-30-24_chevron.jpg
 // Its category prefixes were fuel/mats/misc; this app's richer taxonomy maps
 // onto short lowercase prefixes in the same spirit.
 
@@ -21,9 +21,40 @@ const CATEGORY_PREFIX: Record<Category, string> = {
   Other: "misc",
 };
 
-/** Port of the original `sanitize_filename_part`. */
+/** Fold accented Latin letters to their ASCII base ("Café" → "Cafe",
+ *  "Güero" → "Guero"): NFKD splits a precomposed letter into base + combining
+ *  marks, and the marks are dropped. Letters with no ASCII decomposition
+ *  (CJK, Cyrillic, "ß") pass through unchanged for the caller's ASCII strip.
+ *  Shared by every file-name builder (receipts, workbook, print packet) so
+ *  an accented employee or vendor keeps its letters instead of losing them. */
+export function foldToAscii(s: string): string {
+  return s.normalize("NFKD").replace(/\p{M}+/gu, "");
+}
+
+/** An employee (or other free-text) name as a file-name part: accents fold
+ *  to ASCII, punctuation drops, spaces become underscores, capped — the ONE
+ *  rule behind Reimbursements_<who>_<date>.xlsx, Receipt_Packet_<who>_….pdf
+ *  and the Report/Receipts archives (four copies of the regex had drifted:
+ *  only the workbook's capped the length). Empty or non-Latin input reads
+ *  "Employee". */
+export function employeeFilePart(name: string | undefined, max = 40): string {
+  return (
+    foldToAscii(name || "")
+      .replace(/[^\w\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "_")
+      .slice(0, max) || "Employee"
+  );
+}
+
+/** Port of the original `sanitize_filename_part`. Diverges deliberately in
+ *  one place: accents are FOLDED before the ASCII strip (Café → cafe) where
+ *  the Python original dropped the letter (caf). File names stay ASCII on
+ *  purpose — the print packet renders non-ASCII as "?" in WinAnsi Helvetica —
+ *  so non-Latin scripts sanitize to "" and the receipt falls back to the
+ *  vendor-less `{cat}_{date}` form. */
 export function sanitizeFilePart(s: string): string {
-  return s
+  return foldToAscii(s)
     .toLowerCase()
     .trim()
     .replace(/[^\w\s-]/g, "")
@@ -42,14 +73,17 @@ export function dateMMDDYY(iso: string): string {
   return `${mm}-${dd}-${m[1]!.slice(2)}`;
 }
 
-/** The receipt's display/file name in the original app's convention. */
+/** The receipt's display/file name in the original app's convention. The
+ *  extension is always `.jpg`: the app stores and exports every receipt as
+ *  JPEG (imagePrep/annotate re-encode whatever was uploaded), so a `.heic`
+ *  or `.png` upload must not lend its extension to JPEG bytes. The upload's
+ *  own name — extension included — lives in `Receipt.originalFileName`. */
 export function receiptFileName(r: {
   category: Category;
   date: string;
   vendor: string;
-  fileName: string;
 }): string {
-  const ext = (/\.[a-z0-9]{2,5}$/i.exec(r.fileName)?.[0] ?? ".jpg").toLowerCase();
+  const ext = ".jpg";
   // Renamed categories that predate stored data ("Meals & Entertainment")
   // are normalized on repo reads, but belt-and-braces here too.
   const LEGACY_PREFIX: Record<string, string> = { "Meals & Entertainment": "meals" };

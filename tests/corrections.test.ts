@@ -132,3 +132,11 @@ test("mergeCorrections keeps unrelated corrections separate", () => {
   log = mergeCorrections(log, [rec("amount", 2819.28, 248.81)]);
   assert.equal(log.length, 2);
 });
+
+test("locateValue's vendor probe is word-bounded and never a stopword", () => {
+  const hd = lines(["THE HOME DEPOT", "1005-667-380 2 YR REPLACE <A,U> 12.00", "TOTAL 12.00"]);
+  assert.equal(locateValue(hd, "vendor", "Ace Hardware"), null);
+  assert.equal(locateValue(lines(["OTHER STORE", "THERMAL PAPER 5.00"]), "vendor", "The UPS Store"), null);
+  assert.equal(locateValue(lines(["7-ELEUEN", "TOTAL 5.00"]), "vendor", "7-Eleven")?.lineText, "7-ELEUEN");
+  assert.equal(locateValue(lines(["WELCOME", "MOBIL", "TOTAL 5.00"]), "vendor", "Mobil")?.lineText, "MOBIL");
+});
