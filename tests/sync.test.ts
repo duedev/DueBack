@@ -134,3 +134,39 @@ test("an active batch missing from the candidates counts as empty", () => {
   ]);
   assert.equal(picked, "cloud");
 });
+
+// ── Audit round (2026-09) ─────────────────────────────────────────────────────
+import { fetchAll, tombstoneLanded, PULL_PAGE } from "../src/store/syncMerge.ts";
+
+test("fetchAll pages until a short page and concatenates in order", async () => {
+  const calls: [number, number][] = [];
+  const rows = Array.from({ length: 2350 }, (_, i) => ({ id: i }));
+  const out = await fetchAll(
+    async (from, to) => {
+      calls.push([from, to]);
+      return { data: rows.slice(from, to + 1), error: null };
+    },
+    "receipts",
+  );
+  assert.equal(out.length, 2350);
+  assert.equal(out[2349]!.id, 2349);
+  assert.deepEqual(calls, [
+    [0, PULL_PAGE - 1],
+    [PULL_PAGE, 2 * PULL_PAGE - 1],
+    [2 * PULL_PAGE, 3 * PULL_PAGE - 1],
+  ]);
+  // An exact multiple still needs one more (empty) page to know it is done.
+  const exact = await fetchAll(async (from, to) => ({ data: rows.slice(from, Math.min(to + 1, 2000)), error: null }), "x");
+  assert.equal(exact.length, 2000);
+  await assert.rejects(
+    fetchAll(async () => ({ data: null, error: { message: "boom" } }), "batches"),
+    /batches pull: boom/,
+  );
+});
+
+test("tombstoneLanded: only a row returned with deleted_at set takes its blobs", () => {
+  assert.equal(tombstoneLanded([{ deleted_at: "2026-09-02T00:00:00Z" }]), true);
+  assert.equal(tombstoneLanded([{ deleted_at: null }]), false); // lww_guard kept it
+  assert.equal(tombstoneLanded([]), false); // never pushed
+  assert.equal(tombstoneLanded(null), false);
+});

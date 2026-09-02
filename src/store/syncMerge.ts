@@ -103,3 +103,39 @@ export function chooseAdoptionBatch(
   }
   return best?.id ?? null;
 }
+
+/** PostgREST caps a select at 1000 rows by default; an unpaginated pull
+ *  silently dropped everything past that once receipts — tombstones
+ *  included — accumulated, so a fresh device missed live rows. */
+export const PULL_PAGE = 1000;
+
+/** Page through a query until a short page arrives. `page(from, to)` runs
+ *  one `.range(from, to)` select over a STABLE ordering. */
+export async function fetchAll<T>(
+  page: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  label: string,
+  pageSize = PULL_PAGE,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await page(from, from + pageSize - 1);
+    if (error) throw new Error(`${label} pull: ${error.message}`);
+    const rows = data ?? [];
+    out.push(...rows);
+    if (rows.length < pageSize) return out;
+  }
+}
+
+/** Whether a tombstone UPDATE actually landed. The lww_guard trigger keeps a
+ *  row a NEWER remote edit revived and returns it with deleted_at still null;
+ *  a never-pushed row returns nothing. Only a landed tombstone may take the
+ *  row's storage objects with it — removing them otherwise left a live,
+ *  revived receipt without its images on every device. */
+export function tombstoneLanded(
+  rows: readonly { deleted_at: string | null }[] | null | undefined,
+): boolean {
+  return (rows ?? []).some((r) => r.deleted_at != null);
+}

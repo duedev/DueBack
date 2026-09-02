@@ -140,8 +140,11 @@ class AppState {
       saveVisionConfig({ enabled: true });
       await repo.setSetting("ai.autoEnabledOnSignIn", true);
     }
-    await sync.start(userId);
-    await this.maybeAdoptSyncedBatch();
+    // Adopt a synced batch only when this call actually started the engine
+    // (its initial pull just ran). Auth fires this for every TOKEN_REFRESHED
+    // too — hourly, and on tab focus — and re-running adoption then repointed
+    // an intentionally fresh empty batch at the last non-empty one.
+    if (await sync.start(userId)) await this.maybeAdoptSyncedBatch();
   }
 
   /** A fresh device pins a brand-new empty batch before sync runs, so pulled
