@@ -29,9 +29,10 @@
   --bg-sunken: #efebe4;
   --ink: #1c1917;
   --ink-soft: #55524d;
-  --ink-faint: #7d7871;
+  --ink-faint: #6b665f; /* 5.2:1 on --bg, 4.8:1 on --bg-sunken — the old #7d7871 was 3.7–4.3:1, below AA for the small copy it colours */
   --line: #e4dfd6;
   --line-strong: #cfc8bc;
+  --line-control: #8a837a; /* form-control borders: 3.4:1 on --bg (WCAG 1.4.11 needs 3:1) — --line-strong is 1.5:1 and was the inputs' only boundary */
 
   --accent: #147246; /* primary actions — 5.5:1 on --bg */
   --accent-strong: #0c5433;
@@ -79,6 +80,7 @@
   --ink-faint: #8b8379;
   --line: #2a251f;
   --line-strong: #453e35;
+  --line-control: #736b5f; /* 3.3:1 on --bg-raised */
 
   --accent: #3ecf82; /* 9.4:1 on --bg */
   --accent-strong: #7fe6ab;
@@ -125,6 +127,7 @@
     --ink-faint: #8b8379;
     --line: #2a251f;
     --line-strong: #453e35;
+    --line-control: #736b5f; /* 3.3:1 on --bg-raised */
 
     --accent: #3ecf82;
     --accent-strong: #7fe6ab;
@@ -344,7 +347,7 @@ textarea {
   font: 400 0.95rem/1.4 var(--font-ui);
   color: var(--ink);
   background: var(--bg-raised);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line-control);
   border-radius: var(--radius-s);
   padding: 0.55rem 0.7rem;
   width: 100%;
@@ -361,6 +364,20 @@ textarea:focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* iOS Safari zooms the viewport into any field under 16px on focus; the
+   0.95rem fields (15.2px) made every Employee/Job/Amount tap a zoom. Touch
+   pointers get 16px; desktop keeps the denser size. */
+@media (pointer: coarse) {
+  input[type="text"],
+  input[type="date"],
+  input[type="number"],
+  input[type="password"],
+  input[type="email"],
+  select,
+  textarea {
+    font-size: 1rem;
+  }
 }
 
 label {

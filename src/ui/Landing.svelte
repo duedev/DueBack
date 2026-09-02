@@ -412,14 +412,14 @@
         </p>
       </div>
       <nav class="foot-col" aria-label="Product sections">
-        <h4>Product</h4>
+        <h3>Product</h3>
         <a href="#how">How it works</a>
         <a href="#workbook">The Excel workbook</a>
         <a href="#privacy">Your data</a>
         <a href="#faq">Help &amp; FAQ</a>
       </nav>
       <nav class="foot-col" aria-label="Project links">
-        <h4>Project</h4>
+        <h3>Project</h3>
         <a href="https://github.com/duedev/DueBack" rel="noopener">GitHub</a>
         <a href="#contact">Contact</a>
         {#if prefs.nerd}<a href="#roadmap">Roadmap</a>{/if}
@@ -778,11 +778,13 @@
     align-content: start;
     justify-items: start;
   }
-  .foot-col h4 {
+  /* h3 (the page's sections are h2s — h4 skipped a level); --ink-soft
+     because 0.75rem uppercase is small copy and --ink-faint read 3.7:1. */
+  .foot-col h3 {
     font: 700 0.75rem/1 var(--font-ui);
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--ink-faint);
+    color: var(--ink-soft);
     margin: 0 0 0.3rem;
   }
   .foot-col a {

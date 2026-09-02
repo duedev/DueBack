@@ -10,10 +10,15 @@ import { PROCESSING } from "../config/constants.ts";
 
 type ProgressListener = (remaining: number) => void;
 
+/** How long to wait before re-checking for jobs whose locks may have gone
+ *  stale (a reload mid-run, a tab that died). */
+const REWAKE_MS = 30_000;
+
 class ProcessingQueue {
   private running = 0;
   private draining = false;
   private listeners = new Set<ProgressListener>();
+  private rewakeTimer: ReturnType<typeof setTimeout> | null = null;
 
   onProgress(fn: ProgressListener): () => void {
     this.listeners.add(fn);
@@ -45,6 +50,16 @@ class ProcessingQueue {
       if (!job) break;
       this.running++;
       void this.run(job.id, job.receiptId, job.attempts);
+    }
+    // Jobs remain but none was claimable: their locks belong to a run that
+    // is gone (reload) or still heartbeating elsewhere. Look again shortly —
+    // nothing else ever re-woke the pool, so those receipts stayed
+    // "Reading…" until the next drop.
+    if (this.running === 0 && !this.rewakeTimer && (await repo.pendingJobCount()) > 0) {
+      this.rewakeTimer = setTimeout(() => {
+        this.rewakeTimer = null;
+        void this.wake();
+      }, REWAKE_MS);
     }
   }
 

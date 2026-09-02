@@ -161,7 +161,15 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   on a card or primary button was invisible. Controls inside
   `overflow:hidden` containers (Workspace `.seg-btn`, FAQ/How `summary`, the
   landing nav tabs) set `outline: none` and draw INSET box-shadow rings
-  locally because the outside ring clips.
+  locally because the outside ring clips. Light `--ink-faint` is `#6b665f`
+  (AA on all three surfaces — the old value was 3.7–4.3:1), form-control
+  borders use `--line-control` (≥3:1 on the raised surface in both themes;
+  `--line-strong` was 1.5:1 and the inputs' only boundary), and coarse
+  pointers get 16px fields so iOS Safari stops zooming on focus. The
+  landing's footer column headings are `h3` in `--ink-soft`; the hero's
+  scroll cue target (`.why`, no id) carries the same `scroll-margin-top` as
+  anchored sections; How steps open on hover only for hover-capable
+  pointers (touch synthesized mouseenter + click and took two taps).
 - **The Drive-folder story is marketing for planned/in-progress work** — it
   lives in the nerd-gated FAQ entries ("What about cloud sync and the AI
   assist?", anchored `#account`, and "Can it watch a Google Drive or
@@ -462,10 +470,13 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   the most recently updated non-empty pulled batch, never one that already
   has receipts (`syncMerge.chooseAdoptionBatch`, Node-tested).
 - **The job lock heartbeats** — `queue.ts` touches `lockedAt` every 20 s while
-  a job runs and `claimNextJob`'s stale threshold is 5 min; processing
-  routinely exceeded the old 60 s (serialized Tesseract, binarize rescue,
-  first-use model downloads), so completing siblings re-claimed in-flight jobs
-  and double-processed (and double-billed the paid vision assist).
+  a job runs and `claimNextJob`'s stale threshold (`repo.STALE_LOCK_MS`) is
+  90 s — four missed beats; processing routinely exceeds a minute
+  (serialized Tesseract, binarize rescue, first-use model downloads), so
+  without the heartbeat completing siblings re-claimed in-flight jobs and
+  double-processed (and double-billed the paid vision assist). The pool
+  re-wakes itself every 30 s while jobs remain but none is claimable, so a
+  reload mid-batch no longer strands the in-flight receipts at "Reading…".
   `releaseJob` only re-puts a job that still exists. Jobs are claimed in
   `createdAt` order (upload order) — ids are random UUIDs, so key order, the
   old claim order, processed a 40-photo drop in no relation to how it was

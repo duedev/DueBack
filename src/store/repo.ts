@@ -40,6 +40,13 @@ function normalizeBrand(b: StoredBrand): StoredBrand {
 
 type Listener = () => void;
 
+/** A lock older than this is a dead run. The queue heartbeats a running
+ *  job every 20 s, so a live job never looks more than ~20 s stale; 90 s is
+ *  four missed beats. It used to be 5 minutes (chosen before the heartbeat
+ *  existed), and after a reload mid-batch the in-flight receipts sat at
+ *  "Reading…" for five minutes — with nothing re-waking the pool even then. */
+export const STALE_LOCK_MS = 90_000;
+
 class Repo {
   private listeners = new Set<Listener>();
 
@@ -192,7 +199,7 @@ class Repo {
    *  model downloads); the queue heartbeats `touchJob` while a job runs, so
    *  only a genuinely dead run goes stale. The jobs table is tiny (one row
    *  per unprocessed receipt), so a full scan per claim is fine. */
-  async claimNextJob(staleLockMs = 300_000): Promise<Job | null> {
+  async claimNextJob(staleLockMs = STALE_LOCK_MS): Promise<Job | null> {
     const conn = await db();
     const tx = conn.transaction("jobs", "readwrite");
     const now = Date.now();

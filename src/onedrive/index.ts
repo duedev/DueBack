@@ -169,8 +169,17 @@ export async function ensureConnected(): Promise<string> {
       });
       saveTokens(fresh);
       return fresh.accessToken;
-    } catch {
-      clearTokens(); // dead session — fall through to interactive
+    } catch (err) {
+      // A refused refresh (invalid_grant: expired or revoked) is a dead
+      // session — fall through to interactive. A network failure is not:
+      // keep the refresh token for next time and say what happened instead
+      // of throwing away a good session and forcing a re-consent popup.
+      if (err instanceof TypeError) {
+        throw new Error(
+          "Couldn't reach Microsoft to refresh the OneDrive sign-in — check the connection and try again.",
+        );
+      }
+      clearTokens();
     }
   }
   await connectOneDrive();
@@ -185,6 +194,25 @@ let foldersReady = false;
  *  {@link ensureConnected} first (inside the user gesture); this half is
  *  popup-free. */
 export async function uploadReport(
+  fileName: string,
+  blob: Blob,
+): Promise<{ path: string; webUrl: string }> {
+  try {
+    return await uploadOnce(fileName, blob);
+  } catch (err) {
+    // Graph answered 401: the cached access token is dead before its clock
+    // says so (revoked consent, invalidated token). Expire it and go once
+    // more through ensureConnected — refresh, or the popup — instead of
+    // failing on the same token for up to an hour.
+    if (!/\(401\b/.test(err instanceof Error ? err.message : "")) throw err;
+    const stored = loadTokens();
+    if (stored) saveTokens({ ...stored, expiresAt: 0 });
+    foldersReady = false;
+    return uploadOnce(fileName, blob);
+  }
+}
+
+async function uploadOnce(
   fileName: string,
   blob: Blob,
 ): Promise<{ path: string; webUrl: string }> {

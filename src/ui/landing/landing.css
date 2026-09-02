@@ -23,11 +23,13 @@
    The nav is sticky, so a plain scrollIntoView puts an anchored section's
    top underneath it ("links land lower than the section"). Every id target
    clears the nav height; the mobile value covers the two-row nav. */
-.landing [id] {
+.landing [id],
+.landing .why {
   scroll-margin-top: 4.6rem;
 }
 @media (max-width: 860px) {
-  .landing [id] {
+  .landing [id],
+  .landing .why {
     scroll-margin-top: 8rem;
   }
 }
