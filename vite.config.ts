@@ -1,6 +1,13 @@
 import { defineConfig, loadEnv } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { VitePWA } from "vite-plugin-pwa";
+import { createRequire } from "node:module";
+
+// The vendored Tesseract worker/core live under a VERSIONED path
+// (scripts/vendor-tesseract.mjs); ocr.ts needs the same version at runtime.
+const TESSERACT_VERSION: string = createRequire(import.meta.url)(
+  "tesseract.js/package.json",
+).version;
 
 // Static, client-side-only app. `base: "./"` keeps every asset reference
 // relative so the same build works whether it is served from a domain root
@@ -23,6 +30,7 @@ export default defineConfig(({ mode }) => {
       __OPENROUTER_FREE_KEY__: JSON.stringify(
         env.OPENROUTER_API_KEY ?? env.VITE_OPENROUTER_FREE_KEY ?? "",
       ),
+      __TESSERACT_VERSION__: JSON.stringify(TESSERACT_VERSION),
     },
     build: {
       target: "es2022",

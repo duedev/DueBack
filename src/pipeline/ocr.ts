@@ -20,6 +20,18 @@ function base(): string {
   return import.meta.env.BASE_URL || "/";
 }
 
+// The vendored worker + cores live under vendor/tesseract/<version>/ (see
+// scripts/vendor-tesseract.mjs): the service worker caches /vendor/ for a
+// year, so the path must change with the library or an upgrade keeps serving
+// the old worker to the new bundle. Injected by vite.config.ts; the guard
+// keeps the module importable outside Vite (the Node test runner).
+declare const __TESSERACT_VERSION__: string;
+const TESSERACT_VERSION: string =
+  typeof __TESSERACT_VERSION__ === "string" ? __TESSERACT_VERSION__ : "";
+function vendorDir(): string {
+  return `${base()}vendor/tesseract/${TESSERACT_VERSION ? `${TESSERACT_VERSION}/` : ""}`;
+}
+
 interface RawBox {
   x0: number;
   y0: number;
@@ -55,8 +67,8 @@ class TesseractEngine implements OcrEngine {
         ? `${base()}${OCR.localLangPath}`
         : OCR.cdnLangPath;
       this.initPromise = createWorker(OCR.language, 1, {
-        workerPath: `${base()}vendor/tesseract/worker.min.js`,
-        corePath: `${base()}vendor/tesseract/`,
+        workerPath: `${vendorDir()}worker.min.js`,
+        corePath: vendorDir(),
         langPath,
       }).then((w) => {
         this.worker = w;

@@ -522,7 +522,13 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
 - **`vendor-tesseract.mjs` FAILS the build** (exit 1) when language data can't
   be vendored, unless `VITE_TESSDATA_LOCAL=0` — there is no runtime CDN
   fallback (`langPath` is picked once at build time), so the old
-  warn-and-continue shipped 404ing OCR. `ai-extract`'s
+  warn-and-continue shipped 404ing OCR. The worker + cores are vendored
+  under `vendor/tesseract/<tesseract.js version>/` (`tesseractVendorDir`),
+  and `ocr.ts` builds the same path from the `__TESSERACT_VERSION__` define
+  in vite.config.ts — the service worker caches `/vendor/` CacheFirst for a
+  year, so an unversioned path kept serving the previous worker to a bundle
+  built against the next release (test-pinned in
+  `tests/vendor_tesseract.test.ts`; stale version folders are pruned). `ai-extract`'s
   `policy.ts DEFAULT_ALLOWED_MODEL` must stay in sync with
   `PROVIDERS.openrouter.defaultModel` (vision/config.ts): a signed-in user who
   picks a non-default model gets 403 from the proxy unless the deployer widens
