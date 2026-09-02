@@ -106,6 +106,17 @@
   .c-field textarea {
     font: 500 0.95rem/1.4 var(--font-ui);
     color: var(--ink);
+  }
+  /* The shorthand above outranks theme.css's coarse-pointer floor (same
+     specificity, later source), so iOS zoomed into these fields on focus. */
+  @media (pointer: coarse) {
+    .c-field input,
+    .c-field textarea {
+      font-size: 1rem;
+    }
+  }
+  .c-field input,
+  .c-field textarea {
     background: var(--bg-raised);
     border: 1px solid var(--line-strong);
     border-radius: 9px;

@@ -81,7 +81,8 @@ export default defineConfig(({ mode }) => {
           // intake path the "works offline after the first visit" promise
           // was silently missing.
           globPatterns: ["**/*.{js,mjs,css,html,svg,png,ico,woff2,webmanifest}"],
-          globIgnores: ["**/vendor/**"],
+          // The share image is for link previews, not for every install's precache.
+          globIgnores: ["**/vendor/**", "**/og.png"],
           runtimeCaching: [
             {
               // Same-origin OCR worker, wasm cores, and language data: cache on

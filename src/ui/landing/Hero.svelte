@@ -18,7 +18,11 @@
   });
 
   function cueDown(): void {
-    document.querySelector(".why")?.scrollIntoView({ behavior: "smooth" });
+    // A button, not an href="#why": the cue never pushed history or changed
+    // the URL. The reduced-motion check mirrors confetti.ts/binaryBits.ts;
+    // "auto" lets the CSS kill-switch make the jump instant.
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    document.getElementById("why")?.scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
   }
 </script>
 

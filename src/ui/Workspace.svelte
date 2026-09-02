@@ -433,6 +433,10 @@
       display: grid;
       place-items: center;
     }
+    /* 13.6px focused a zoom on iOS; the bar wraps, so 16px fits at 390px. */
+    .sort select {
+      font-size: 1rem;
+    }
   }
 
   /* ---- board view bar + kanban lanes ---- */

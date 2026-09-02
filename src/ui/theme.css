@@ -192,7 +192,10 @@ body {
 body {
   margin: 0;
   font-family: var(--font-ui);
-  font-size: 16px;
+  /* 100%, not 16px: every component size is rem (root-relative), so a
+     pinned body size made copy ignore the browser's font-size preference
+     while buttons and inputs followed it — the inversion nobody wants. */
+  font-size: 100%;
   line-height: 1.55;
   color: var(--ink);
   background: var(--bg);

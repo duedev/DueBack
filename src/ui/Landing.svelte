@@ -304,7 +304,10 @@
   <Hero onAdd={pick} />
 
   <!-- ======================= the pitch, in one breath ================ -->
-  <section class="wrap why">
+  <!-- id'd so the shared .landing [id] scroll-margin clears the sticky nav:
+       the hero cue used to scroll .why to y=0 and its label sat under the
+       nav. -->
+  <section id="why" class="wrap why">
     <p class="section-label">Why DueBack</p>
     <h2>Stop retyping vendors, dates and totals.</h2>
     <p>
