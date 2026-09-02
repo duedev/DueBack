@@ -428,7 +428,7 @@ async function main() {
 
     // Files adopt the original app's {category}_{MM-DD-YY}_{vendor} convention.
     check(
-      /^fuel_06-12-26_shell\.png$/.test(gas.renamed || ""),
+      /^fuel_06-12-26_shell\.jpg$/.test(gas.renamed || ""),
       `gas: renamed to the naming convention (got ${gas.renamed})`,
     );
 

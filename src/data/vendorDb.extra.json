@@ -35,7 +35,7 @@
   },
   {
     "name": "AMC Theatres",
-    "category": "Meals",
+    "category": "Other",
     "aliases": [
       "amc theatre",
       "amc theatres"
@@ -182,7 +182,7 @@
   },
   {
     "name": "Arby's",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "arby's",
       "arbys"
@@ -295,14 +295,14 @@
   },
   {
     "name": "Bojangles",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "bojangles"
     ]
   },
   {
     "name": "Boost Mobile",
-    "category": "Other",
+    "category": "Utilities & Phone",
     "aliases": [
       "boost mobile"
     ]
@@ -370,7 +370,7 @@
   },
   {
     "name": "Carl's Jr.",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "carl's jr",
       "carls jr"
@@ -422,7 +422,7 @@
   },
   {
     "name": "Cheesecake Factory",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "cheesecake factory"
     ]
@@ -436,7 +436,7 @@
   },
   {
     "name": "Chick-fil-A",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "chick fil a",
       "chick-fil-a"
@@ -541,7 +541,7 @@
   },
   {
     "name": "Cracker Barrel",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "cracker barrel"
     ]
@@ -556,14 +556,14 @@
   },
   {
     "name": "Cricket Wireless",
-    "category": "Other",
+    "category": "Utilities & Phone",
     "aliases": [
       "cricket wireless"
     ]
   },
   {
     "name": "Culver's",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "culver's",
       "culvers"
@@ -675,7 +675,7 @@
   },
   {
     "name": "DoubleTree",
-    "category": "Other",
+    "category": "Lodging",
     "aliases": [
       "doubletree"
     ]
@@ -706,7 +706,7 @@
   },
   {
     "name": "Dutch Bros",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "dutch bros"
     ]
@@ -743,7 +743,7 @@
   },
   {
     "name": "Extended Stay America",
-    "category": "Other",
+    "category": "Lodging",
     "aliases": [
       "extended stay america"
     ]
@@ -830,7 +830,7 @@
   },
   {
     "name": "Five Guys",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "five guys"
     ]
@@ -976,7 +976,7 @@
   },
   {
     "name": "Hardee's",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "hardee's",
       "hardees"
@@ -1102,14 +1102,14 @@
   },
   {
     "name": "Jack in the Box",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "jack in the box"
     ]
   },
   {
     "name": "Jersey Mike's",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "jersey mike's",
       "jersey mikes"
@@ -1117,7 +1117,7 @@
   },
   {
     "name": "JetBlue",
-    "category": "Other",
+    "category": "Travel",
     "aliases": [
       "jetblue"
     ]
@@ -1139,7 +1139,7 @@
   },
   {
     "name": "Jimmy John's",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "jimmy john's",
       "jimmy johns"
@@ -1243,7 +1243,7 @@
   },
   {
     "name": "Little Caesars",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "little caesars"
     ]
@@ -1373,7 +1373,7 @@
   },
   {
     "name": "MetroPCS",
-    "category": "Other",
+    "category": "Utilities & Phone",
     "aliases": [
       "metro by t-mobile",
       "metropcs"
@@ -1416,7 +1416,7 @@
   },
   {
     "name": "Moe's Southwest",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "moe's southwest",
       "moes southwest"
@@ -1483,7 +1483,7 @@
   },
   {
     "name": "Netflix",
-    "category": "Other",
+    "category": "Software & Subscriptions",
     "aliases": [
       "netflix"
     ]
@@ -1558,7 +1558,7 @@
   },
   {
     "name": "Panda Express",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "panda express"
     ]
@@ -1572,7 +1572,7 @@
   },
   {
     "name": "Papa John's",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "papa john's",
       "papa johns"
@@ -1645,7 +1645,7 @@
   },
   {
     "name": "Popeyes",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "popeyes"
     ]
@@ -1666,7 +1666,7 @@
   },
   {
     "name": "Qdoba",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "qdoba"
     ]
@@ -1718,7 +1718,7 @@
   },
   {
     "name": "Raising Cane's",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "raising cane's",
       "raising canes"
@@ -1740,7 +1740,7 @@
   },
   {
     "name": "Red Lobster",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "red lobster"
     ]
@@ -1754,7 +1754,7 @@
   },
   {
     "name": "Regal Cinemas",
-    "category": "Meals",
+    "category": "Other",
     "aliases": [
       "regal cinemas"
     ]
@@ -1857,7 +1857,7 @@
   },
   {
     "name": "Shake Shack",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "shake shack"
     ]
@@ -1921,7 +1921,7 @@
   },
   {
     "name": "Sonic Drive-In",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "sonic drive in",
       "sonic drive-in"
@@ -1964,14 +1964,14 @@
   },
   {
     "name": "Spotify",
-    "category": "Other",
+    "category": "Software & Subscriptions",
     "aliases": [
       "spotify"
     ]
   },
   {
     "name": "Sprint",
-    "category": "Other",
+    "category": "Utilities & Phone",
     "aliases": [
       "sprint store"
     ]
@@ -2047,7 +2047,7 @@
   },
   {
     "name": "Super 8",
-    "category": "Other",
+    "category": "Lodging",
     "aliases": [
       "super 8"
     ]
@@ -2150,7 +2150,7 @@
   },
   {
     "name": "Tim Hortons",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "tim hortons"
     ]
@@ -2178,7 +2178,7 @@
   },
   {
     "name": "Trader Joe's",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "trader joe",
       "trader joe's"
@@ -2283,7 +2283,7 @@
   },
   {
     "name": "Vrbo",
-    "category": "Other",
+    "category": "Lodging",
     "aliases": [
       "vrbo"
     ]
@@ -2359,7 +2359,7 @@
   },
   {
     "name": "Whataburger",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "whataburger"
     ]
@@ -2396,7 +2396,7 @@
   },
   {
     "name": "Wingstop",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "wingstop"
     ]
@@ -2418,7 +2418,7 @@
   },
   {
     "name": "Wyndham",
-    "category": "Other",
+    "category": "Lodging",
     "aliases": [
       "wyndham"
     ]
@@ -2440,7 +2440,7 @@
   },
   {
     "name": "Zaxby's",
-    "category": "Other",
+    "category": "Meals",
     "aliases": [
       "zaxby's",
       "zaxbys"

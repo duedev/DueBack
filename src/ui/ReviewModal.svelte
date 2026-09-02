@@ -139,7 +139,6 @@
               category,
               date: newDate,
               vendor: newVendor,
-              fileName: r.originalFileName ?? r.fileName,
             }),
           }
         : {}),

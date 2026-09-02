@@ -35,8 +35,8 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + **Lora** for display; Lo
 | `src/pipeline/binarize.ts` | pure image math (no DOM, Node-tested): luminance, Bradley adaptive threshold, projection-profile skew estimation, `paperRegionBox` (Otsu + saturation gate + largest connected component — the tight-crop pass that ignores food/clutter next to the receipt) |
 | `src/pipeline/perspective.ts` | opt-in OpenCV.js quad detect + warp (`VITE_PERSPECTIVE=1`, vendored lib) |
 | `src/pipeline/ocr.ts` | `OcrEngine` seam; Tesseract default; `VITE_OCR_ENGINE=paddle` → `engines/paddle/*` (ONNX det+rec+CTC) |
-| `src/config/vendors.ts` | Brand matcher: curated table + `src/data/vendorDb.extra.json` (generated, 329 brands); passes: exact → glyph-normalized (`normalizeGlyphs`) → bounded fuzzy (`fuzzyMatchVendor`); slogans as long aliases |
-| `src/pipeline/extract.ts` | Rules: grand-total tiers + reconcile, **pump-math reconcile** (corroboration-gated; payment-line anchors correct, non-payment anchors keep), footing math with tip guard, US-first dates (stamp-glyph repair), tax (`TAX_ID_RE`/`TAX_RATE_RE` reject registration/rate lines; a tax larger than the printed subtotal is dropped as a garble so footing math can never replace the total with subtotal + garbled tax), vendor line heuristic (greeting/address/pump-data rejects) + fuzzy hook, confidence, flags, `forcesManualReview()` (**`total_suspect`**/`vendor_unclear` warns force review — `total_mismatch` stays advisory), `locateValue()` (post-hoc field location for corrections) |
+| `src/config/vendors.ts` | Brand matcher: curated table + `src/data/vendorDb.extra.json` (generated, 329 brands; curated wins on name AND alias claims at merge); passes: exact → glyph-normalized (`normalizeGlyphs`) → header-line edit-distance sweep (`fuzzyMatchVendorLines`, merchant-shaped lines only, adopts at `FUZZY_HINT_RATIO`, `FUZZY_STOPWORDS` = known real-word colliders) → bounded fuzzy (`fuzzyMatchVendor`); slogans as long aliases. Wallet tender phrases ("GOOGLE PAY") and `BRAND_EXCLUSIONS` ("subway fare") are masked before every pass; `GENERIC_ALIASES` (shell, hilton, google…) only count on trustworthy header lines via `extract.matchKnownVendor` |
+| `src/pipeline/extract.ts` | Rules: grand-total tiers + reconcile (`NON_GRAND_RE` also drops pre-discount "MERCHANDISE TOTAL / TOTAL BEFORE COUPONS" lines; the lenient bare-integer read applies only to label+value-shaped lines, `isLabelValueLine`), **pump-math reconcile** (corroboration-gated; payment-line anchors correct, non-payment anchors keep), footing math with tip guard (never ADOPTS subtotal + tax when the tax exceeds `TAX_MAX_RATIO` of the subtotal — keeps the printed total, `total_suspect`), US-first dates (stamp-glyph repair; a clock time can't donate its hour as a year; ctime order recovers the trailing year; date labels are ranked invoice/order/transaction date > bare Date > unlabeled > due/expiry/ship date), tax (`TAX_ID_RE`/`TAX_RATE_RE` reject registration/rate lines; a printed TOTAL TAX wins, component STATE/COUNTY/CITY lines sum only when total − subtotal corroborates; a tax larger than the printed subtotal — or at/above the settled total when no subtotal is printed — is dropped as a garble), vendor line heuristic (greeting/address/city-in-address-block/date-or-timestamp/tender/staff/footer/loyalty/pump-data rejects; trailing `#NNN` store numbers stripped) + `matchKnownVendor` (generic aliases scoped to header lines) + fuzzy hook, refund/return sign detection (magnitude kept, `total_suspect` gates), confidence, flags, `forcesManualReview()` (**`total_suspect`**/`vendor_unclear` warns force review — `total_mismatch` stays advisory), `locateValue()` (post-hoc field location for corrections; word-bounded vendor probe, shares `lenientTotalLine` with findAmount) |
 | `src/train/corrections.ts` | The improvement loop: review edits diffed into `CorrectionRecord`s (with located bbox + OCR line), appended to kv `training.log` (cap 2000); Settings → Improvement log downloads/clears it. `bundle.ts` builds the tuning ZIP (corrections + extraction.json + CSV + original/annotated images), shared by Settings and the landing contact form |
 | `src/pipeline/logo/` | Visual logo layer: `embedder.ts` (CLIP seam, lazy, test-fakeable), `index.ts` (bundled `logoIndex.json` + user brands, cosine NN, header-band crop, `addBrandFromImage`), `fuse.ts` (Layer-3 fusion; `LOGO_ACCEPT`) — inert (no model download) while the index is empty |
 | `src/pipeline/vision/` | Opt-in AI assist (OpenRouter/Gemini/Anthropic), spend cap, build-time free key; signed-in users route via `supabase/aiProxy.ts` → `ai-extract` Edge Function |
@@ -87,7 +87,11 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   line *below* a label-only TOTAL must match strict money (a lenient grab
   there turned "Date: 05/10/2026" into a $2,026 total) — and must not be a
   payment/non-grand line (`NON_GRAND_RE`/`PAYMENT_RE`): "TOTAL" ↵ "CASH 20.00"
-  shipped the cash tendered as the total.
+  shipped the cash tendered as the total. The lenient bare-integer read on the
+  label line itself applies only to label+value-shaped lines
+  (`isLabelValueLine`): a header that merely contains "total" ("TOTAL WINE &
+  MORE #1234") must not donate its store number. `locateValue`/
+  `readValueInBox` share that rule via `lenientTotalLine` — keep them in sync.
 - **OCR reads a transient higher-res render (`ocrMaxEdge` 2600px), not the
   stored 1600px blob** — both come from the same cleaned frame, so normalized
   boxes land on either; never persist `ocrBlob`. Binarization is retry-only
@@ -167,27 +171,57 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   only; regressions in the real path show up here. CI runs it (own job in
   ci.yml) along with a production build; deploy runs `npm test` before
   building.
-- **Digit-only brand aliases ("76") are excluded from the glyph pass** — its
-  punctuation stripping would turn a price ending `.76` into a brand hit; the
-  exact pass (with the numeric boundary guard) is where they match.
+- **Digit-ENDING brand aliases ("76", "super 8") are excluded from the glyph
+  pass** — its punctuation stripping would turn a price ending `.76` or
+  "SUPER 8.50" into a brand hit; the exact pass (with the numeric boundary
+  guard) is where they match, and a bare numeric brand must own its line or
+  precede gas/gasoline/station/fuel ("76 MAIN ST", "ROOM 76" are numbers).
+  Digit-BEARING aliases are also excluded from the fuzzy header sweep: its
+  digit folds turn "super 8" into "superb", one deletion from the SUPER grade
+  line on every independent pump receipt. `tests/vendorDb.test.ts` pins that
+  "76" stays the only digit-only alias.
 - The logo layer never downloads the CLIP model while the index is empty
   (`logoIndexAvailable()` gate). Tests inject a fake via `setEmbedderFactory`.
 - Export modules (ExcelJS/Chart.js) are **lazy-imported** in `ExportBar` — keep
   it that way; they dominated the main chunk otherwise.
 - `buildWorkbook` must keep working headless (Node tests): chart rendering
   returns null without a DOM and the workbook builds without images.
-- Curated `KNOWN_VENDORS` beats the generated JSON on name conflicts; regenerate
-  the JSON with `python3 scripts/export_vendor_db.py` (commit the result).
+- Curated `KNOWN_VENDORS` beats the generated JSON on name conflicts AND on
+  alias claims (a JSON alias a curated brand already lists under another name
+  is dropped at merge — otherwise the exact pass tied and the alphabetical
+  tie-break sent "fedex office" to the JSON's FedEx Office [Materials]);
+  `tests/vendorDb.test.ts` pins alias→brand uniqueness and that every JSON
+  category is in the taxonomy. Regenerate the JSON with
+  `python3 scripts/export_vendor_db.py` (commit the result) — its source
+  (`../Reimbursements/vendor_db.py`) is NOT in this checkout, so category
+  fixes go in `KNOWN_VENDORS` (mirrored in the script's `NAME_OVERRIDES` and
+  hand-applied to the JSON) rather than by regenerating.
 - **Taxonomy: Fuel and Materials lead `CATEGORIES`, Other closes** — and the
   workbook renders Other as "Miscellaneous" (`displayCategory`). Hardware/
   building brands map to Materials (the original's `mats`). The meals category
   is named **"Meals"** (renamed from "Meals & Entertainment"); legacy stored
-  values are normalized on every `repo` read (`LEGACY_CATEGORIES`).
+  values are normalized on every `repo` read (`LEGACY_CATEGORIES`). Keyword
+  rule order puts Materials right after Fuel and Meals before Travel, the
+  Utilities/Software keywords are bill-shaped ("electric bill", "software
+  license" — bare "electric"/"cable"/"license" filed supply houses and
+  contractor invoices under the phone bill), supply-house keywords carry
+  singular and plural forms, and "toll"/"cab"/"fuel" are regexes that skip
+  "toll free", "CAB SAUV"/"CAB HINGE" and "FUEL SURCHARGE". A known non-fuel
+  brand (Costco/Walmart fuel centers) files as Fuel only when pump math
+  verifies; "subway fare" is masked before the brand passes so the transit
+  keyword can fire.
 - **`total_mismatch` is advisory; `total_suspect` gates.** Only the dedicated
   `total_suspect` warn (and `vendor_unclear`) force `needs_review` — reconcile's
   advisories fire on ordinary tip/savings/balance receipts and must not. Tip
   awareness must stay symmetric between `applyFootingMath` and parseReceipt's
   far-above-subtotal gate (2× subtotal ceiling with a TIP line, 1.5× without).
+  That no-tax gate is two-sided: a total BELOW the subtotal with no
+  discount/coupon/savings line (`DISCOUNT_RE`) is a dropped leading digit
+  and gates too. Also `total_suspect`: a no-tax window recovery that equals
+  the subtotal (tax silently dropped), a subtotal + tax sum whose tax exceeds
+  `TAX_MAX_RATIO` of the subtotal, and a refund/return total (negative sign
+  on its own line, a refund/return label on it, or a "REFUND TO …" echo —
+  bare "RETURN POLICY" text never flags).
 - **Receipts persist pruned `ocrLines`** (text+bbox, no words) so a review
   correction can be re-located (`locateValue`), re-highlighted (ReviewModal
   `applyPatch` re-bakes the annotated copy), and logged for training.
@@ -239,7 +273,10 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   total and emits a warn-severity `total_mismatch`, which — like
   `vendor_unclear` — forces `needs_review` via `extract.forcesManualReview()`.
   Tips (TIP_RE) widen footing's expectations; per-gallon price lines are
-  excluded from reconcile's `allMax`.
+  excluded from reconcile's `allMax`. The fuzzy header sweep obeys the same
+  principle: a hit below `FUZZY_HINT_RATIO` is dropped entirely (never a
+  category hint), and when the brand needed real edits a generic keyword on
+  the receipt beats the brand's category ("PUBLIC PARKING" is not Publix).
 - **Sheet geometry has exactly two conversions, both in `export/anchor.ts`:**
   a stored column width → px is ECMA-376 §18.3.1.13
   (`trunc(((256·w + trunc(128/7))/256)·7)`, so 55 → **385** px and the default
@@ -286,9 +323,17 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   would overlap the charts; the trailing column is widened (15, not 13) so
   columns 6–11 actually contain a 558px chart. Chart text renders ~26px (titles 34px) because the
   900px canvases embed at 0.62 scale (≈ 16px / 21px on-sheet).
-- **Receipts are renamed post-extraction** to `{cat}_{MM-DD-YY}_{vendor}.ext`
-  (`util/rename.ts`, the original app's convention); the upload's name survives
-  in `originalFileName` — the e2e keys receipts by it, not `fileName`.
+- **Receipts are renamed post-extraction** to `{cat}_{MM-DD-YY}_{vendor}.jpg`
+  (`util/rename.ts`, the original app's convention) — the extension is ALWAYS
+  `.jpg` because every stored/exported receipt image (cleaned, annotated,
+  tuning bundle) is a JPEG re-encode, whatever was uploaded; the upload's
+  name and extension survive in `originalFileName` — the e2e keys receipts
+  by it, not `fileName`. `sanitizeFilePart` folds accents to ASCII
+  (`foldToAscii`: Café → cafe, a deliberate divergence from the Python port,
+  which dropped the letter) but file names stay ASCII on purpose — the print
+  packet renders non-ASCII as "?" in WinAnsi Helvetica — so a non-Latin
+  vendor sanitizes to "" and the receipt takes the vendor-less form. The
+  workbook and print-packet file names fold the employee the same way.
 - **Allowances (per diem, phone service) are report-side only**:
   `Batch.perDiem` + `Batch.phoneService` (ride the sync `payload` jsonb — no
   Supabase migration needed) → labeled Summary lines between the category
@@ -374,13 +419,20 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   `onedrive/popup.ts` must keep running before `mount`). Azure registration
   must use the **Single-page application** platform or the browser token
   exchange 403s; SPA refresh tokens die after 24 h, so re-prompting is normal.
-- **Extraction never overwrites a human** (`pipeline.ts completionWriteMode`,
-  Node-tested): the completion write re-reads the receipt — deleted mid-flight
-  skips the write and deletes this run's blobs; approved/`done`/any write
-  newer than the claim's `updatedAt` lands only technical plumbing
-  (cleaned/annotated keys, hash, OCR lines — plus un-stranding a
-  still-"processing" status to `needs_review`). The failure path obeys the
-  same rule: `fail()` is skipped for a receipt approved mid-flight.
+- **Extraction never overwrites a human** (`pipeline.ts completionWriteMode`
+  + `touchedBeforeClaim`, Node-tested): the completion write re-reads the
+  receipt — deleted mid-flight skips the write and deletes this run's blobs;
+  approved/`done`/any write newer than the claim's `updatedAt` lands only
+  technical plumbing (cleaned/annotated keys, hash, OCR lines — plus
+  un-stranding a still-"processing" status to `needs_review`, or to `done`
+  when the receipt is approved). A human touch from BEFORE the claim counts
+  the same way: the modal opens Queued cards, so the pre-claim read is
+  checked for approved / `done` / any `edited` field (`touchedBeforeClaim`)
+  — those writes are older than the claim's baseline and were invisible to
+  it — and the claim does not re-stamp a `done` receipt to `processing`
+  (it used to, and the un-strand branch then parked an approved receipt in
+  Needs-review). The failure path obeys the same rule: `fail()` is skipped
+  for a receipt approved mid-flight.
 - **Deletes must go through `repo.deleteReceipt`/`deleteBrand`** — they record
   the kv pending-delete (with blob keys) that the sync engine tombstones
   remotely (`deleted_at` + storage cleanup); the sync engine itself removes

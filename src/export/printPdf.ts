@@ -12,6 +12,7 @@
 // Node tests can cover the layout and structure.
 
 import type { BBox } from "../types.ts";
+import { foldToAscii } from "../util/rename.ts";
 
 export interface PrintImage {
   /** JPEG bytes (canvas output: 3-component YCbCr → DeviceRGB). */
@@ -275,7 +276,10 @@ export function buildPrintPdf(images: PrintImage[], meta: PrintMeta): Uint8Array
 
 /** "Receipt_Packet_<employee>_<yyyymmdd>.pdf", matching the workbook's stamp. */
 export function printPdfFileName(employee: string | undefined, now = new Date()): string {
-  const who = (employee || "Employee").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_") || "Employee";
+  // Accents fold to ASCII (same rule as the workbook's file name).
+  const who =
+    foldToAscii(employee || "Employee").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_") ||
+    "Employee";
   const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
   return `Receipt_Packet_${who}_${stamp}.pdf`;
 }

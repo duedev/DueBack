@@ -73,8 +73,12 @@ export async function buildTuningBundle(receipts: Receipt[]): Promise<TuningBund
     const annKey = r.annotatedKey ?? r.cleanedKey;
     const ann = annKey ? await repo.getBlob(annKey) : undefined;
     if (ann) {
+      // The annotated/cleaned copy is always JPEG; name it by the receipt's
+      // stem + .jpg so a receipt renamed by an older version (which kept the
+      // upload's .heic/.png) still lands with an honest extension.
+      const stem = r.fileName.replace(/\.[a-z0-9]{2,5}$/i, "") || "receipt";
       entries.push({
-        name: uniq(`images/annotated/${r.fileName}`),
+        name: uniq(`images/annotated/${stem}.jpg`),
         data: new Uint8Array(await ann.arrayBuffer()),
       });
     }

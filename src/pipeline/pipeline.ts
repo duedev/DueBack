@@ -1,11 +1,15 @@
 import { repo } from "../store/repo.ts";
 import { cleanImage, binarizeBlob } from "./imagePrep.ts";
 import { hashBlob } from "./hash.ts";
-import { parseReceipt, forcesManualReview, type Extraction } from "./extract.ts";
+import {
+  parseReceipt,
+  forcesManualReview,
+  matchKnownVendor,
+  type Extraction,
+} from "./extract.ts";
 import { findSemanticDuplicate, type DupRecord } from "./dedup.ts";
 import { getOcrEngine, type OcrEngine } from "./ocr.ts";
 import { runVisionAssist } from "./vision/index.ts";
-import { matchVendor } from "../config/vendors.ts";
 import { receiptFileName } from "../util/rename.ts";
 import { annotateReceipt, HIGHLIGHT_COLORS } from "./annotate.ts";
 import { logoIndexAvailable, cropHeaderBand, searchLogo, type LogoHit } from "./logo/index.ts";
@@ -18,17 +22,33 @@ import type { Receipt, Flag, OcrResult, ExtractionMethod, LogoMatch } from "../t
 // status. Free path first, everything deterministic. Each receipt records
 // method_used + cost so the "this cost you $0.00" line is honest.
 
+/** Had a human already touched this receipt BEFORE this run claimed it? The
+ *  modal opens a "Queued" card too, so a receipt can be approved (done) or
+ *  saved (fields `edited`, status still queued) before its job is claimed —
+ *  and the claim's `updatedAt` baseline can't see either. Pure; Node-tested. */
+export function touchedBeforeClaim(
+  r: Pick<Receipt, "approved" | "status" | "vendor" | "date" | "amount" | "category">,
+): boolean {
+  return (
+    r.approved ||
+    r.status === "done" ||
+    [r.vendor, r.date, r.amount, r.category].some((f) => f?.edited === true)
+  );
+}
+
 /** What the completion write may carry, given the receipt's state NOW vs the
  *  `updatedAt` stamped when this run claimed it (status → "processing"). The
  *  modal opens receipts in any status, so a human can edit, approve or delete
- *  one mid-flight — and the machine must never overwrite the human. Pure;
- *  Node-tested. */
+ *  one mid-flight — and the machine must never overwrite the human. A touch
+ *  from BEFORE the claim (`preTouched`, see `touchedBeforeClaim`) counts the
+ *  same way. Pure; Node-tested. */
 export function completionWriteMode(
   latest: Pick<Receipt, "approved" | "status" | "updatedAt"> | undefined,
   claimedAt: number,
+  preTouched = false,
 ): "skip" | "technical" | "full" {
   if (!latest) return "skip"; // deleted mid-flight
-  if (latest.approved || latest.status === "done" || latest.updatedAt > claimedAt) {
+  if (preTouched || latest.approved || latest.status === "done" || latest.updatedAt > claimedAt) {
     return "technical"; // human touched it — image/relocation plumbing only
   }
   return "full";
@@ -42,9 +62,12 @@ export async function processReceipt(
   if (!receipt) return;
 
   // The claim's updatedAt is the baseline: any later write is a human's (or a
-  // sync mirror's) and outranks this run's extraction.
+  // sync mirror's) and outranks this run's extraction. A receipt a human
+  // already finished ("done" — approved from its Queued card) keeps that
+  // status: re-stamping it "processing" would later un-strand it into
+  // needs_review with an approved chip, and the sweep would skip it.
   const claimed = await repo.updateReceipt(receiptId, {
-    status: "processing",
+    ...(receipt.status !== "done" ? { status: "processing" as const } : {}),
     error: undefined,
   });
   if (!claimed) return; // deleted between the fetch and the claim
@@ -147,7 +170,9 @@ export async function processReceipt(
     //     index is empty.
     let logoMatch: LogoMatch | undefined;
     try {
-      const textMatch = matchVendor(ocr.text);
+      // Same scoped scan the rules use — a generic alias on an address or
+      // tender line must not suppress the logo layer either.
+      const textMatch = matchKnownVendor(ocr.lines, ocr.text);
       let logoHit: LogoHit | null = null;
       if (
         !textMatch &&
@@ -256,14 +281,14 @@ export async function processReceipt(
             category: ex.category.value,
             date: ex.date.value,
             vendor: ex.vendor.value,
-            fileName: receipt.originalFileName ?? receipt.fileName,
           })
         : receipt.fileName;
 
     // Re-read before the final write: a human may have edited, approved or
-    // deleted this receipt while OCR ran, and extraction must not clobber that.
+    // deleted this receipt while OCR ran — or before the claim, while it sat
+    // queued — and extraction must not clobber that.
     const latest = await repo.getReceipt(receiptId);
-    const mode = completionWriteMode(latest, claimed.updatedAt);
+    const mode = completionWriteMode(latest, claimed.updatedAt, touchedBeforeClaim(receipt));
     if (mode === "skip") {
       // Deleted mid-flight — drop this run's stored blobs (orphans otherwise).
       await repo.deleteBlob(cleanedKey).catch(() => {});
@@ -282,9 +307,14 @@ export async function processReceipt(
       ocrText: ocrTextOut,
       ocrLines,
       // A mid-flight save doesn't set status, which would strand the receipt
-      // in "processing" — hand it to review. An approval's "done" stays.
+      // in "processing" — hand it to review. An approval's "done" stays, and
+      // an approved receipt is never sent back to review: it un-strands to
+      // "done" (approval and "done" travel together in the modal, so this
+      // branch is belt-and-braces).
       ...(latest!.status === "processing"
-        ? { status: "needs_review" as const, reviewRequired: true }
+        ? latest!.approved
+          ? { status: "done" as const }
+          : { status: "needs_review" as const, reviewRequired: true }
         : {}),
     };
     const patch: Partial<Receipt> = {

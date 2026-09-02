@@ -147,3 +147,98 @@ test("an unbranded charging receipt still classifies as Fuel", () => {
     matched: true,
   });
 });
+
+// ── Audit round (2026-09): matcher scoping, numeric guards, taxonomy ─────────
+import { fuzzyMatchVendorLines, ALL_VENDORS, GENERIC_ALIASES } from "../src/config/vendors.ts";
+
+test("digit-ending aliases can't continue as a decimal, and skip the glyph pass", () => {
+  assert.equal(matchVendor("BURRITO SUPER 8.50"), null);
+  assert.equal(matchVendor("SUPER 8 MOTEL\n123 MAIN")?.name, "Super 8");
+  assert.equal(matchVendor("SUPER 8 MOTEL\n123 MAIN")?.category, "Lodging");
+  const re = wordBoundaryMatcher("super 8");
+  assert.equal(re.test("super 8, denver"), true);
+  assert.equal(re.test("super 8.50"), false);
+});
+
+test("a bare numeric brand must own its line or precede fuel context", () => {
+  assert.equal(matchVendor("MAIN ST BAKERY\n76 MAIN ST"), null);
+  assert.equal(matchVendor("TABLE 76\nSERVER: AMY\nTOTAL $30.00"), null);
+  assert.equal(matchVendor("GRAND FOLIO\nROOM 76\nAMOUNT 76"), null);
+  assert.equal(matchVendor("76\n1234 HWY 5\nGALLONS 10.204\nTOTAL $45.00")?.name, "76");
+  assert.equal(matchVendor("UNION 76 STATION")?.name, "76");
+  const re = wordBoundaryMatcher("76");
+  assert.equal(re.test("76 main st"), false);
+  assert.equal(re.test("76"), true);
+  assert.equal(re.test("union 76 station"), true);
+  assert.equal(re.test("$45.76"), false);
+  assert.equal(re.test("store #76"), false);
+});
+
+test("wallet tender phrases are stripped before the brand scan; slogans survive", () => {
+  assert.equal(matchVendor("SHELL\nFUEL TOTAL 45.99\nGOOGLE PAY 45.99")?.name, "Shell");
+  assert.equal(matchVendor("JOES DINER\nAMAZON PAY 24.05"), null);
+  assert.equal(matchVendor("EXPECT MORE PAY LESS")?.name, "Target");
+});
+
+test("brand-exclusion phrases: a subway fare is transit, a Subway store is still Subway", () => {
+  const r = parseReceipt(ocr(["MTA NEW YORK CITY TRANSIT", "SUBWAY FARE $2.90", "TOTAL $2.90"]));
+  assert.equal(r.category.value, "Ground Transportation");
+  assert.notEqual(r.vendor.value, "Subway");
+  assert.equal(matchVendor("SUBWAY #12345")?.name, "Subway");
+  assert.notEqual(fuzzyMatchVendorLines(["MTA NEW YORK CITY TRANSIT", "SUBWAY FARE $2.90"])?.name, "Subway");
+});
+
+test("keyword rules: toll-free, wine CAB, cabinet SKUs and fuel surcharges don't misfile", () => {
+  assert.notEqual(categorize("Bella Pasta", "Toll Free 1-800-555-1234").category, "Ground Transportation");
+  assert.notEqual(categorize("Bella Pasta", "call toll-free 800-555-1234").category, "Ground Transportation");
+  assert.equal(categorize("", "toll plaza").category, "Ground Transportation");
+  assert.equal(categorize("Vine Bar", "CAB SAUV 9.00 GRILL").category, "Meals");
+  assert.equal(categorize("", "yellow cab").category, "Ground Transportation");
+  assert.notEqual(categorize("ACME CABINETS", "CAB HINGE 2PK 4.99").category, "Ground Transportation");
+  assert.equal(categorize("ACME Freight", "FUEL SURCHARGE").category, "Shipping & Postage");
+  // kWh stays a Fuel keyword on purpose (logo-only EV charging receipts).
+  assert.equal(categorize("", "42.31 kwh").category, "Fuel");
+});
+
+test("chains the exported DB filed as Other carry their real category via the curated table", () => {
+  const want: [string, string][] = [
+    ["CHICK-FIL-A", "Meals"], ["POPEYES LOUISIANA KITCHEN", "Meals"], ["FIVE GUYS", "Meals"],
+    ["SUPER 8 MOTEL", "Lodging"], ["DOUBLETREE BY HILTON", "Lodging"],
+    ["BOOST MOBILE", "Utilities & Phone"], ["NETFLIX", "Software & Subscriptions"],
+    ["JETBLUE", "Travel"],
+  ];
+  for (const [text, cat] of want) assert.equal(matchVendor(text)?.category, cat, text);
+  assert.equal(matchVendor("CINEMARK 16")?.category, matchVendor("AMC THEATRES")?.category);
+});
+
+test("keyword rule order and bill-shaped utility/software keywords", () => {
+  const materials: [string, string][] = [
+    ["Mayer Electric Supply", ""],
+    ["ACME Electrical", "12/2 ROMEX CABLE 250FT"],
+    ["Joe's Kitchen & Bath Plumbing Supply", ""],
+    ["ACME Building Supplies", ""],
+    ["ACME Plumbing Supplies", ""],
+  ];
+  for (const [v, h] of materials) {
+    assert.deepEqual(categorize(v, h), { category: "Materials", matched: true }, v);
+  }
+  assert.equal(categorize("Hop Valley Brewery", "FLIGHT OF 4 8.00").category, "Meals");
+  assert.equal(categorize("Skyline Diner", "5000 AIRPORT BLVD").category, "Meals");
+  assert.notEqual(categorize("ACME Plumbing Inc", "Contractor License #123456").category, "Software & Subscriptions");
+  assert.equal(categorize("Adobe Systems", "software license renewal").category, "Software & Subscriptions");
+  assert.equal(categorize("Pacific Gas and Electric Company", "electric service statement").category, "Utilities & Phone");
+  assert.equal(categorize("", "Airport Parking").category, "Ground Transportation");
+  assert.equal(categorize("Office Supplies Warehouse", "").category, "Office Supplies");
+  assert.equal(categorize("Joe's Kitchen", "").category, "Meals");
+});
+
+test("a bare PETRO header is the truck stop, not Petco", () => {
+  assert.equal(matchVendor("PETRO\nTRUCK STOP")?.name, "Petro Stopping Centers");
+  assert.equal(matchVendor("PETRO CANADA")?.name, "Petro-Canada");
+  assert.equal(matchVendor("PETROLEUM CO"), null);
+});
+
+test("every generic alias exists in the merged table", () => {
+  const all = new Set(ALL_VENDORS.flatMap((v) => v.aliases));
+  for (const a of GENERIC_ALIASES) assert.ok(all.has(a), a);
+});

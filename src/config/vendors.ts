@@ -29,7 +29,18 @@ import EXTRA_BRANDS from "../data/vendorDb.extra.json";
 export function wordBoundaryMatcher(alias: string): RegExp {
   const esc = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   if (/^\d+$/.test(alias)) {
-    return new RegExp(`(?<![a-z0-9.,#$])${esc}(?![a-z0-9.,])`);
+    // A bare numeric brand ("76") must own its line (the logo read alone) or
+    // precede fuel context — "76 MAIN ST", "ROOM 76", "AMOUNT 76" are
+    // numbers. Multiline so ^/$ are per line of the raw OCR text.
+    return new RegExp(
+      `(?<![a-z0-9.,#$])(?:(?<=^[ \\t]*)${esc}(?=[ \\t]*$)|${esc}(?=[ \\t]+(?:gas|gasoline|station|fuel)\\b))`,
+      "m",
+    );
+  }
+  if (/\d$/.test(alias)) {
+    // A brand ENDING in a digit ("super 8", "motel 6") must not continue as
+    // a decimal — "BURRITO SUPER 8.50" is a price; "Super 8, Denver" hits.
+    return new RegExp(`(?<![a-z0-9])${esc}(?![a-z0-9]|[.,]\\d)`);
   }
   return new RegExp(`(?<![a-z0-9])${esc}(?![a-z0-9])`);
 }
@@ -71,6 +82,13 @@ export const KNOWN_VENDORS: KnownVendor[] = [
   { name: "Texaco", category: "Fuel", aliases: ["texaco"] },
   { name: "Pilot", category: "Fuel", aliases: ["pilot flying j", "pilot"] },
   { name: "Flying J", category: "Fuel", aliases: ["flying j"] },
+  // The exported DB only knows "petro stopping"; a receipt whose header is
+  // just "PETRO" then fuzzy-matched Petco (one edit) and filed as Other.
+  {
+    name: "Petro Stopping Centers",
+    category: "Fuel",
+    aliases: ["petro stopping center", "petro stopping", "petro"],
+  },
   { name: "Love's", category: "Fuel", aliases: ["love's travel", "love's", "loves"] },
   { name: "Casey's", category: "Fuel", aliases: ["casey's", "caseys", "casey"] },
   { name: "Kwik Trip", category: "Fuel", aliases: ["kwik trip"] },
@@ -182,6 +200,36 @@ export const KNOWN_VENDORS: KnownVendor[] = [
     aliases: ["farmer boys", "farmerboys"],
     slogans: ["breakfast, burgers & more", "breakfast burgers & more"],
   },
+  // Restaurant chains the exported DB files as "Other" because nothing in
+  // their name says pizza/burger/grill. Names match the JSON exactly so the
+  // merge adopts the category and keeps the JSON's aliases.
+  { name: "Chick-fil-A", category: "Meals", aliases: ["chick-fil-a", "chick fil a"] },
+  { name: "Arby's", category: "Meals", aliases: ["arby's", "arbys"] },
+  { name: "Five Guys", category: "Meals", aliases: ["five guys"] },
+  { name: "Jack in the Box", category: "Meals", aliases: ["jack in the box"] },
+  { name: "Popeyes", category: "Meals", aliases: ["popeyes"] },
+  { name: "Whataburger", category: "Meals", aliases: ["whataburger"] },
+  { name: "Cracker Barrel", category: "Meals", aliases: ["cracker barrel"] },
+  { name: "Red Lobster", category: "Meals", aliases: ["red lobster"] },
+  { name: "Cheesecake Factory", category: "Meals", aliases: ["cheesecake factory"] },
+  { name: "Panda Express", category: "Meals", aliases: ["panda express"] },
+  { name: "Papa John's", category: "Meals", aliases: ["papa john's", "papa johns"] },
+  { name: "Little Caesars", category: "Meals", aliases: ["little caesars"] },
+  { name: "Raising Cane's", category: "Meals", aliases: ["raising cane's", "raising canes"] },
+  { name: "Shake Shack", category: "Meals", aliases: ["shake shack"] },
+  { name: "Sonic Drive-In", category: "Meals", aliases: ["sonic drive-in", "sonic drive in"] },
+  { name: "Tim Hortons", category: "Meals", aliases: ["tim hortons"] },
+  { name: "Wingstop", category: "Meals", aliases: ["wingstop"] },
+  { name: "Zaxby's", category: "Meals", aliases: ["zaxby's", "zaxbys"] },
+  { name: "Jimmy John's", category: "Meals", aliases: ["jimmy john's", "jimmy johns"] },
+  { name: "Jersey Mike's", category: "Meals", aliases: ["jersey mike's", "jersey mikes"] },
+  { name: "Culver's", category: "Meals", aliases: ["culver's", "culvers"] },
+  { name: "Hardee's", category: "Meals", aliases: ["hardee's", "hardees"] },
+  { name: "Carl's Jr.", category: "Meals", aliases: ["carl's jr", "carls jr"] },
+  { name: "Bojangles", category: "Meals", aliases: ["bojangles"] },
+  { name: "Dutch Bros", category: "Meals", aliases: ["dutch bros"] },
+  { name: "Qdoba", category: "Meals", aliases: ["qdoba"] },
+  { name: "Moe's Southwest", category: "Meals", aliases: ["moe's southwest", "moes southwest"] },
 
   // ── Lodging ──────────────────────────────────────────────────────────────
   { name: "Marriott", category: "Lodging", aliases: ["marriott"] },
@@ -199,6 +247,14 @@ export const KNOWN_VENDORS: KnownVendor[] = [
   { name: "Comfort Inn", category: "Lodging", aliases: ["comfort inn"] },
   { name: "Embassy Suites", category: "Lodging", aliases: ["embassy suites"] },
   { name: "Airbnb", category: "Lodging", aliases: ["airbnb"] },
+  // Lodging brands the exported DB files as "Other" (its refine table only
+  // sniffs for hotel/inn/suites in the name). Names match the JSON exactly
+  // so the merge adopts these categories instead of duplicating the brand.
+  { name: "DoubleTree", category: "Lodging", aliases: ["doubletree"] },
+  { name: "Wyndham", category: "Lodging", aliases: ["wyndham"] },
+  { name: "Super 8", category: "Lodging", aliases: ["super 8"] },
+  { name: "Extended Stay America", category: "Lodging", aliases: ["extended stay america"] },
+  { name: "Vrbo", category: "Lodging", aliases: ["vrbo"] },
 
   // ── Ground Transportation ────────────────────────────────────────────────
   { name: "Uber", category: "Ground Transportation", aliases: ["uber"] },
@@ -242,6 +298,9 @@ export const KNOWN_VENDORS: KnownVendor[] = [
   { name: "Heroku", category: "Software & Subscriptions", aliases: ["heroku"] },
   { name: "Netlify", category: "Software & Subscriptions", aliases: ["netlify"] },
   { name: "Vercel", category: "Software & Subscriptions", aliases: ["vercel"] },
+  // Streaming subscriptions are subscriptions (the exported DB says Other).
+  { name: "Netflix", category: "Software & Subscriptions", aliases: ["netflix"] },
+  { name: "Spotify", category: "Software & Subscriptions", aliases: ["spotify"] },
 
   // ── Utilities & Phone ────────────────────────────────────────────────────
   { name: "AT&T", category: "Utilities & Phone", aliases: ["at&t"] },
@@ -252,6 +311,11 @@ export const KNOWN_VENDORS: KnownVendor[] = [
   { name: "Spectrum", category: "Utilities & Phone", aliases: ["spectrum"] },
   { name: "Cox Communications", category: "Utilities & Phone", aliases: ["cox communications"] },
   { name: "CenturyLink", category: "Utilities & Phone", aliases: ["centurylink"] },
+  // Carriers the exported DB files as "Other".
+  { name: "Boost Mobile", category: "Utilities & Phone", aliases: ["boost mobile"] },
+  { name: "Cricket Wireless", category: "Utilities & Phone", aliases: ["cricket wireless"] },
+  { name: "MetroPCS", category: "Utilities & Phone", aliases: ["metropcs", "metro by t-mobile"] },
+  { name: "Sprint", category: "Utilities & Phone", aliases: ["sprint store"] },
 
   // ── Shipping & Postage ───────────────────────────────────────────────────
   { name: "FedEx", category: "Shipping & Postage", aliases: ["fedex office", "fedex"] },
@@ -283,18 +347,37 @@ export const KNOWN_VENDORS: KnownVendor[] = [
 // src/data/vendorDb.extra.json is generated by scripts/export_vendor_db.py from
 // the original local app's vendor_db.py (~300 brands). The curated table above
 // is authoritative: on a name collision its category/name win and the export
-// only contributes extra aliases; brand-new names are appended.
+// only contributes extra aliases; brand-new names are appended. It also wins
+// on ALIAS claims: an exported alias a curated brand already lists under a
+// different name is dropped — otherwise the exact pass ties and
+// searchPatterns' alphabetical tie-break, not the curated table, decided
+// ("fedex office" went to the exported "FedEx Office" [Materials] instead of
+// FedEx; "comcast" to Xfinity). tests/vendorDb.test.ts pins alias uniqueness.
 
-const APP_CATEGORIES = new Set<string>([
+// The taxonomy as a compile-checked list: `satisfies` rejects a typo, and the
+// exhaustiveness check below fails to compile when a Category is added
+// without being listed here (a regenerated JSON carrying an unknown name
+// would otherwise silently file every affected brand as Other).
+const APP_CATEGORY_LIST = [
   "Meals", "Travel", "Lodging", "Ground Transportation",
   "Fuel", "Materials", "Office Supplies", "Software & Subscriptions", "Utilities & Phone",
   "Shipping & Postage", "Professional Services", "Other",
-]);
+] as const satisfies readonly Category[];
+const _exhaustive: Exclude<Category, (typeof APP_CATEGORY_LIST)[number]> extends never
+  ? true
+  : never = true;
+void _exhaustive;
+// ReadonlySet<string>, not <Category>: the JSON's category is an untyped string.
+const APP_CATEGORIES: ReadonlySet<string> = new Set(APP_CATEGORY_LIST);
 
 const MERGED: KnownVendor[] = (() => {
   const byName = new Map<string, KnownVendor>();
+  // Every curated alias/slogan → the (lowercased) name that owns it.
+  const claimed = new Map<string, string>();
   for (const v of KNOWN_VENDORS) {
-    byName.set(v.name.toLowerCase(), { ...v, aliases: [...v.aliases] });
+    const key = v.name.toLowerCase();
+    byName.set(key, { ...v, aliases: [...v.aliases] });
+    for (const a of [...v.aliases, ...(v.slogans ?? [])]) claimed.set(a, key);
   }
   for (const raw of EXTRA_BRANDS as {
     name: string;
@@ -306,18 +389,26 @@ const MERGED: KnownVendor[] = (() => {
     const category = (
       APP_CATEGORIES.has(raw.category) ? raw.category : "Other"
     ) as Category;
-    const existing = byName.get(raw.name.toLowerCase());
+    const key = raw.name.toLowerCase();
+    const free = (a: string): boolean => {
+      const owner = claimed.get(a);
+      return owner === undefined || owner === key;
+    };
+    const aliases = raw.aliases.filter(free);
+    const slogans = (raw.slogans ?? []).filter(free);
+    const existing = byName.get(key);
     if (existing) {
-      for (const a of raw.aliases) {
+      for (const a of aliases) {
         if (!existing.aliases.includes(a)) existing.aliases.push(a);
       }
-      if (raw.slogans?.length) {
-        existing.slogans = [...new Set([...(existing.slogans ?? []), ...raw.slogans])];
+      if (slogans.length) {
+        existing.slogans = [...new Set([...(existing.slogans ?? []), ...slogans])];
       }
     } else {
-      const entry: KnownVendor = { name: raw.name, category, aliases: [...raw.aliases] };
-      if (raw.slogans?.length) entry.slogans = [...raw.slogans];
-      byName.set(raw.name.toLowerCase(), entry);
+      if (aliases.length === 0 && slogans.length === 0) continue;
+      const entry: KnownVendor = { name: raw.name, category, aliases };
+      if (slogans.length) entry.slogans = slogans;
+      byName.set(key, entry);
     }
   }
   return [...byName.values()];
@@ -361,10 +452,12 @@ function buildPatterns(normalize: boolean): AliasPattern[] {
   const out: AliasPattern[] = [];
   for (const v of MERGED) {
     for (const alias of [...v.aliases, ...(v.slogans ?? [])]) {
-      // Digit-only aliases ("76") are excluded from the glyph pass: letters are
-      // what gets folded, so they can only match there via punctuation
-      // stripping — which would turn a price ending ".76" into a brand hit.
-      if (normalize && /^\d+$/.test(alias)) continue;
+      // Digit-ENDING aliases ("76", "super 8") are excluded from the glyph
+      // pass: letters are what gets folded, so they can only match there via
+      // punctuation stripping — which would turn a price ending ".76" or
+      // "SUPER 8.50" into a brand hit. Digit-leading ones ("7-eleven") stay:
+      // "7-ELEUEN" is the reason the pass exists.
+      if (normalize && /\d$/.test(alias)) continue;
       const key = normalize ? normalizeGlyphs(alias) : alias;
       if (!key) continue;
       out.push({
@@ -383,6 +476,41 @@ function buildPatterns(normalize: boolean): AliasPattern[] {
 // alias length and callers can locate the source line.
 const ALIAS_PATTERNS: AliasPattern[] = buildPatterns(false);
 const ALIAS_PATTERNS_NORM: AliasPattern[] = buildPatterns(true);
+
+/** Single-word aliases that are ordinary words, surnames or US place names.
+ *  They still name the brand, but only on a trustworthy header line
+ *  (extract.ts `matchKnownVendor`) and never by fuzzy-matching a line's
+ *  first word — scanned over the whole receipt, "6000 GULF BLVD", "YOUR
+ *  SERVER WAS CASEY" and "HARD SHELL TACO 3.50" all became Fuel receipts. */
+export const GENERIC_ALIASES: ReadonlySet<string> = new Set([
+  "shell", "marathon", "speedway", "pilot", "gulf", "mobil", "hess", "loves",
+  "casey", "murphy", "racetrack", "stripes", "target", "subway", "courtyard",
+  "hilton", "napa", "kayak", "google", "adobe", "notion", "slack", "zoom",
+  "spectrum",
+]);
+
+/** Phrases in which a brand word is NOT the brand ("subway fare" is a transit
+ *  ticket, not a sandwich). Masked to same-length spaces (match positions stay
+ *  stable) before every vendor pass — exact, glyph, and the fuzzy header
+ *  sweep — so the generic keywords in categories.ts get to classify. */
+const BRAND_EXCLUSIONS = [
+  "subway fare", "subway fares", "subway ticket", "subway station",
+  "subway ride", "subway pass", "subway card",
+];
+const EXCLUSION_RES = BRAND_EXCLUSIONS.map(
+  (p) => new RegExp(`(?<![a-z0-9])${p.replace(/ /g, "\\s+")}(?![a-z0-9])`, "g"),
+);
+export function maskBrandExclusions(low: string): string {
+  let out = low;
+  for (const re of EXCLUSION_RES) out = out.replace(re, (m) => " ".repeat(m.length));
+  return out;
+}
+
+/** Mobile-wallet tender phrases name a payment method, never the merchant —
+ *  alias-length ranking let "google" (6) beat shorter real merchants (Shell,
+ *  ARCO) whenever "GOOGLE PAY" printed on the tender line. Stripped to
+ *  same-length spaces before both passes. */
+const WALLET_TENDER_RE = /\b(?:google|amazon|apple|samsung|android)\s*pay\b/gi;
 
 export interface VendorMatch {
   name: string;
@@ -431,12 +559,14 @@ function searchPatterns(
  */
 export function matchVendor(text: string): VendorMatch | null {
   if (!text) return null;
-  const low = text.toLowerCase();
+  const low = maskBrandExclusions(
+    text.toLowerCase().replace(WALLET_TENDER_RE, (m) => " ".repeat(m.length)),
+  );
   const exact = searchPatterns(low, ALIAS_PATTERNS);
   if (exact) {
     return { name: exact.name, category: exact.category, alias: exact.alias, via: "exact" };
   }
-  const norm = normalizeGlyphs(text);
+  const norm = normalizeGlyphs(low);
   if (!norm) return null;
   const glyph = searchPatterns(norm, ALIAS_PATTERNS_NORM);
   if (glyph) {
@@ -455,6 +585,12 @@ const FUZZY_MIN_LEN = 5;
 export const FUZZY_RATIO = 0.88;
 /** At/above this ratio the canonical name may replace the OCR'd vendor text. */
 export const FUZZY_RENAME_RATIO = 0.93;
+/** The header sweep's acceptance ratio. Its ratio is 1 − edits/aliasLength
+ *  (one edit on a 5-letter brand = 0.8) — a different scale from
+ *  {@link similarityRatio} / FUZZY_RENAME_RATIO. A sweep hit at/above it
+ *  names the vendor AND may set the category; below it the hit is dropped
+ *  entirely (extract.ts). */
+export const FUZZY_HINT_RATIO = 0.75;
 
 const DIGIT_FOLDS: Record<string, string> = { "0": "o", "1": "l", "5": "s", "8": "b" };
 
@@ -464,13 +600,44 @@ function foldFull(s: string): string {
   return out.replace(/ /g, "");
 }
 
-const FUZZY_ALIASES: { folded: string; name: string; category: Category }[] =
-  MERGED.flatMap((v) =>
-    v.aliases
-      .filter((a) => a.length >= FUZZY_MIN_LEN)
-      .map((a) => ({ folded: foldFull(a), name: v.name, category: v.category }))
-      .filter((x) => x.folded.length >= FUZZY_MIN_LEN),
-  );
+/** Ordinary receipt words that sit within the edit budget of a short brand
+ *  alias (all verified colliders: "GLOVES" → Love's, "MOBILE" → Mobil,
+ *  "PUBLIC" → Publix, "MILTON" → Hilton, "SHEETS" → Sheetz, "GATEWAY" →
+ *  Safeway…). Never a fuzzy candidate. Extend it when a real word turns up
+ *  one edit from a short alias. */
+const FUZZY_STOPWORDS: ReadonlySet<string> = new Set([
+  "mobile", "public", "state", "states", "black", "snack", "stack", "gloves",
+  "lovers", "sheets", "shelf", "lowest", "lower", "marco", "gateway", "horizon",
+  "vernon", "milton", "tilton", "hinton", "weston", "wyatt", "stapler",
+  "samples", "super", "motel", "lumber", "stone", "rewards", "supply",
+  "flooring",
+]);
+
+// Digit folds exist to repair OCR'd digits in LETTER-ONLY brands ("M0BIL",
+// "FARMER 80YS"). An alias that itself carries digits ("super 8" folds to
+// "superb", "motel 6" to "motel6", "84 lumber" to "b4lumber") would match the
+// plain WORD one deletion away — a "SUPER 93 OCTANE" grade line renamed a gas
+// receipt to Super 8 — so those match only in the exact/glyph passes, the
+// same protection buildPatterns gives digit-only aliases.
+const FUZZY_ALIASES: {
+  folded: string;
+  /** Folded first word of a multi-word alias ("" for single-word ones). */
+  first: string;
+  name: string;
+  category: Category;
+  generic: boolean;
+}[] = MERGED.flatMap((v) =>
+  v.aliases
+    .filter((a) => a.length >= FUZZY_MIN_LEN && !/\d/.test(a))
+    .map((a) => ({
+      folded: foldFull(a),
+      first: a.includes(" ") ? foldFull(a.split(/\s+/)[0]!) : "",
+      name: v.name,
+      category: v.category,
+      generic: GENERIC_ALIASES.has(a),
+    }))
+    .filter((x) => x.folded.length >= FUZZY_MIN_LEN),
+);
 
 /** Similarity in the spirit of difflib's ratio: 2·common/(len_a+len_b), with
  *  the common length computed as the longest common subsequence. */
@@ -566,23 +733,41 @@ export function fuzzyMatchVendor(candidate: string): FuzzyVendorMatch | null {
  */
 export function fuzzyMatchVendorLines(lines: string[]): FuzzyVendorMatch | null {
   const candidates = new Set<string>();
+  const fullLines = new Set<string>();
   for (const raw of lines.slice(0, 6)) {
-    const text = raw.trim();
+    // Masked like the exact pass: the fare line's first word otherwise
+    // re-matched "SUBWAY" here after the exact pass had masked it.
+    const text = maskBrandExclusions(raw.toLowerCase()).trim();
     if (text.length < 4) continue;
     candidates.add(text);
+    fullLines.add(text);
     const words = text.split(/\s+/);
     if (words[0] && words[0].length >= 4) candidates.add(words[0]);
     if (words.length >= 2) candidates.add(words.slice(0, 2).join(" "));
   }
   let best: (FuzzyVendorMatch & { d: number; len: number }) | null = null;
   for (const cand of candidates) {
+    // An ordinary word one edit from a short alias is never a brand sighting.
+    if (FUZZY_STOPWORDS.has(cand.replace(/[^a-z]/g, ""))) continue;
     const folded = foldFull(cand);
     if (folded.length < 4) continue;
+    const isPrefix = !fullLines.has(cand);
+    const candWords = cand.split(/\s+/);
     for (const fa of FUZZY_ALIASES) {
+      // A generic word may fuzzy-match a WHOLE header line ("ADOBE") but never
+      // a line's first word(s) ("ADOBE GRILL", "HILTON HEAD ISLAND, SC").
+      if (fa.generic && isPrefix) continue;
       if (Math.abs(fa.folded.length - folded.length) > 2) continue;
       const budget = editBudget(fa.folded.length);
       const d = editDistance(folded, fa.folded, budget);
       if (d > budget) continue;
+      // A multi-word brand's distinctive part is its first word: two edits
+      // concentrated there ("ABC INDUSTRIAL" → MSC Industrial) is a different
+      // company, not a misread — the first word must clear its own budget.
+      if (fa.first && candWords.length > 1) {
+        const d1 = editDistance(foldFull(candWords[0]!), fa.first, 2);
+        if (d1 > editBudget(fa.first.length)) continue;
+      }
       const ratio = 1 - d / fa.folded.length;
       if (!best || d < best.d || (d === best.d && fa.folded.length > best.len)) {
         best = { name: fa.name, category: fa.category, ratio, d, len: fa.folded.length };

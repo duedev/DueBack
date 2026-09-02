@@ -47,11 +47,18 @@ export const CATEGORY_META: Record<Category, { color: string; emoji: string }> =
 
 interface Rule {
   category: Category;
-  /** Lowercase generic descriptors (NOT brand names — those live in vendors.ts). */
-  keywords: string[];
+  /** Lowercase generic descriptors (NOT brand names — those live in vendors.ts).
+   *  A RegExp entry is matched as-is (against the lowercased haystack) for the
+   *  few keywords that need a negative lookahead. */
+  keywords: (string | RegExp)[];
 }
 
-// Order matters: earlier rules win on ties.
+// Order matters: earlier rules win on ties. Materials sits right after Fuel
+// and Meals before Travel on purpose — this is a construction-reimbursement
+// taxonomy, and the generic product words are exactly what supply-house
+// receipts print: with Utilities ("electric", "cable") and Meals ("kitchen")
+// ahead of Materials, an electrical-supply house filed as a phone bill and
+// a "FLIGHT OF 4" taproom line or an "AIRPORT BLVD" address filed as Travel.
 const RULES: Rule[] = [
   {
     category: "Lodging",
@@ -60,7 +67,15 @@ const RULES: Rule[] = [
   {
     category: "Ground Transportation",
     keywords: [
-      "taxi", "cab", "rideshare", "parking", "garage", "toll", "transit",
+      "taxi",
+      // "cab" is also the universal wine abbreviation and a cabinet SKU prefix.
+      /(?<![a-z0-9])cab(?![a-z0-9])(?!\s*(?:sauv|sav|franc|hinge|pull|knob|door|hdw|hardware))/,
+      "rideshare", "parking", "garage",
+      // "toll" fires on the "Toll Free 1-800…" line countless headers print.
+      /(?<![a-z0-9])tolls?(?![a-z0-9])(?![\s-]*free)/,
+      "transit",
+      // Reachable only because vendors.ts masks "subway fare" before the brand
+      // passes — the sandwich alias otherwise claims every transit ticket.
       "subway fare", "car rental", "rental car", "light rail",
     ],
   },
@@ -70,15 +85,29 @@ const RULES: Rule[] = [
     // session" are the generic descriptors that survive when a charging
     // receipt's brand line is a logo the OCR can't spell.
     keywords: [
-      "gas station", "gasoline", "unleaded", "diesel", "petrol", "fuel",
+      "gas station", "gasoline", "unleaded", "diesel", "petrol",
+      // …but a "FUEL SURCHARGE" line on a freight/service invoice is not fuel.
+      /(?<![a-z0-9])fuel(?![a-z0-9])(?!\s*surcharge)/,
       "per gallon", "price/gal",
       "kwh", "charging session", "ev charging", "charging station",
       "supercharging", "supercharger",
     ],
   },
   {
-    category: "Travel",
-    keywords: ["airline", "airlines", "airways", "airport", "boarding pass", "baggage", "flight"],
+    category: "Materials",
+    // Supply houses are named in both singular and plural ("Building
+    // Supplies"); the plural used to fall through to Office Supplies via its
+    // bare "supplies" keyword.
+    keywords: [
+      "hardware", "lumber", "building supply", "building supplies",
+      "building materials", "paint", "drywall", "concrete", "masonry", "rebar",
+      "plumbing supply", "plumbing supplies", "electrical supply",
+      "electrical supplies", "electric supply", "supply house", "romex",
+      "contractor supply", "contractor supplies", "roofing supply",
+      "roofing supplies", "hvac supply", "hvac supplies", "welding supply",
+      "welding supplies",
+      "kitchen & bath", "kitchen and bath", "tool rental",
+    ],
   },
   {
     category: "Meals",
@@ -89,23 +118,31 @@ const RULES: Rule[] = [
     ],
   },
   {
+    category: "Travel",
+    keywords: ["airline", "airlines", "airways", "airport", "boarding pass", "baggage", "flight"],
+  },
+  {
     category: "Software & Subscriptions",
-    keywords: ["subscription", "saas", "license", "domain", "hosting", "web services", "cloud"],
+    // Bill-shaped "license" only: contractor invoices print "Contractor
+    // License #…" (required in many states) and bars print "Liquor License".
+    keywords: [
+      "subscription", "saas", "software license", "site license", "license key",
+      "license renewal", "domain", "hosting", "web services", "cloud",
+    ],
   },
   {
     category: "Utilities & Phone",
-    keywords: ["electric", "water bill", "internet", "wireless", "phone bill", "utility", "broadband", "cable"],
+    // Bill-shaped only: bare "electric"/"cable" filed electrical-supply
+    // houses and ROMEX cable line items under the phone bill.
+    keywords: [
+      "electric bill", "electric service", "electric company", "electricity",
+      "power bill", "water bill", "internet", "wireless", "phone bill", "utility",
+      "broadband", "cable tv", "cable bill", "cable service", "cable internet",
+    ],
   },
   {
     category: "Shipping & Postage",
     keywords: ["postage", "shipping", "courier", "post office", "freight", "parcel"],
-  },
-  {
-    category: "Materials",
-    keywords: [
-      "hardware", "lumber", "building supply", "building materials", "paint",
-      "drywall", "concrete", "plumbing supply", "electrical supply", "tool rental",
-    ],
   },
   {
     category: "Office Supplies",
@@ -120,7 +157,7 @@ const RULES: Rule[] = [
 // Precompile word-boundary matchers for every keyword, once.
 const RULE_PATTERNS: { category: Category; res: RegExp[] }[] = RULES.map((r) => ({
   category: r.category,
-  res: r.keywords.map(wordBoundaryMatcher),
+  res: r.keywords.map((k) => (typeof k === "string" ? wordBoundaryMatcher(k) : k)),
 }));
 
 /**

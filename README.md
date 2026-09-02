@@ -26,12 +26,14 @@ for the web with two new pillars: **visual logo recognition** and an
    ones queue for an `Approve & Next` sweep with each extracted field
    highlighted right on the image (with zoomed callouts).
 3. **Download the workbook:** a themed `.xlsx` (Summary that foots with real
-   formulas, per-category sheets with the receipt images embedded, and — when
-   you tick **Insights sheet** in the report bar — a charts + KPI dashboard
-   tab) plus a one-click CSV and an images ZIP. Deployments
-   configured for it also get a **Save to OneDrive** button that uploads the
-   workbook straight to `OneDrive / Apps / DueBack`
-   (see [`ONEDRIVE_SETUP.md`](./ONEDRIVE_SETUP.md)).
+   formulas, per-category sheets with the receipt images embedded, and — with
+   **Insights sheet** ticked in the report bar, as it is by default — a
+   charts + KPI dashboard tab) plus a **print packet** PDF with the receipts
+   laid out on Letter pages under the employee/job header (bundle both into
+   one ZIP if you prefer a single download). Deployments configured for it
+   also get a **Save to OneDrive** button that uploads the workbook straight
+   to `OneDrive / Apps / DueBack` (see
+   [`ONEDRIVE_SETUP.md`](./ONEDRIVE_SETUP.md)).
 
 The report bar also remembers your **jobs**: save a job name + number pair
 once (☆ Save job) and typing either one autofills the other from then on

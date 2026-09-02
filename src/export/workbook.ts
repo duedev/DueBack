@@ -3,6 +3,7 @@ import type { Batch, Receipt, Category } from "../types.ts";
 import { APP_NAME, APP_URL } from "../config/constants.ts";
 import { CATEGORIES, CATEGORY_META } from "../config/categories.ts";
 import { safeAmount } from "../util/money.ts";
+import { foldToAscii } from "../util/rename.ts";
 import { perDiemAmount, perDiemLabel } from "../util/perdiem.ts";
 import { phoneServiceAmount, phoneServiceLabel } from "../util/phone.ts";
 import { computeInsights, type Insights } from "./insights.ts";
@@ -939,7 +940,8 @@ function toLocalIso(d: Date): string {
 
 function makeFileName(batch: Batch): string {
   // The original app's convention: Reimbursements_{Employee}_{YYYYMMDD}.xlsx
-  const safe = (batch.employee || "Employee")
+  // Accents fold to ASCII (José Álvarez → Jose_Alvarez) rather than dropping.
+  const safe = foldToAscii(batch.employee || "Employee")
     .replace(/[^\w\s-]/g, "")
     .trim()
     .replace(/\s+/g, "_")
