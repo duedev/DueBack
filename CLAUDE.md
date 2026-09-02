@@ -635,6 +635,23 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   `originalOmitted`), flattens archive paths into one honest entry name
   (`originalEntryName`, Node-tested) and stores images with
   `compress: false` (`ZipEntry.compress` — JPEG/PDF never shrink).
+- **Forced colors and safe areas are handled centrally.** The focus ring is
+  an outline (forced colors paints it; a later box-shadow can't cancel it);
+  input focus and the four inset rings keep a TRANSPARENT outline, never
+  `outline: none`; every pressed toggle carries `aria-pressed`, and one
+  global `@media (forced-colors: active) [aria-pressed="true"]` rule
+  underlines it (background-only fills vanish there). `.wrap` pads the
+  notch insets, the camera FAB and the board's coarse-pointer bottom
+  padding clear the home indicator (`env(safe-area-inset-*)`, the
+  Toasts idiom). Heading structure: the workspace has an sr-only h1 and
+  lane/category h2s (font re-pinned to the eyebrow look), Settings is h2 +
+  h3 sections, the report bar's confirm is an h2 — theme.css styles bare
+  h2/h3 in Lora with margins, so every UI heading re-pins its font. The
+  review modal's draw buttons expose `aria-pressed` and an always-mounted
+  sr-only `role="status"` announces draw mode; the zoom canvases are
+  `aria-hidden`. tests/theme.test.ts pins the dark blocks' token sets
+  BOTH ways, `--ink-faint` AA on all three paper tones, `--line-control`
+  ≥ 3:1 and the forced-colors rule.
 - **All three dialogs manage focus** (ReviewModal, Settings, ExportBar's
   blank-details confirm): container
   `tabindex="-1"` focused on open, a local Tab trap, Escape closes, focus

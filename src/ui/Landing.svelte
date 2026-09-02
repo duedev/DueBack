@@ -564,7 +564,8 @@
   /* .nav-tabs scrolls horizontally, which clips the global outside focus
      halo — draw the ring inset. */
   .nav-tabs .tab:focus-visible {
-    outline: none;
+    outline: 2px solid transparent; /* forced colors paints this; inset so the clip keeps it */
+    outline-offset: -4px;
     box-shadow:
       inset 0 0 0 2px var(--bg),
       inset 0 0 0 4px var(--accent);
@@ -676,7 +677,8 @@
   }
   /* .qa's overflow:hidden clips the global focus ring — draw it inset. */
   .qa summary:focus-visible {
-    outline: none;
+    outline: 2px solid transparent;
+    outline-offset: -4px;
     box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 4px var(--accent);
   }
   .qa summary::after {

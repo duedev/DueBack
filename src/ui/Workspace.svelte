@@ -190,11 +190,15 @@
   </header>
 
   <main class="wrap ws-main">
+    <!-- The board had no heading at all once receipts existed: a screen
+         reader's heading list was empty. Text must not match /Receipts in/
+         (both test suites key on the landing's h1). -->
+    <h1 class="sr-only">DueBack — your receipts</h1>
     <Dropzone compact={total > 0} />
 
     {#if total === 0}
       <div class="empty">
-        <h3>No receipts yet</h3>
+        <h2>No receipts yet</h2>
         <p class="muted">
           Add a few receipts above; they'll appear here as they're read, and
           anything uncertain gets flagged for a quick review.
@@ -248,7 +252,7 @@
             <section class="cat-group">
               {#if catGroups.length > 1}
                 <header class="cat-head">
-                  <span>{g.cat}</span>
+                  <h2>{g.cat}</h2>
                   <span class="lane-count">{g.items.length}</span>
                 </header>
               {/if}
@@ -265,7 +269,7 @@
           {#each lanes as lane (lane.key)}
             <section class="lane lane-{lane.key}">
               <header class="lane-head">
-                <span>{lane.label}</span>
+                <h2>{lane.label}</h2>
                 <span class="lane-count">{lane.items.length}</span>
                 {#if lane.key === "failed"}
                   <button
@@ -413,8 +417,10 @@
   .camera-fab {
     display: none;
     position: fixed;
-    right: 1.1rem;
-    bottom: 1.3rem;
+    /* Clear the home indicator / rounded corners in a standalone install
+       (same idiom as Toasts): 1.3rem sat inside the 34pt bottom inset. */
+    right: max(1.1rem, calc(env(safe-area-inset-right, 0px) + 0.6rem));
+    bottom: max(1.3rem, calc(env(safe-area-inset-bottom, 0px) + 0.6rem));
     z-index: 45;
     width: 3.6rem;
     height: 3.6rem;
@@ -436,6 +442,11 @@
     /* 13.6px focused a zoom on iOS; the bar wraps, so 16px fits at 390px. */
     .sort select {
       font-size: 1rem;
+    }
+    /* The last card (and its right-aligned amount) clears the FAB at the
+       end of the scroll. */
+    .ws-main {
+      padding-bottom: calc(3rem + 3.6rem + env(safe-area-inset-bottom, 0px));
     }
   }
 
@@ -468,7 +479,8 @@
   }
   /* .seg's overflow:hidden clips the global focus ring — draw it inset. */
   .seg-btn:focus-visible {
-    outline: none;
+    outline: 2px solid transparent; /* painted by forced colors; negative offset keeps it inside the clip */
+    outline-offset: -4px;
     box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 4px var(--accent);
   }
   .sort {
@@ -479,7 +491,7 @@
   .sort select {
     padding: 0.4rem 0.55rem;
     border-radius: 8px;
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--line-control);
     background: var(--bg-raised);
     color: var(--ink);
     font: 500 0.85rem/1.2 var(--font-ui);
@@ -545,6 +557,17 @@
     text-transform: uppercase;
     color: var(--ink-soft);
     padding: 0.25rem 0.3rem 0.6rem;
+  }
+  /* Real headings for the heading list; the eyebrow look is re-pinned
+     because theme.css gives h2 Lora, a margin and balanced wrapping. */
+  .lane-head h2,
+  .cat-head h2 {
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: inherit;
+    margin: 0;
+    text-wrap: auto;
   }
   .lane-review .lane-head { color: var(--gold-text); }
   .lane-failed .lane-head { color: var(--err); }

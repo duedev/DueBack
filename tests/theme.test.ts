@@ -67,9 +67,35 @@ function composite(rgbA: string, bg: Rgb): Rgb {
 // ── the two dark palettes stay identical ─────────────────────────────────────
 
 test("prefers-color-scheme fallback matches the [data-theme=dark] palette", () => {
+  // Both directions: a token declared in only one dark block used to slip
+  // through (the walk only checked the fallback's keys against the toggle).
+  assert.deepEqual([...dark.keys()].sort(), [...darkAuto.keys()].sort(), "dark blocks declare the same tokens");
   for (const [name, value] of darkAuto) {
     assert.equal(dark.get(name), value, `${name} differs between dark blocks`);
   }
+});
+
+test("--ink-faint meets AA on every paper tone in both palettes", () => {
+  for (const [label, pal] of [["light", root], ["dark", dark]] as const) {
+    const ink = hex(pal.get("--ink-faint")!);
+    for (const bg of ["--bg", "--bg-raised", "--bg-sunken"]) {
+      assert.ok(contrast(ink, hex(pal.get(bg)!)) >= 4.5, `${label} --ink-faint on ${bg}`);
+    }
+  }
+});
+
+test("--line-control is the form-control boundary in all three palettes and clears 3:1", () => {
+  for (const pal of [root, dark, darkAuto]) assert.ok(pal.get("--line-control"), "declared");
+  for (const [label, pal] of [["light", root], ["dark", dark]] as const) {
+    const line = hex(pal.get("--line-control")!);
+    assert.ok(contrast(line, hex(pal.get("--bg-raised")!)) >= 3, `${label} control border on --bg-raised (WCAG 1.4.11)`);
+  }
+  // Inputs use it — the hairline --line-strong was 1.6:1, invisible as a field edge.
+  assert.match(themeCss, /textarea \{[^}]*border: 1px solid var\(--line-control\)/);
+});
+
+test("pressed toggles keep a state under forced colors", () => {
+  assert.match(themeCss, /@media \(forced-colors: active\)\s*\{\s*\[aria-pressed="true"\]\s*\{[^}]*text-decoration: underline/);
 });
 
 test("--gold-text exists in all three palettes", () => {
@@ -157,10 +183,17 @@ test(".chip-warn text uses the small-copy gold, not --gold", () => {
   assert.match(m![1]!, /color:\s*var\(--gold-text\)/);
 });
 
-test("the global focus ring doesn't reshape the focused element", () => {
+test("the global focus ring doesn't reshape the focused element and lives in the outline channel", () => {
   const m = themeCss.match(/^:focus-visible\s*\{([^}]*)\}/m);
   assert.ok(m, "global :focus-visible rule exists");
   assert.doesNotMatch(m![1]!, /border-radius/);
+  // Outline survives forced colors and can't be cancelled by a later
+  // box-shadow (.btn-primary/.card used to erase the ring).
+  assert.match(m![1]!, /outline: 2px solid/);
+  assert.doesNotMatch(m![1]!, /outline: none/);
+  // Inputs keep a transparent outline for the same reason, never none.
+  const inputs = themeCss.match(/textarea:focus-visible\s*\{([^}]*)\}/);
+  assert.ok(inputs && !/outline: none/.test(inputs[1]!), "input focus rule has no outline: none");
 });
 
 // ── pre-paint theme stamp + manifest ─────────────────────────────────────────

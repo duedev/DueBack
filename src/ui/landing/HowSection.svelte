@@ -240,7 +240,8 @@
   }
   /* .step's overflow:hidden clips the global focus ring — draw it inset. */
   .step summary:focus-visible {
-    outline: none;
+    outline: 2px solid transparent;
+    outline-offset: -4px;
     box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 4px var(--accent);
   }
   .step summary::after {

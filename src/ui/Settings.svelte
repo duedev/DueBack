@@ -302,7 +302,7 @@
       onkeydown={trapTab}
     >
       <header class="p-head">
-        <strong>Settings</strong>
+        <h2 class="p-title">Settings</h2>
         <span class="spacer"></span>
         <button class="btn btn-ghost btn-sm" onclick={close}>Close ✕</button>
       </header>
@@ -310,7 +310,7 @@
       <div class="p-body">
         <!-- ============== appearance ============== -->
         <section>
-          <h4>Appearance</h4>
+          <h3>Appearance</h3>
           <!-- The header button only flips light/dark; "Match system" is
                reachable here (it used to be unreachable once toggled). -->
           <div class="theme-row" role="radiogroup" aria-label="Theme">
@@ -331,7 +331,7 @@
 
         <!-- ============== account & sync ============== -->
         <section>
-          <h4>Account &amp; sync</h4>
+          <h3>Account &amp; sync</h3>
           {#if !app.syncConfigured}
             <p class="muted small">
               Sign-in (Google or email) needs a cloud workspace configured at
@@ -401,7 +401,7 @@
 
         <!-- ============== OneDrive ============== -->
         <section>
-          <h4>OneDrive</h4>
+          <h3>OneDrive</h3>
           {#if !odConfigured}
             <p class="muted small">
               Saving workbooks straight to OneDrive needs a (free) Microsoft
@@ -441,7 +441,7 @@
 
         <!-- ============== saved jobs ============== -->
         <section>
-          <h4>Saved jobs</h4>
+          <h3>Saved jobs</h3>
           <p class="muted small">
             Job names and numbers travel as a pair: in the report bar, typing
             (or picking) a saved one autofills the other. Save a pair with the
@@ -470,7 +470,7 @@
 
         <!-- ============== AI assist ============== -->
         <section>
-          <h4>AI assist (for hard receipts)</h4>
+          <h3>AI assist (for hard receipts)</h3>
           <p class="muted small">
             Off = everything stays on this device. On = receipts the on-device
             reader isn't confident about are sent to the model below for a
@@ -537,7 +537,7 @@
 
         <!-- ============== teach a brand ============== -->
         <section>
-          <h4>Teach a brand (logo recognition)</h4>
+          <h3>Teach a brand (logo recognition)</h3>
           <p class="muted small">
             When a merchant prints its name only as a logo, the text reader
             can't spell it. Upload one clear image of the logo and the app will
@@ -587,7 +587,7 @@
 
         <!-- ============== improvement log ============== -->
         <section>
-          <h4>Improvement log</h4>
+          <h3>Improvement log</h3>
           <p class="muted small">
             Every correction you make in review is recorded with where the
             right value sits on the receipt and what the reader believed
@@ -672,10 +672,21 @@
     gap: 0.6rem;
     align-content: start;
   }
-  section h4 {
+  .p-title {
+    margin: 0;
+    font: 600 1rem/1.2 var(--font-ui);
+    letter-spacing: 0;
+    text-wrap: auto;
+  }
+  /* h3s (they were h4s under no h2/h3 — a heading list that jumped from
+     the page's h1 to level 4); the UI-font look is re-pinned. */
+  section h3 {
     margin: 0;
     padding-bottom: 0.35rem;
     border-bottom: 1px solid var(--line);
+    font: 650 1rem/1.3 var(--font-ui);
+    letter-spacing: 0;
+    text-wrap: auto;
   }
   .small {
     font-size: 0.84rem;

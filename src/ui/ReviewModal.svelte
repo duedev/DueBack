@@ -576,6 +576,13 @@
       </header>
 
       <div class="m-body">
+        <!-- Always mounted: a live region inserted with its text already in
+             place is not reliably announced (VoiceOver on iOS especially). -->
+        <div class="sr-only" role="status">
+          {drawField
+            ? `Draw mode on: drag a box around the ${drawField === "amount" ? "total" : drawField}. Escape cancels.`
+            : ""}
+        </div>
         <div class="m-image">
           {#if imageUrl}
             <!-- svelte-ignore a11y_no_static_element_interactions -- the
@@ -642,6 +649,7 @@
                 type="button"
                 class="draw-btn db-vendor"
                 class:active={drawField === "vendor"}
+                aria-pressed={drawField === "vendor"}
                 onclick={() => (drawField = drawField === "vendor" ? null : "vendor")}
                 title="Draw a box on the receipt around the vendor name"
               >▣ mark on image</button>
@@ -650,7 +658,7 @@
             {@render fieldFlags("vendor")}
             {#if imgLoaded && current.vendor.bbox}
               {#key current.id}
-                <canvas class="callout" use:callout={current.vendor.bbox}></canvas>
+                <canvas class="callout" aria-hidden="true" use:callout={current.vendor.bbox}></canvas>
               {/key}
             {/if}
           </div>
@@ -662,6 +670,7 @@
                 type="button"
                 class="draw-btn db-date"
                 class:active={drawField === "date"}
+                aria-pressed={drawField === "date"}
                 onclick={() => (drawField = drawField === "date" ? null : "date")}
                 title="Draw a box on the receipt around the date"
               >▣ mark on image</button>
@@ -670,7 +679,7 @@
             {@render fieldFlags("date")}
             {#if imgLoaded && current.date.bbox}
               {#key current.id}
-                <canvas class="callout" use:callout={current.date.bbox}></canvas>
+                <canvas class="callout" aria-hidden="true" use:callout={current.date.bbox}></canvas>
               {/key}
             {/if}
           </div>
@@ -682,6 +691,7 @@
                 type="button"
                 class="draw-btn db-amount"
                 class:active={drawField === "amount"}
+                aria-pressed={drawField === "amount"}
                 onclick={() => (drawField = drawField === "amount" ? null : "amount")}
                 title="Draw a box on the receipt around the grand total"
               >▣ mark on image</button>
@@ -697,7 +707,7 @@
             {@render fieldFlags("amount")}
             {#if imgLoaded && current.amount.bbox}
               {#key current.id}
-                <canvas class="callout" use:callout={current.amount.bbox}></canvas>
+                <canvas class="callout" aria-hidden="true" use:callout={current.amount.bbox}></canvas>
               {/key}
             {/if}
           </div>

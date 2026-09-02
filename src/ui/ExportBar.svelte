@@ -781,7 +781,7 @@
         bind:this={confirmEl}
         onkeydown={onConfirmKey}
       >
-        <h4>Some report details are blank</h4>
+        <h2>Some report details are blank</h2>
         <p class="muted">
           {blankFields.join(", ")} will show empty in the workbook header.
         </p>
@@ -884,7 +884,7 @@
     gap: 0.6rem;
   }
   .yr-btn {
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--line-control);
     border-radius: 8px;
     background: var(--bg-raised);
     color: var(--ink);
@@ -903,7 +903,7 @@
     gap: 0.35rem;
   }
   .month-chip {
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--line-control);
     border-radius: 999px;
     background: var(--bg-raised);
     color: var(--ink-soft);
@@ -990,8 +990,11 @@
     gap: 0.6rem;
     padding: 1.1rem 1.2rem;
   }
-  .confirm h4 {
+  .confirm h2 {
     margin: 0;
+    font: 650 1.05rem/1.3 var(--font-ui);
+    letter-spacing: 0;
+    text-wrap: auto;
   }
   .confirm p {
     margin: 0;

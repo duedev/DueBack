@@ -64,7 +64,6 @@
   --cat-4-ink: #ffffff; /* 5.70:1 on --cat-4 */
   --err-ink: #ffffff; /* 6.55:1 on --err */
 
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
   color-scheme: light;
 }
 
@@ -111,7 +110,6 @@
   --shadow-2: 0 2px 6px rgb(0 0 0 / 0.45), 0 10px 28px rgb(0 0 0 / 0.5);
   --shadow-3: 0 6px 16px rgb(0 0 0 / 0.5), 0 24px 60px rgb(0 0 0 / 0.6);
 
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
   color-scheme: dark;
 }
 
@@ -364,9 +362,24 @@ textarea:hover {
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: none;
+  /* Transparent, not none: normally the accent border + soft shadow carry
+     focus; under forced colors those are stripped and the (transparent)
+     outline is what the OS paints in its Highlight colour. */
+  outline: 2px solid transparent;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Forced colors (Windows High Contrast) drop backgrounds and shadows, and the
+   pressed toggles — seg buttons, category chips, month chips, Nerd mode —
+   are background-only fills, so their state vanished. All of them carry
+   aria-pressed. Underline, not outline: outline is the focus channel. */
+@media (forced-colors: active) {
+  [aria-pressed="true"] {
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+  }
 }
 /* iOS Safari zooms the viewport into any field under 16px on focus; the
    0.95rem fields (15.2px) made every Employee/Job/Amount tap a zoom. Touch
@@ -479,6 +492,10 @@ label {
 .wrap {
   width: min(1120px, calc(100% - 2.5rem));
   margin-inline: auto;
+  /* Edge-to-edge (viewport-fit=cover): in notched landscape the sticky
+     headers and the board ran under the sensor housing. Zero everywhere
+     else; border-box, so the padding comes out of the width. */
+  padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
 }
 
 .section-label {
