@@ -11,6 +11,7 @@ import type {
 import { uid } from "../util/id.ts";
 import {
   appendPendingDelete,
+  OWNER_KEY,
   PENDING_DELETES_KEY,
   type PendingDelete,
   type SyncTable,
@@ -109,10 +110,12 @@ class Repo {
   }
 
   async updateBatch(id: string, patch: Partial<Batch>): Promise<void> {
-    const cur = await this.getBatch(id);
-    if (!cur) return;
-    await (await db()).put("batches", { ...cur, ...patch, updatedAt: Date.now() });
-    this.notify();
+    const conn = await db();
+    const tx = conn.transaction("batches", "readwrite");
+    const cur = await tx.store.get(id);
+    if (cur) await tx.store.put({ ...cur, ...patch, updatedAt: Date.now() });
+    await tx.done;
+    if (cur) this.notify();
   }
 
   async listBatches(): Promise<Batch[]> {
@@ -132,11 +135,31 @@ class Repo {
     return r ? normalizeReceipt(r) : undefined;
   }
 
-  async updateReceipt(id: string, patch: Partial<Receipt>): Promise<Receipt | undefined> {
-    const cur = await this.getReceipt(id);
-    if (!cur) return undefined;
-    const next: Receipt = { ...cur, ...patch, updatedAt: Date.now() };
-    await (await db()).put("receipts", next);
+  /** Read-modify-write in ONE transaction (no non-IDB await between the get
+   *  and the put, or the transaction auto-commits — the rule touchJob
+   *  follows). With `expect`, the write lands only while the stored
+   *  `updatedAt` still matches and returns null otherwise: the pipeline's
+   *  completion write uses it so a review save that slips between its
+   *  re-read and its put is never overwritten. */
+  async updateReceipt(
+    id: string,
+    patch: Partial<Receipt>,
+    expect?: { updatedAt: number },
+  ): Promise<Receipt | undefined | null> {
+    const conn = await db();
+    const tx = conn.transaction("receipts", "readwrite");
+    const cur = await tx.store.get(id);
+    if (!cur) {
+      await tx.done;
+      return undefined;
+    }
+    if (expect && cur.updatedAt !== expect.updatedAt) {
+      await tx.done;
+      return null;
+    }
+    const next: Receipt = { ...normalizeReceipt(cur), ...patch, updatedAt: Date.now() };
+    await tx.store.put(next);
+    await tx.done;
     this.notify();
     return next;
   }
@@ -280,6 +303,28 @@ class Repo {
       PENDING_DELETES_KEY,
       appendPendingDelete(list, { table, id, blobKeys, at: Date.now() }),
     );
+  }
+
+  /** Clear this device's stores outright: batches, receipts, jobs, blobs,
+   *  taught brands, the pending-delete log and the owner mark. NOT through
+   *  deleteReceipt/deleteBrand — those queue tombstones, and these rows may
+   *  belong to another account (the foreign-owner sync block is the reason
+   *  this exists). Settings and preferences in kv survive. */
+  async wipeLocalData(): Promise<void> {
+    const conn = await db();
+    const stores = ["batches", "receipts", "jobs", "blobs", "brands", "kv"] as const;
+    const tx = conn.transaction(stores, "readwrite");
+    await Promise.all([
+      tx.objectStore("batches").clear(),
+      tx.objectStore("receipts").clear(),
+      tx.objectStore("jobs").clear(),
+      tx.objectStore("blobs").clear(),
+      tx.objectStore("brands").clear(),
+      tx.objectStore("kv").delete(PENDING_DELETES_KEY),
+      tx.objectStore("kv").delete(OWNER_KEY),
+    ]);
+    await tx.done;
+    this.notify();
   }
 
   // ---- Settings (small key/value) ---------------------------------------

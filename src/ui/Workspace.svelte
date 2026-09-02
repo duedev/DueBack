@@ -146,7 +146,19 @@
       {/if}
       <div class="head-actions">
         {#if app.userEmail}
-          <span class="chip chip-ok" title="Synced to your cloud workspace">☁ synced</span>
+          {#if app.syncStatus === "error"}
+            <!-- The chip used to say "synced" whatever the engine's state;
+                 an error is the one state the user must act on. -->
+            <button
+              class="chip chip-err chip-btn"
+              title={app.syncError || "Sync error — open Settings"}
+              onclick={() => (app.settingsOpen = true)}
+            >☁ sync error</button>
+          {:else if app.syncStatus === "syncing"}
+            <span class="chip" title="Syncing with your cloud workspace">☁ syncing…</span>
+          {:else}
+            <span class="chip chip-ok" title="Synced to your cloud workspace">☁ synced</span>
+          {/if}
         {/if}
         {#if total > 0}
           <button
@@ -247,6 +259,13 @@
               <header class="lane-head">
                 <span>{lane.label}</span>
                 <span class="lane-count">{lane.items.length}</span>
+                {#if lane.key === "failed"}
+                  <button
+                    class="btn btn-ghost btn-sm lane-action"
+                    onclick={() => void app.retryFailed()}
+                    title="Read every failed receipt again"
+                  >↻ Retry all</button>
+                {/if}
               </header>
               <div class="lane-cards">
                 {#each lane.items as r (r.id)}
@@ -517,6 +536,15 @@
   }
   .lane-review .lane-head { color: var(--gold-text); }
   .lane-failed .lane-head { color: var(--err); }
+  .lane-action {
+    margin-left: auto;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.75rem;
+  }
+  .chip-btn {
+    cursor: pointer;
+    font-family: inherit;
+  }
   .lane-count {
     background: var(--line);
     color: var(--ink);

@@ -5,9 +5,10 @@ import { STATE_PREFIX } from "./core.ts";
 // hand the full callback URL to the opener and stop — booting the whole app
 // (OCR workers, IndexedDB, …) inside a throwaway popup would be waste.
 //
-// The `dueback-od-` state prefix is the discriminator: Supabase magic links
-// also return to the app with a `?code=` query param, and they must keep
-// booting the app normally.
+// The `dueback-od-` state prefix is the discriminator: Supabase's own auth
+// callbacks also return to the app (as `#access_token=…` under the implicit
+// flow, or `?code=` if the client were switched to PKCE), and they must
+// keep booting the app normally.
 
 export const POPUP_MESSAGE_TYPE = "dueback:onedrive:callback";
 

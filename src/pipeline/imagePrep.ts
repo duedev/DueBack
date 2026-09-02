@@ -271,7 +271,14 @@ export async function cleanImage(file: File | Blob): Promise<CleanedImage> {
     const paper = paperRegionBox(a.data, a.w, a.h);
     let paperCropped = false;
     if (paper) {
-      const pbox = clampInner(paper);
+      // Unclamped on purpose: the slab mask already excludes near-black
+      // strips, so its bbox only reaches into a dark-border inset band when
+      // that band holds bright paper — a long receipt on a dark car seat or
+      // counter with its top/bottom edge inside the outer 8%. Clamping cut
+      // the TOTAL line or the vendor header there (~5% of the frame per end
+      // even after the 3% pad); the edge-energy fallback keeps its clamp
+      // because sawtooth strips genuinely carry edge energy.
+      const pbox = paper;
       const area = (pbox.w * pbox.h) / (a.w * a.h);
       if (area >= 0.05 && area <= 0.92) {
         crop = toCrop(pbox, 0.03);

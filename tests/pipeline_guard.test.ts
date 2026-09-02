@@ -119,6 +119,14 @@ test("untouched before the claim → preTouched=false keeps the full write", () 
 // ── Audit round (2026-09) ─────────────────────────────────────────────────────
 import { friendlyError } from "../src/pipeline/pipeline.ts";
 
+test("friendlyError names a text-reader load failure and points at Retry", () => {
+  const net = new Error("Network error while fetching https://x/vendor/tessdata/4.0.0/eng.traineddata.gz. Response code: 503");
+  assert.match(friendlyError(net, { mimeType: "image/jpeg", fileName: "a.jpg" }), /text reader.*Retry reading/);
+  assert.match(friendlyError(new TypeError("Failed to fetch"), { mimeType: "image/jpeg", fileName: "a.jpg" }), /text reader/);
+  // …and never mislabels it as a bad PDF just because the receipt is one.
+  assert.match(friendlyError(net, { mimeType: "application/pdf", fileName: "scan.pdf" }), /text reader/);
+});
+
 test("friendlyError names HEIC, PDF and decode failures instead of engine internals", () => {
   const decode = new Error("The source image could not be decoded.");
   assert.match(friendlyError(decode, { mimeType: "image/heic", fileName: "IMG_1.heic" }), /HEIC/);

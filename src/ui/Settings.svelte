@@ -217,6 +217,17 @@
     else emailSent = true;
   }
 
+  /** The way out of the foreign-owner sync block: another account's data
+   *  is on this device. Wipes the local stores WITHOUT queuing tombstones
+   *  (those rows were never this account's) and starts sync over. */
+  async function resetLocalCopy(): Promise<void> {
+    const ok = confirm(
+      "Remove every receipt, batch and taught brand stored on this device? Your own cloud workspace is not touched — this device will sync it afresh.",
+    );
+    if (!ok) return;
+    await app.resetLocalCopy();
+  }
+
   function close(): void {
     app.settingsOpen = false;
   }
@@ -310,6 +321,16 @@
                       : ''}">{app.syncStatus}</span
                 >
               </p>
+              {#if app.syncStatus === "error" && app.syncError}
+                <p class="sync-error small" role="alert">{app.syncError}</p>
+                {#if app.syncForeign}
+                  <p>
+                    <button class="btn btn-sm btn-danger" onclick={() => void resetLocalCopy()}>
+                      Remove this device's local copy
+                    </button>
+                  </p>
+                {/if}
+              {/if}
               <p class="muted small">
                 Batches, receipts and taught brands are mirrored to your own
                 private cloud workspace (row-level security, only you). The AI
@@ -562,6 +583,10 @@
 {/if}
 
 <style>
+  .sync-error {
+    color: var(--err);
+    margin: 0.25rem 0 0.5rem;
+  }
   .scrim {
     position: fixed;
     inset: 0;

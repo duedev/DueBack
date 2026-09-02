@@ -336,6 +336,12 @@
     else close();
   }
 
+  async function retryRead(): Promise<void> {
+    const r = current;
+    if (!r) return;
+    if (await app.retryReceipt(r.id)) app.toast("Reading again…", "info");
+  }
+
   function onKey(e: KeyboardEvent): void {
     if (!current) return;
     const tag = (e.target as HTMLElement)?.tagName;
@@ -681,6 +687,13 @@
               {/each}
             </div>
           {/if}
+          {#if current.status === "failed"}
+            <!-- The card is itself a button, so the retry lives here. -->
+            <p class="retry-row">
+              <button class="btn btn-sm" onclick={() => void retryRead()}>↻ Retry reading</button>
+              <span class="muted small">Reads the image again; anything you typed here is kept.</span>
+            </p>
+          {/if}
 
           <p class="provenance muted">
             {current.methodUsed === "paid"
@@ -905,6 +918,13 @@
   .flags {
     display: grid;
     gap: 0.4rem;
+  }
+  .retry-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0.5rem 0 0;
   }
   .flag {
     display: flex;

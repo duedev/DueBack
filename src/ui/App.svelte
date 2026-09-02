@@ -8,6 +8,13 @@
   const hashName = (): string => location.hash.replace(/^#\/?/, "");
 
   onMount(() => {
+    // A Supabase auth callback (magic link, Google — the implicit flow)
+    // lands as `#access_token=…`. auth-js consumed it synchronously inside
+    // createClient and clears the hash once the user is fetched — a
+    // hashchange to "" that the listener below must NOT read as "the user
+    // left #process": it bounced every returning sign-in on a device with
+    // receipts back to the landing page.
+    let authCallback = /(^|[#&])access_token=/.test(location.hash);
     // #process deep-links straight into the workspace (handy for walking
     // someone through the app remotely: "what does your #process page show?").
     if (hashName() === "process") app.enter();
@@ -15,6 +22,16 @@
     // Back/forward across surfaces: leaving #process returns to the landing,
     // arriving at it enters the workspace. Landing handles its own hashes.
     const onHash = (): void => {
+      if (authCallback && location.hash === "") {
+        authCallback = false;
+        // replaceState fires no hashchange, so this cannot loop.
+        history.replaceState(
+          null,
+          "",
+          location.pathname + location.search + (app.showWorkspace ? "#process" : ""),
+        );
+        return;
+      }
       if (hashName() === "process") app.enter();
       else if (app.showWorkspace) app.goHome();
     };

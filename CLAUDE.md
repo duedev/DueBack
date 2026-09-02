@@ -40,7 +40,7 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + **Lora** for display; Lo
 | `src/train/corrections.ts` | The improvement loop: review edits diffed into `CorrectionRecord`s (with located bbox + OCR line), appended to kv `training.log` (cap 2000); Settings → Improvement log downloads/clears it. `bundle.ts` builds the tuning ZIP (corrections + extraction.json + CSV + original/annotated images), shared by Settings and the landing contact form |
 | `src/pipeline/logo/` | Visual logo layer: `embedder.ts` (CLIP seam, lazy, test-fakeable), `index.ts` (bundled `logoIndex.json` + user brands, cosine NN, header-band crop, `addBrandFromImage`), `fuse.ts` (Layer-3 fusion; `LOGO_ACCEPT`) — inert (no model download) while the index is empty |
 | `src/pipeline/vision/` | Opt-in AI assist (OpenRouter/Gemini/Anthropic), spend cap, build-time free key; signed-in users route via `supabase/aiProxy.ts` → `ai-extract` Edge Function |
-| `src/store/` | `db.ts` (IndexedDB v1: batches/receipts/jobs/blobs/brands/kv), `repo.ts` (the one read/write + notify seam; deletes record kv pending-delete entries for sync), `sync.ts` (Supabase mirror: LWW on `updatedAt` BOTH ways — pull via `syncMerge.remoteAction`, push via migration 0004's `lww_guard` trigger; deletes propagate as `deleted_at` tombstones consumed from kv `sync.pendingDeletes` and pushed before upserts and before the first pull; realtime on receipts+batches+brand_logos, a rejoin after a gap triggers a catch-up pull; uploaded-blob memory is per-account kv `sync.uploadedBlobs.<uid>`; the pull is PAGED (`fetchAll`, 1000 rows/page over id order — PostgREST's cap silently truncated bigger workspaces); blobs upload BEFORE row upserts so the other device's realtime apply finds them; a tombstone only removes storage objects when it LANDED (`tombstoneLanded` on the update's returned row — the `lww_guard` may keep a revived row); UI announcements (`announce()`) never echo into a push; `start()` is single-flight per user and returns whether it freshly started, which is the only time batch adoption runs), `syncMerge.ts` (pure Node-tested sync decisions: LWW/tombstone action, pending-delete log, batch adoption, paging, tombstone landing), `jobs.ts` (saved job name⇄number pairs in kv `jobs.saved`, local-only; pure list helpers are Node-tested) |
+| `src/store/` | `db.ts` (IndexedDB v1: batches/receipts/jobs/blobs/brands/kv; the open forgets itself on `terminated`/`blocking`/rejection so the next call reopens, and `upgrade` is STEPPED — `if (oldVersion < N)` per version, never an unconditional createObjectStore), `repo.ts` (the one read/write + notify seam; `updateReceipt` is a single-transaction read-modify-write with an optional `expect.updatedAt` compare-and-swap that returns null on a miss; deletes record kv pending-delete entries for sync; `wipeLocalData` clears the stores WITHOUT tombstones), `sync.ts` (Supabase mirror: LWW on `updatedAt` BOTH ways — pull via `syncMerge.remoteAction`, push via migration 0004's `lww_guard` trigger; deletes propagate as `deleted_at` tombstones consumed from kv `sync.pendingDeletes` and pushed before upserts and before the first pull; realtime on receipts+batches+brand_logos, a rejoin after a gap triggers a catch-up pull; uploaded-blob memory is per-account kv `sync.uploadedBlobs.<uid>`; the pull is PAGED (`fetchAll`, 1000 rows/page over id order, advancing by the rows returned and stopping only on an EMPTY page — PostgREST's cap silently truncated bigger workspaces, and a deployment whose `max-rows` is below the page size returns short pages that are not the end); a pull also back-fills missing images for rows that were already up to date (an earlier failed download otherwise left the card blank until the row changed); `start()` FAILS CLOSED when kv `sync.ownerUserId` names a different account and local data exists (`syncMerge.ownerDecision` — a shared laptop where A signed out and B signed in used to push A's receipts into B's workspace), `sync.foreignOwner` + `FOREIGN_OWNER_MESSAGE` surface it (Workspace chip → Settings, which offers "Remove this device's local copy" = `state.resetLocalCopy` → `repo.wipeLocalData`), and the owner mark is written after the first successful push; blobs upload BEFORE row upserts so the other device's realtime apply finds them; a tombstone only removes storage objects when it LANDED (`tombstoneLanded` on the update's returned row — the `lww_guard` may keep a revived row); UI announcements (`announce()`) never echo into a push; `start()` is single-flight per user and returns whether it freshly started, which is the only time batch adoption runs), `syncMerge.ts` (pure Node-tested sync decisions: LWW/tombstone action, pending-delete log, batch adoption, paging, tombstone landing, owner decision), `jobs.ts` (saved job name⇄number pairs in kv `jobs.saved`, local-only; pure list helpers are Node-tested) |
 | `src/supabase/` | `client.ts` (null unless `VITE_SUPABASE_URL/ANON_KEY`), `auth.ts`, `aiProxy.ts` |
 | `src/onedrive/` | Optional "Save to OneDrive" (no SDK, hidden unless `VITE_ONEDRIVE_CLIENT_ID`; ONEDRIVE_SETUP.md): `core.ts` (pure, Node-tested: PKCE, auth URL, token mapping, Graph upload w/ injectable fetch), `store.ts` (env + localStorage tokens), `popup.ts` (OAuth-popup relay, called by `main.ts` before mount), `index.ts` (connect popup / refresh / `uploadReport` → `Apps/DueBack`) |
 | `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark — dark is a warm ladder anchored on `#12100e`, the PWA chrome color), `state.svelte.ts` (the one reactive bridge; `applyTheme` also syncs the theme-color meta pair), `App/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle`, `BrandLogo.svelte` (the receipt+return-arrow mark — same glyph as `public/icons/favicon.svg`, keep in sync; used by both headers and the footer); `Landing.svelte` is the marketing orchestrator over `landing/` (Hero/How/Logo/Workbook/Contact partials + `landing.css` shared vocabulary) — ONE scrolling page with a sticky anchor nav (scroll-spy highlights the section in view), a nerd-only Roadmap section, and a Nerd-mode toggle (`landing/prefs.svelte.ts`, kv-free localStorage) revealing `.db-nerd` engineering notes |
@@ -116,7 +116,13 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   is off. **`#process` belongs to the WORKSPACE**: App.svelte stamps it
   while `showWorkspace` (replaceState, no history spam), deep-links into
   the app, and `goHome()` clears it synchronously BEFORE the surface swap
-  so the landing router can't read the stale hash and bounce back in.
+  so the landing router can't read the stale hash and bounce back in. A
+  Supabase auth callback (`#access_token=…` — the implicit flow; `?code=`
+  would only appear under PKCE) is consumed by auth-js inside createClient
+  and then CLEARED, which fires a hashchange to "" — App's listener treats
+  that one transition as "re-stamp #process", not "the user left" (every
+  returning sign-in on a device with receipts used to bounce to the
+  landing).
   Anchor landings clear the sticky nav via `scroll-margin-top` on
   `.landing [id]` in `landing.css` (bigger value under 860px for the
   two-row nav) — without it sections start underneath the nav. Everything
@@ -280,10 +286,23 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   Generate workbook); the pulse keyframes rest at 0% so reduced-motion
   freezes to a plain button. Generating with a blank employee/job name/job
   number raises a confirm dialog first ("Generate anyway" proceeds —
-  e2e-pinned).
+  e2e-pinned). A failed receipt can be read again: "Retry reading" in the
+  ReviewModal (the card is itself a button, so no nested button there) and
+  "↻ Retry all" in the Failed lane head → `state.retryReceipt` re-queues
+  through the same path as intake (never an approved receipt; edited
+  fields stay the human's via `touchedBeforeClaim`), and `friendlyError`
+  maps a text-reader load failure (worker/wasm/traineddata fetch) to copy
+  that points at it. The workspace sync chip shows error/syncing/synced
+  (it used to say "synced" whatever the engine's state); the error chip
+  opens Settings, which prints `sync.lastError`.
 - **Dark scan borders** (CamScanner sawtooth strips) are trimmed by
   `darkBorderInsets` (binarize.ts, Node-tested) before the edge-energy crop —
   pre-scanned uploads otherwise look "uncropped" (nothing else to trim).
+  The insets clamp ONLY the edge-energy fallback: the paper-slab crop is
+  used unclamped, because the slab mask already excludes near-black strips
+  and its bbox only reaches into the inset band when that band holds
+  paper — a long receipt on a dark car seat with its end inside the outer
+  8% lost its TOTAL line (or vendor header) to the clamp.
 - **Corrections never silently swap a plausible total.** Pump/footing math only
   auto-corrects decimal-slip-scale garbles (ratio ≈ ×10/×100) or values the
   receipt's own arithmetic contradicts; anything moderate keeps the printed
@@ -450,7 +469,8 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   popup synchronously inside the click, then navigates it — connect BEFORE
   building the workbook (ExportBar does), or popup blockers eat it. The OAuth
   `state` is prefixed `dueback-od-` so `main.ts` can tell the popup callback
-  apart from Supabase's `?code=` magic-link redirects (the relay in
+  apart from Supabase's own auth callbacks (`#access_token=…` under the
+  implicit flow the client uses; the relay in
   `onedrive/popup.ts` must keep running before `mount`). Azure registration
   must use the **Single-page application** platform or the browser token
   exchange 403s; SPA refresh tokens die after 24 h, so re-prompting is normal.
@@ -466,8 +486,13 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   — those writes are older than the claim's baseline and were invisible to
   it — and the claim does not re-stamp a `done` receipt to `processing`
   (it used to, and the un-strand branch then parked an approved receipt in
-  Needs-review). The failure path obeys the same rule: `fail()` is skipped
-  for a receipt approved mid-flight.
+  Needs-review). The completion write is a compare-and-swap on the re-read
+  row's `updatedAt` (`repo.updateReceipt(…, { updatedAt })` returns null
+  on a miss): a review save that lands between the re-read and the put is
+  re-read again and, at most, technical plumbing lands (third miss: the
+  plumbing lands unconditionally rather than strand a "processing" row).
+  The failure path obeys the same rule: `fail()` is skipped for a receipt
+  approved mid-flight and CAS-guarded the same way.
 - **Deletes must go through `repo.deleteReceipt`/`deleteBrand`** — they record
   the kv pending-delete (with blob keys) that the sync engine tombstones
   remotely (`deleted_at` + storage cleanup); the sync engine itself removes
@@ -487,9 +512,18 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   double-processed (and double-billed the paid vision assist). The pool
   re-wakes itself every 30 s while jobs remain but none is claimable, so a
   reload mid-batch no longer strands the in-flight receipts at "Reading…".
-  The Tesseract start-up has a 180 s deadline and a failed/timed-out start
-  is forgotten (`initPromise` reset), so the next receipt retries instead
-  of inheriting one permanently rejected promise. The pipeline's failure
+  Tesseract start-up failures are surfaced through `createWorker`'s
+  `errorHandler` — its own promise never settles when the language data
+  or the initialize step fails (only the 'load' action rejects), which
+  parked every receipt in "Reading…" with the heartbeat keeping the lock
+  alive; a 5-minute backstop deadline remains (the first-use download is
+  ~18 MB, so a short one spuriously failed slow links). A failed start is
+  forgotten after a 30 s cooldown (each attempt leaks an idle Worker and
+  the queue retries at once), so the next receipt retries instead of
+  inheriting one permanently rejected promise. `queue.fill()` is a single
+  runner with a re-wake flag: overlapping fills (a drop mid-drain, a
+  finishing job's own re-claim) each checked the cap before their own
+  claim and ran concurrency + 1 receipts. The pipeline's failure
   path deletes the cleaned/annotated blobs this run stored that the receipt
   doesn't reference (there is no blob GC). The board coalesces repo
   notifications into one read per 40 ms (`state.scheduleRefresh`) — every
@@ -507,9 +541,10 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   the receipt in "processing" for good because the heartbeat kept its lock
   alive. `parseVisionJson` strips `<think>` blocks and walks balanced
   objects, so prose or a stray brace before the JSON no longer sinks it.
-- **Semantic dedup needs a vendor OR a date besides the amount**
+- **Semantic dedup needs BOTH a vendor and a date besides the amount**
   (`dedup.semanticKey`) — two unreadable receipts sharing an amount flagged
-  each other. `unzip.archiveEntryName` drops `.`/`..`/drive prefixes from
+  each other, and a vendor-only key matched every same-price fill-up on a
+  trip. `unzip.archiveEntryName` drops `.`/`..`/drive prefixes from
   the inner path because it is echoed into the tuning bundle's ZIP entry
   names (zip-slip for whoever extracts it).
 - **The DATE color is purple (`--cat-4`), not red**, everywhere a date is

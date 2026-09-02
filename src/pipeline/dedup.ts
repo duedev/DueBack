@@ -22,7 +22,10 @@ export function semanticKey(r: Pick<DupRecord, "vendor" | "date" | "amount">): s
   if (amount <= 0) return null;
   const vendor = (r.vendor || "").trim().toLowerCase();
   const date = (r.date || "").trim();
-  if (!vendor && !date) return null;
+  // Both identity fields are required: a vendor-only key ("shell", $45.20)
+  // matched every same-price fill-up on a trip, and a date-only key matched
+  // two different lunches — real receipts flagged as duplicates.
+  if (!vendor || !date) return null;
   return `${vendor}|${date}|${amount.toFixed(2)}`;
 }
 

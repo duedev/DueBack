@@ -44,6 +44,10 @@ class AppState {
   /** Signed-in Supabase user (null when signed out or sync unconfigured). */
   userEmail = $state<string | null>(null);
   syncStatus = $state<"off" | "syncing" | "idle" | "error">("off");
+  /** The engine's last error message (shown in Settings and on the chip). */
+  syncError = $state("");
+  /** Sync refused because this device's data belongs to another account. */
+  syncForeign = $state(false);
   readonly syncConfigured = syncConfigured();
 
   counts = $derived.by(() => {
@@ -134,6 +138,8 @@ class AppState {
     if (this.syncConfigured) {
       sync.onStatus((s) => {
         this.syncStatus = s;
+        this.syncError = sync.lastError;
+        this.syncForeign = sync.foreignOwner;
       });
       const boot = await currentUser();
       if (boot) void this.onSignedIn(boot.id, boot.email ?? "");
@@ -237,6 +243,56 @@ class AppState {
           : `Deleted ${ids.length} receipts.`,
       "info",
     );
+  }
+
+  /** Re-queue a failed receipt for a fresh read — the text reader may have
+   *  failed to start, the network may be back. Never touches an approved
+   *  receipt (a human's work outranks a retry) and re-runs the same intake
+   *  path as addFiles, so the pipeline's completion write lands a full
+   *  extraction: the retry's updatedAt precedes the claim. Fields a human
+   *  already edited stay theirs (`touchedBeforeClaim`). */
+  async retryReceipt(id: string): Promise<boolean> {
+    const r = await repo.getReceipt(id);
+    if (!r || r.status !== "failed" || r.approved) return false;
+    await repo.updateReceipt(id, {
+      status: "queued",
+      error: undefined,
+      flags: [],
+      reviewRequired: false,
+    });
+    await repo.enqueue(id);
+    void queue.wake();
+    return true;
+  }
+
+  /** Retry every failed receipt on the board. */
+  async retryFailed(): Promise<void> {
+    let n = 0;
+    for (const r of this.receipts) {
+      if (r.status === "failed" && (await this.retryReceipt(r.id))) n++;
+    }
+    this.toast(
+      n === 0 ? "Nothing to retry." : n === 1 ? "Reading 1 receipt again." : `Reading ${n} receipts again.`,
+      "info",
+    );
+  }
+
+  /** Wipe every receipt, batch, job, blob, taught brand and queued delete on
+   *  THIS device — the way out of the foreign-owner sync block (another
+   *  account's data is here) without pushing tombstones for rows that were
+   *  never this account's. Starts over on a fresh empty batch and, when
+   *  signed in, lets sync adopt it. */
+  async resetLocalCopy(): Promise<void> {
+    for (const r of this.receipts) this.revokeBlobUrls(r);
+    this.reviewId = null;
+    await repo.wipeLocalData();
+    const batch = await repo.createBatch({ employee: "", jobName: "", jobNumber: "" });
+    await repo.setSetting(ACTIVE_BATCH_KEY, batch.id);
+    this.batch = batch;
+    await this.refresh();
+    this.toast("This device's local copy was removed.", "info");
+    const user = await currentUser();
+    if (user && (await sync.start(user.id))) await this.maybeAdoptSyncedBatch();
   }
 
   applyTheme(pref: ThemePref): void {

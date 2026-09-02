@@ -5,7 +5,9 @@ import type { Batch, Receipt, StoredBrand } from "../types.ts";
 import type { IDBPDatabase } from "idb";
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import {
+  OWNER_KEY,
   PENDING_DELETES_KEY,
+  ownerDecision,
   pruneConsumed,
   remoteAction,
   uploadedBlobsKey,
@@ -74,6 +76,10 @@ type Conn = IDBPDatabase<ReimburseDB>;
 const BLOB_BUCKET = "receipts";
 const PUSH_DEBOUNCE_MS = 1500;
 
+/** Surfaced in Settings (with the way out) and on the workspace chip. */
+export const FOREIGN_OWNER_MESSAGE =
+  "This device still holds receipts from another account. Remove this device's local copy in Settings before syncing.";
+
 function receiptToRow(r: Receipt): ReceiptRow {
   return {
     id: r.id,
@@ -122,6 +128,9 @@ function brandToRow(b: StoredBrand): BrandRow {
 class SyncEngine {
   status: SyncStatus = "off";
   lastError = "";
+  /** True while start() is refusing to sync because the local store belongs
+   *  to a different account (see syncMerge.ownerDecision). */
+  foreignOwner = false;
   private userId: string | null = null;
   /** True only after start() fully succeeded — a failed start leaves this
    *  false so the next auth event (TOKEN_REFRESHED fires hourly) retries
@@ -178,6 +187,22 @@ class SyncEngine {
     this.stop();
     this.userId = userId;
     this.setStatus("syncing");
+    // Whose data is on this device? A shared laptop where A signed out and B
+    // signed in used to push A's receipts into B's workspace and pull B's
+    // onto the board A left behind. Fail closed; Settings offers the way
+    // out (remove this device's local copy). Anonymous local data and an
+    // empty store are adopted by whoever signs in — the legitimate path.
+    const conn = await db();
+    const owner = await repo.getSetting<string>(OWNER_KEY);
+    const hasLocalData =
+      (await conn.count("receipts")) > 0 ||
+      (await conn.count("brands")) > 0 ||
+      ((await repo.getSetting<PendingDelete[]>(PENDING_DELETES_KEY)) ?? []).length > 0;
+    if (ownerDecision(owner, userId, hasLocalData) === "foreign") {
+      this.foreignOwner = true;
+      this.setStatus("error", FOREIGN_OWNER_MESSAGE);
+      return false;
+    }
     // Per-account (M3): the old unscoped key let account B inherit A's list.
     this.uploaded = new Set(
       (await repo.getSetting<string[]>(uploadedBlobsKey(userId))) ?? [],
@@ -188,6 +213,8 @@ class SyncEngine {
       await this.pushDeletes(c);
       await this.pullAll(c);
       await this.pushAll(c);
+      // Everything local is now this account's (adopted or continued).
+      await repo.setSetting(OWNER_KEY, userId);
       this.subscribeRealtime(c, userId);
       this.unsubRepo = repo.subscribe(() => {
         if (this.announcing) return; // our own UI announcement, not a local edit
@@ -214,6 +241,7 @@ class SyncEngine {
     this.userId = null;
     this.started = false;
     this.subscribedOnce = false;
+    this.foreignOwner = false;
     this.setStatus("off");
   }
 
@@ -423,6 +451,11 @@ class SyncEngine {
           needBlobs.push(remote);
         } else if (action === "deleteLocal" && local) {
           await this.deleteLocalReceipt(conn, local);
+        } else if (action === "ignore" && local && row.deleted_at == null) {
+          // Up to date as a row, maybe not as images: a download that failed
+          // on an earlier pull (ensureBlobs swallows storage errors) left the
+          // card blank until the row itself changed again.
+          needBlobs.push(local);
         }
       }
       for (const row of brands) {
@@ -475,9 +508,13 @@ class SyncEngine {
 
   /** Download any storage blobs a merged receipt references but we don't hold. */
   private async ensureBlobs(c: SupabaseClient, r: Receipt): Promise<void> {
+    const conn = await db();
     for (const key of [r.fileKey, r.cleanedKey, r.annotatedKey]) {
       if (!key) continue;
-      if (await repo.getBlob(key)) continue;
+      // A key lookup, not a blob read: this runs for every pulled row on
+      // every pull now, and reading 200 receipts × 3 images just to learn
+      // they exist dragged megabytes through IndexedDB each time.
+      if ((await conn.getKey("blobs", key)) !== undefined) continue;
       const path = `${this.userId}/${key}`;
       const { data, error } = await c.storage.from(BLOB_BUCKET).download(path);
       if (!error && data) {

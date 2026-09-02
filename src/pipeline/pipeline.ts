@@ -290,64 +290,80 @@ export async function processReceipt(
 
     // Re-read before the final write: a human may have edited, approved or
     // deleted this receipt while OCR ran — or before the claim, while it sat
-    // queued — and extraction must not clobber that.
-    const latest = await repo.getReceipt(receiptId);
-    const mode = completionWriteMode(latest, claimed.updatedAt, touchedBeforeClaim(receipt));
-    if (mode === "skip") {
-      // Deleted mid-flight — drop this run's stored blobs (orphans otherwise).
-      await repo.deleteBlob(cleanedKey).catch(() => {});
-      if (annotatedKey) await repo.deleteBlob(annotatedKey).catch(() => {});
-      return;
+    // queued — and extraction must not clobber that. The write itself is a
+    // compare-and-swap on `updatedAt` (repo.updateReceipt's `expect`): a
+    // review save that lands between this re-read and the put loses the
+    // race for the machine, never for the human — re-read, and land at most
+    // technical plumbing.
+    let latest = await repo.getReceipt(receiptId);
+    let mode = completionWriteMode(latest, claimed.updatedAt, touchedBeforeClaim(receipt));
+    for (let attempt = 0; ; attempt++) {
+      if (mode === "skip") {
+        // Deleted mid-flight — drop this run's stored blobs (orphans otherwise).
+        await repo.deleteBlob(cleanedKey).catch(() => {});
+        if (annotatedKey) await repo.deleteBlob(annotatedKey).catch(() => {});
+        return;
+      }
+      const row = latest!;
+      // Image/relocation plumbing — safe to land even over a human edit (it
+      // carries no vendor/date/amount/category/flags/fileName semantics).
+      const technical: Partial<Receipt> = {
+        cleanedKey,
+        ...(annotatedKey ? { annotatedKey } : {}),
+        imageHash,
+        imageWidth: cleaned.width,
+        imageHeight: cleaned.height,
+        ocrText: ocrTextOut,
+        ocrLines,
+        // A mid-flight save doesn't set status, which would strand the receipt
+        // in "processing" — hand it to review. An approval's "done" stays, and
+        // an approved receipt is never sent back to review: it un-strands to
+        // "done" (approval and "done" travel together in the modal, so this
+        // branch is belt-and-braces).
+        ...(row.status === "processing"
+          ? row.approved
+            ? { status: "done" as const }
+            : { status: "needs_review" as const, reviewRequired: true }
+          : {}),
+      };
+      const patch: Partial<Receipt> = {
+        ...technical,
+        fileName: renamed,
+        originalFileName: receipt.originalFileName ?? receipt.fileName,
+        vendor: ex.vendor,
+        date: ex.date,
+        amount: ex.amount,
+        tax: ex.tax,
+        currency: ex.currency,
+        category: ex.category,
+        confidence: ex.confidence,
+        flags,
+        logoMatch,
+        methodUsed,
+        methodDetail,
+        cost,
+        reviewRequired: needsReview,
+        status: needsReview ? "needs_review" : "done",
+        error: undefined,
+      };
+      // Third miss: human writes in consecutive milliseconds — land the
+      // plumbing unconditionally rather than strand a "processing" row.
+      const written =
+        attempt < 2
+          ? await repo.updateReceipt(receiptId, mode === "technical" ? technical : patch, {
+              updatedAt: row.updatedAt,
+            })
+          : await repo.updateReceipt(receiptId, technical);
+      if (written !== null) break;
+      latest = await repo.getReceipt(receiptId);
+      mode = completionWriteMode(latest, claimed.updatedAt, true); // someone wrote
     }
-
-    // Image/relocation plumbing — safe to land even over a human edit (it
-    // carries no vendor/date/amount/category/flags/fileName semantics).
-    const technical: Partial<Receipt> = {
-      cleanedKey,
-      ...(annotatedKey ? { annotatedKey } : {}),
-      imageHash,
-      imageWidth: cleaned.width,
-      imageHeight: cleaned.height,
-      ocrText: ocrTextOut,
-      ocrLines,
-      // A mid-flight save doesn't set status, which would strand the receipt
-      // in "processing" — hand it to review. An approval's "done" stays, and
-      // an approved receipt is never sent back to review: it un-strands to
-      // "done" (approval and "done" travel together in the modal, so this
-      // branch is belt-and-braces).
-      ...(latest!.status === "processing"
-        ? latest!.approved
-          ? { status: "done" as const }
-          : { status: "needs_review" as const, reviewRequired: true }
-        : {}),
-    };
-    const patch: Partial<Receipt> = {
-      ...technical,
-      fileName: renamed,
-      originalFileName: receipt.originalFileName ?? receipt.fileName,
-      vendor: ex.vendor,
-      date: ex.date,
-      amount: ex.amount,
-      tax: ex.tax,
-      currency: ex.currency,
-      category: ex.category,
-      confidence: ex.confidence,
-      flags,
-      logoMatch,
-      methodUsed,
-      methodDetail,
-      cost,
-      reviewRequired: needsReview,
-      status: needsReview ? "needs_review" : "done",
-      error: undefined,
-    };
-    await repo.updateReceipt(receiptId, mode === "technical" ? technical : patch);
   } catch (err) {
     // Same human-outranks-machine rule on the failure path: never stamp
     // "failed" (and its flag overwrite) over a receipt approved mid-flight.
     const latest = await repo.getReceipt(receiptId);
     if (!latest?.approved && latest?.status !== "done") {
-      await fail(receiptId, friendlyError(err, latest));
+      await fail(receiptId, friendlyError(err, latest), latest?.updatedAt);
     }
     for (const key of [cleanedKey, annotatedKey]) {
       if (key && latest?.cleanedKey !== key && latest?.annotatedKey !== key) {
@@ -373,6 +389,13 @@ export function friendlyError(
   if (decodeFailure && (mime.includes("heic") || mime.includes("heif") || /\.hei[cf]\b/.test(name))) {
     return "This browser can't decode HEIC photos — export the photo as JPEG (iPhone: Settings → Camera → Formats → Most Compatible) and add it again.";
   }
+  // The text reader itself failed to come up (worker script, wasm core or
+  // language data unreachable — an offline PWA, a network drop during the
+  // one-time download): nothing is wrong with the receipt, so say so and
+  // point at the retry.
+  if (/failed to fetch|network ?error|importScripts|worker\.min|\.wasm|traineddata|OCR engine/i.test(raw)) {
+    return "Couldn't load the text reader — check the connection, then use Retry reading.";
+  }
   if (mime === "application/pdf" || /\.pdf\b/.test(name)) {
     return "This PDF couldn't be rendered — it may be corrupt or password-protected.";
   }
@@ -382,11 +405,27 @@ export function friendlyError(
   return raw;
 }
 
-async function fail(receiptId: string, message: string): Promise<void> {
-  await repo.updateReceipt(receiptId, {
+async function fail(
+  receiptId: string,
+  message: string,
+  expectUpdatedAt?: number,
+): Promise<void> {
+  const body: Partial<Receipt> = {
     status: "failed",
     error: message,
     reviewRequired: true,
     flags: [{ code: "low_confidence", severity: "error", message }],
-  });
+  };
+  // Compare-and-swap like the completion write: a save that lands between
+  // the caller's re-read and this put is a human's — re-check before
+  // stamping "failed" over it.
+  const written =
+    expectUpdatedAt === undefined
+      ? await repo.updateReceipt(receiptId, body)
+      : await repo.updateReceipt(receiptId, body, { updatedAt: expectUpdatedAt });
+  if (written !== null) return;
+  const latest = await repo.getReceipt(receiptId);
+  if (latest && !latest.approved && latest.status !== "done") {
+    await repo.updateReceipt(receiptId, body);
+  }
 }

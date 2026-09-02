@@ -109,8 +109,13 @@ export function chooseAdoptionBatch(
  *  included — accumulated, so a fresh device missed live rows. */
 export const PULL_PAGE = 1000;
 
-/** Page through a query until a short page arrives. `page(from, to)` runs
- *  one `.range(from, to)` select over a STABLE ordering. */
+/** Page through a query until an EMPTY page arrives. `page(from, to)` runs
+ *  one `.range(from, to)` select over a STABLE ordering. The walk advances
+ *  by the rows actually returned and stops only on an empty page: a server
+ *  whose row cap is lower than `pageSize` (PostgREST `max-rows` is a
+ *  deployment setting) returns "short" pages that are not the end, and
+ *  stopping on the first of them silently dropped the rest. One extra,
+ *  empty request per table is the price. */
 export async function fetchAll<T>(
   page: (
     from: number,
@@ -120,13 +125,36 @@ export async function fetchAll<T>(
   pageSize = PULL_PAGE,
 ): Promise<T[]> {
   const out: T[] = [];
-  for (let from = 0; ; from += pageSize) {
+  for (let from = 0; ; ) {
     const { data, error } = await page(from, from + pageSize - 1);
     if (error) throw new Error(`${label} pull: ${error.message}`);
     const rows = data ?? [];
+    if (rows.length === 0) return out;
     out.push(...rows);
-    if (rows.length < pageSize) return out;
+    from += rows.length;
   }
+}
+
+/** kv key: the account whose data this device's local store holds. Written
+ *  after the first successful push of a sign-in; cleared by a local wipe. */
+export const OWNER_KEY = "sync.ownerUserId";
+
+export type OwnerDecision = "adopt" | "continue" | "foreign";
+
+/** May `userId` sync this device's local store? "adopt": no owner recorded
+ *  (anonymous local data, a pre-owner install) or nothing local at all —
+ *  the sign-in claims it, which is the legitimate anonymous→account path.
+ *  "continue": same owner. "foreign": another account's data is still on
+ *  this device (a shared laptop where A signed out and B signed in) — the
+ *  engine fails closed rather than push A's receipts into B's workspace and
+ *  pull B's onto the board A left behind. */
+export function ownerDecision(
+  storedOwner: string | undefined,
+  userId: string,
+  hasLocalData: boolean,
+): OwnerDecision {
+  if (!storedOwner || !hasLocalData) return "adopt";
+  return storedOwner === userId ? "continue" : "foreign";
 }
 
 /** Whether a tombstone UPDATE actually landed. The lww_guard trigger keeps a
