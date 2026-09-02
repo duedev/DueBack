@@ -5,7 +5,14 @@ import {
   userInstruction,
   parseVisionJson,
 } from "../schema.ts";
-import { blobToBase64, dataUrl, appOrigin, errorBody, type ProviderInit } from "./shared.ts";
+import {
+  blobToBase64,
+  dataUrl,
+  appOrigin,
+  errorBody,
+  visionSignal,
+  type ProviderInit,
+} from "./shared.ts";
 
 // OpenRouter — one OpenAI-compatible endpoint and one key. The default is the
 // Free Models Router (`openrouter/free`), which picks a free model per request
@@ -70,6 +77,7 @@ export function createOpenRouterProvider(init: ProviderInit): VisionProvider {
 
       const res = await fetch(url, {
         method: "POST",
+        signal: visionSignal(),
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${init.apiKey}`,

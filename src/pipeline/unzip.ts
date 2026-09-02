@@ -327,8 +327,15 @@ export function archiveEntryName(
   archiveName: string,
   path: string,
 ): { fileName: string; originalFileName: string } {
-  const base = path.split("/").pop() || "receipt";
-  const folders = path.split("/").slice(0, -1).filter(Boolean);
+  // Drop "." / ".." segments and any drive/root prefix: the inner path is
+  // echoed into the tuning bundle's ZIP entry names, where "../" would be a
+  // zip-slip for whoever extracts it.
+  const segments = path
+    .replace(/^[A-Za-z]:/, "")
+    .split(/[\\/]+/)
+    .filter((s) => s && s !== "." && s !== "..");
+  const base = segments.pop() || "receipt";
+  const folders = segments;
   const inner = folders.length ? `${folders.join("/")}/${base}` : base;
   return {
     fileName: base,

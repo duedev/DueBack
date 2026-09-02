@@ -215,3 +215,21 @@ test("archive entry names keep the folder path for the card", () => {
     "trip.zip › session.pdf",
   );
 });
+
+// ── Audit round (2026-09) ─────────────────────────────────────────────────────
+import { archiveEntryName as entryName } from "../src/pipeline/unzip.ts";
+
+test("archive entry paths shed '..', '.' and drive prefixes (zip-slip into the tuning bundle)", () => {
+  assert.deepEqual(entryName("trip.zip", "../../etc/x.jpg"), {
+    fileName: "x.jpg",
+    originalFileName: "trip.zip › etc/x.jpg",
+  });
+  assert.deepEqual(entryName("trip.zip", "C:\\scans\\a.pdf"), {
+    fileName: "a.pdf",
+    originalFileName: "trip.zip › scans/a.pdf",
+  });
+  assert.deepEqual(entryName("trip.zip", "./2026/03/session.pdf"), {
+    fileName: "session.pdf",
+    originalFileName: "trip.zip › 2026/03/session.pdf",
+  });
+});

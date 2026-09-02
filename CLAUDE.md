@@ -30,7 +30,7 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + **Lora** for display; Lo
 | `src/types.ts` | Domain model: Receipt/Batch/Job/Field/Flag/LogoMatch/StoredBrand |
 | `src/pipeline/pipeline.ts` | Per-receipt flow: clean → hash/cache → OCR (+binarized weak-read rescue) → rules → **logo fusion** → vision assist → highlighter bake (`annotate.ts` → `annotatedKey`) → Python-convention rename (`util/rename.ts`) → dedup → status |
 | `src/pipeline/imagePrep.ts` | canvas prep: EXIF rotate → (opt) perspective → projection-profile deskew → grayscale → autocrop (paper-slab first via `paperRegionBox`, edge-energy fallback) → two renders (transient hi-res `ocrBlob` for OCR + stored 1600px blob); `binarizeBlob` for the weak-read rescue |
-| `src/pipeline/pdf.ts` | Multi-page PDF intake: `expandPdf` renders pages to JPEG (long edge ≈ `ocrMaxEdge`) so `addFiles` makes one receipt per page, capped by the remaining batch capacity (+ `LIMITS.maxPdfPages` backstop) so an unbounded PDF can't rasterize past the cap; `pdfPageNames` names them (`… (page 2 of 8)` in `originalFileName`) |
+| `src/pipeline/pdf.ts` | Multi-page PDF intake: `expandPdf` renders pages to JPEG (long edge ≈ `ocrMaxEdge`) so `addFiles` makes one receipt per page, capped by the remaining batch capacity (+ `LIMITS.maxPdfPages` backstop) so an unbounded PDF can't rasterize past the cap; one corrupt page is skipped and reported (`failedPages`) instead of discarding the pages that rendered; password-protected PDFs are refused at intake with a toast (`isPasswordProtectedPdf`) rather than queued to fail; `pdfPageNames` names them (`… (page 2 of 8)` in `originalFileName`) |
 | `src/pipeline/unzip.ts` | ZIP intake: dependency-free central-directory reader (`readZip`, platform `DecompressionStream`) + archive-junk filter and entry naming; inflation is STREAMED with a running byte count that aborts past `maxEntryBytes` (the forgeable directory size is only a fast path) plus a per-archive `maxTotalBytes`; `addFiles` unpacks an archive into one receipt per usable file, nested folders and all |
 | `src/pipeline/binarize.ts` | pure image math (no DOM, Node-tested): luminance, Bradley adaptive threshold, projection-profile skew estimation, `paperRegionBox` (Otsu + saturation gate + largest connected component — the tight-crop pass that ignores food/clutter next to the receipt) |
 | `src/pipeline/perspective.ts` | opt-in OpenCV.js quad detect + warp (`VITE_PERSPECTIVE=1`, vendored lib) |
@@ -466,7 +466,22 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   routinely exceeded the old 60 s (serialized Tesseract, binarize rescue,
   first-use model downloads), so completing siblings re-claimed in-flight jobs
   and double-processed (and double-billed the paid vision assist).
-  `releaseJob` only re-puts a job that still exists.
+  `releaseJob` only re-puts a job that still exists. Jobs are claimed in
+  `createdAt` order (upload order) — ids are random UUIDs, so key order, the
+  old claim order, processed a 40-photo drop in no relation to how it was
+  added. A failed receipt's card shows `friendlyError()`'s message (HEIC in
+  a non-Safari browser, corrupt/password PDF, undecodable image) rather
+  than the decoder's internals.
+- **Every vision provider fetch carries a 90 s `AbortSignal`**
+  (`visionSignal()` in `providers/shared.ts`) — a stalled model call parked
+  the receipt in "processing" for good because the heartbeat kept its lock
+  alive. `parseVisionJson` strips `<think>` blocks and walks balanced
+  objects, so prose or a stray brace before the JSON no longer sinks it.
+- **Semantic dedup needs a vendor OR a date besides the amount**
+  (`dedup.semanticKey`) — two unreadable receipts sharing an amount flagged
+  each other. `unzip.archiveEntryName` drops `.`/`..`/drive prefixes from
+  the inner path because it is echoed into the tuning bundle's ZIP entry
+  names (zip-slip for whoever extracts it).
 - **The DATE color is purple (`--cat-4`), not red**, everywhere a date is
   marked: ReviewModal markers/field tint, `annotate.ts HIGHLIGHT_COLORS`,
   the workbook's `FIELD_TINTS`, and the landing's `.hl-date`/`.rv-date`

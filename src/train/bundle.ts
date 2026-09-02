@@ -101,5 +101,7 @@ export function downloadBundle(bundle: TuningBundle): void {
   a.href = url;
   a.download = bundle.fileName;
   a.click();
-  URL.revokeObjectURL(url);
+  // Deferred like ExportBar's download(): a synchronous revoke can abort the
+  // download in Safari.
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }

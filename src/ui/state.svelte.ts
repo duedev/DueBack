@@ -275,7 +275,12 @@ class AppState {
    *  nests its folders. Processing only page 1 / ignoring the archive
    *  silently dropped the rest. */
   async addFiles(files: Iterable<File>): Promise<void> {
-    if (!this.batch) return;
+    if (!this.batch) {
+      // Boot couldn't open storage; the 4-second toast it showed is long
+      // gone by the time the user drops files, so say it again here.
+      this.toast("Storage is unavailable in this browser, so receipts can't be added.", "err");
+      return;
+    }
     this.entered = true;
     this.wentHome = false;
     const existing = this.receipts.length;
@@ -325,8 +330,16 @@ class AppState {
         createdAt: now,
         updatedAt: now,
       };
-      await repo.putReceipt(receipt);
-      await repo.enqueue(receipt.id);
+      try {
+        await repo.putReceipt(receipt);
+        await repo.enqueue(receipt.id);
+      } catch (err) {
+        // Three writes, one failure: don't leave an orphaned original or a
+        // permanently "Queued" receipt with no job behind it.
+        await repo.deleteReceipt(receipt.id).catch(() => {});
+        await repo.deleteBlob(fileKey).catch(() => {});
+        throw err;
+      }
       accepted++;
     };
 
@@ -353,15 +366,28 @@ class AppState {
 
       if (isPdf(file)) {
         let pages: import("../pipeline/pdf.ts").PdfPageImage[] = [];
+        let failedPages: number[] = [];
         try {
           const { expandPdf } = await import("../pipeline/pdf.ts");
           // Only render pages the batch still has room for — rasterizing a
           // 1000-page statement the cap would discard anyway OOMs the tab.
-          pages = await expandPdf(
+          const out = await expandPdf(
             file,
             LIMITS.maxReceiptsPerBatch - (existing + accepted),
           );
-        } catch {
+          pages = out.pages;
+          failedPages = out.failedPages;
+        } catch (err) {
+          const { isPasswordProtectedPdf } = await import("../pipeline/pdf.ts");
+          if (isPasswordProtectedPdf(err)) {
+            // Queuing it would only produce a guaranteed failure with pdf.js
+            // internals as the message.
+            this.toast(
+              `Skipped ${shown}: this PDF is password-protected — remove the password and add it again.`,
+              "warn",
+            );
+            return;
+          }
           // Unreadable/odd PDF: store it as-is — the pipeline still decodes
           // the first page (the pre-expansion behavior).
           pages = [];
@@ -375,7 +401,15 @@ class AppState {
             await enqueueOne(p.blob, names.fileName, "image/jpeg", names.originalFileName);
           }
           const pageCount = pages[0]!.pageCount;
-          if (pages.length < pageCount) {
+          if (failedPages.length > 0) {
+            this.toast(
+              failedPages.length === 1
+                ? `${shown}: page ${failedPages[0]} couldn't be rendered and was skipped.`
+                : `${shown}: ${failedPages.length} pages couldn't be rendered and were skipped.`,
+              "warn",
+            );
+          }
+          if (pages.length + failedPages.length < pageCount) {
             this.toast(
               `${shown}: only the first ${pages.length} of ${pageCount} pages were read.`,
               "warn",

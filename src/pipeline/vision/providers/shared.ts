@@ -29,6 +29,14 @@ export function dataUrl(base64: string, mediaType: string): string {
   return `data:${mediaType};base64,${base64}`;
 }
 
+/** Every provider call carries this deadline: a stalled model call otherwise
+ *  parked the receipt in "processing" for good, because the job heartbeat
+ *  kept its lock alive while the fetch never resolved. */
+export const VISION_TIMEOUT_MS = 90_000;
+export function visionSignal(): AbortSignal {
+  return AbortSignal.timeout(VISION_TIMEOUT_MS);
+}
+
 /** A referer/title pair OpenRouter likes for attribution; harmless elsewhere. */
 export function appOrigin(): string {
   return typeof location !== "undefined" ? location.origin : APP_URL;

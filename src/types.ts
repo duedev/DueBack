@@ -197,6 +197,11 @@ export interface Job {
   attempts: number;
   /** Epoch ms when a worker claimed this job (null = available). */
   lockedAt: number | null;
+  /** Epoch ms when the job was queued — the claim order. Ids are random
+   *  UUIDs, so key order (the old claim order) was random: a 40-photo drop
+   *  processed in no relation to the order it was added. Absent on jobs
+   *  queued by older versions, which claim first. */
+  createdAt?: number;
 }
 
 /** Stored original/derived image bytes. The "file store" of §4. */

@@ -5,7 +5,7 @@ import {
   userInstruction,
   parseVisionJson,
 } from "../schema.ts";
-import { blobToBase64, errorBody, type ProviderInit } from "./shared.ts";
+import { blobToBase64, errorBody, visionSignal, type ProviderInit } from "./shared.ts";
 
 // Anthropic Claude — vision + structured outputs in one call. Browser calls
 // require the explicit opt-in header below plus a user-supplied key. Default
@@ -33,6 +33,7 @@ export function createAnthropicProvider(init: ProviderInit): VisionProvider {
       const url = `${init.baseUrl || "https://api.anthropic.com"}/v1/messages`;
       const res = await fetch(url, {
         method: "POST",
+        signal: visionSignal(),
         headers: {
           "Content-Type": "application/json",
           "x-api-key": init.apiKey,

@@ -117,3 +117,16 @@ test("the built-in free key backs only the OpenRouter free router", () => {
   assert.equal(effectiveApiKey(cfg({})), "");
   assert.equal(hasBuiltInOpenRouterKey(), false);
 });
+
+// ── Audit round (2026-09) ─────────────────────────────────────────────────────
+import { parseVisionJson as parseVJ } from "../src/pipeline/vision/schema.ts";
+
+test("parseVisionJson survives leaked think-blocks and prose with stray braces", () => {
+  const json = `{"vendor":"Shell","amount":45.2,"date":"2026-03-14","category":"Fuel"}`;
+  assert.deepEqual(parseVJ(`<think>the total {looks} like 45.20</think>\n${json}`), JSON.parse(json));
+  assert.deepEqual(parseVJ(`Sure! Here is {your} receipt: ${json} — done.`), JSON.parse(json));
+  assert.deepEqual(parseVJ("```json\n" + json + "\n```"), JSON.parse(json));
+  assert.deepEqual(parseVJ(`{"a":1} trailing ${json}`), { a: 1 });
+  assert.equal(parseVJ("no json here"), null);
+  assert.equal(parseVJ("[1,2,3]"), null);
+});

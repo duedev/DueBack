@@ -175,30 +175,37 @@ class Repo {
   // ---- Jobs (the cheap work-list) --------------------------------------
 
   async enqueue(receiptId: string): Promise<Job> {
-    const job: Job = { id: uid("job"), receiptId, attempts: 0, lockedAt: null };
+    const job: Job = {
+      id: uid("job"),
+      receiptId,
+      attempts: 0,
+      lockedAt: null,
+      createdAt: Date.now(),
+    };
     await (await db()).put("jobs", job);
     return job;
   }
 
-  /** Atomically claim the oldest unlocked job, if any. The stale window is
-   *  generous because a healthy run routinely exceeds a minute (serialized
-   *  OCR, binarize rescue, first-use model downloads); the queue heartbeats
-   *  `touchJob` while a job runs, so only a genuinely dead run goes stale. */
+  /** Atomically claim the oldest unlocked job (by `createdAt` — upload
+   *  order), if any. The stale window is generous because a healthy run
+   *  routinely exceeds a minute (serialized OCR, binarize rescue, first-use
+   *  model downloads); the queue heartbeats `touchJob` while a job runs, so
+   *  only a genuinely dead run goes stale. The jobs table is tiny (one row
+   *  per unprocessed receipt), so a full scan per claim is fine. */
   async claimNextJob(staleLockMs = 300_000): Promise<Job | null> {
     const conn = await db();
     const tx = conn.transaction("jobs", "readwrite");
-    let claimed: Job | null = null;
-    let cursor = await tx.store.openCursor();
     const now = Date.now();
-    while (cursor) {
-      const job = cursor.value;
+    let oldest: Job | null = null;
+    for (const job of await tx.store.getAll()) {
       const available = job.lockedAt === null || now - job.lockedAt > staleLockMs;
-      if (available) {
-        claimed = { ...job, lockedAt: now, attempts: job.attempts + 1 };
-        await cursor.update(claimed);
-        break;
-      }
-      cursor = await cursor.continue();
+      if (!available) continue;
+      if (!oldest || (job.createdAt ?? 0) < (oldest.createdAt ?? 0)) oldest = job;
+    }
+    let claimed: Job | null = null;
+    if (oldest) {
+      claimed = { ...oldest, lockedAt: now, attempts: oldest.attempts + 1 };
+      await tx.store.put(claimed);
     }
     await tx.done;
     return claimed;

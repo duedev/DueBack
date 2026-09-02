@@ -115,3 +115,17 @@ test("untouched before the claim → preTouched=false keeps the full write", () 
   assert.equal(completionWriteMode(claimed(), CLAIMED_AT, touchedBeforeClaim(pristine())), "full");
   assert.equal(completionWriteMode(claimed(), CLAIMED_AT, false), "full");
 });
+
+// ── Audit round (2026-09) ─────────────────────────────────────────────────────
+import { friendlyError } from "../src/pipeline/pipeline.ts";
+
+test("friendlyError names HEIC, PDF and decode failures instead of engine internals", () => {
+  const decode = new Error("The source image could not be decoded.");
+  assert.match(friendlyError(decode, { mimeType: "image/heic", fileName: "IMG_1.heic" }), /HEIC/);
+  assert.match(friendlyError(decode, { mimeType: "image/jpeg", fileName: "x.jpg", originalFileName: "IMG_1.HEIC" }), /HEIC/);
+  assert.match(friendlyError(new Error("bad xref"), { mimeType: "application/pdf", fileName: "scan.pdf" }), /PDF/);
+  assert.match(friendlyError(decode, { mimeType: "image/jpeg", fileName: "x.jpg" }), /couldn't be decoded/);
+  // A non-decode failure on a HEIC keeps its own message.
+  assert.equal(friendlyError(new Error("OCR worker died"), { mimeType: "image/heic", fileName: "a.heic" }), "OCR worker died");
+  assert.equal(friendlyError("boom"), "boom");
+});

@@ -343,10 +343,34 @@ export async function processReceipt(
     // "failed" (and its flag overwrite) over a receipt approved mid-flight.
     const latest = await repo.getReceipt(receiptId);
     if (!latest?.approved && latest?.status !== "done") {
-      await fail(receiptId, err instanceof Error ? err.message : String(err));
+      await fail(receiptId, friendlyError(err, latest));
     }
     throw err; // let the queue decide on retry
   }
+}
+
+/** Turn a decoder/engine exception into something the card can show and the
+ *  user can act on. The raw message ("The source image could not be
+ *  decoded.") never said that HEIC is the reason in every browser but
+ *  Safari, or that a PDF is corrupt. Pure; Node-tested. */
+export function friendlyError(
+  err: unknown,
+  r?: Pick<Receipt, "mimeType" | "fileName" | "originalFileName">,
+): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const decodeFailure = /decod|bitmap|image/i.test(raw);
+  const name = `${r?.originalFileName ?? ""} ${r?.fileName ?? ""}`.toLowerCase();
+  const mime = (r?.mimeType ?? "").toLowerCase();
+  if (decodeFailure && (mime.includes("heic") || mime.includes("heif") || /\.hei[cf]\b/.test(name))) {
+    return "This browser can't decode HEIC photos — export the photo as JPEG (iPhone: Settings → Camera → Formats → Most Compatible) and add it again.";
+  }
+  if (mime === "application/pdf" || /\.pdf\b/.test(name)) {
+    return "This PDF couldn't be rendered — it may be corrupt or password-protected.";
+  }
+  if (decodeFailure) {
+    return "This image couldn't be decoded — it may be corrupt or an unsupported format.";
+  }
+  return raw;
 }
 
 async function fail(receiptId: string, message: string): Promise<void> {
