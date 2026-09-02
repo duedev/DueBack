@@ -57,16 +57,7 @@ export async function runVisionAssist(
 ): Promise<VisionAssist | null> {
   let cfg = getVisionConfig();
   if (!shouldAssist(ex)) return null;
-  if (cfg.enabled) {
-    // Signed-in users route through the key-holding Edge Function so no API
-    // key ever lives in the browser (their own key, if set, still wins).
-    try {
-      const { serverProxyOverride } = await import("../../supabase/aiProxy.ts");
-      cfg = (await serverProxyOverride(cfg)) ?? cfg;
-    } catch {
-      /* sync layer absent/unconfigured — keep the local config */
-    }
-  }
+  if (cfg.enabled) cfg = await withServerProxy(cfg);
   if (!visionConfigured(cfg)) return null;
   if (!withinBudget(cfg)) {
     console.warn("[vision] spend cap reached — skipping the paid fallback.");
@@ -88,11 +79,25 @@ export async function runVisionAssist(
   }
 }
 
+/** Signed-in users route through the key-holding Edge Function so no API key
+ *  ever lives in the browser (their own key, if set, still wins). Shared by
+ *  the pipeline and the settings probe so "Test connection" exercises the
+ *  same path a real receipt takes. */
+async function withServerProxy(cfg: VisionConfig): Promise<VisionConfig> {
+  try {
+    const { serverProxyOverride } = await import("../../supabase/aiProxy.ts");
+    return (await serverProxyOverride(cfg)) ?? cfg;
+  } catch {
+    return cfg; // sync layer absent/unconfigured — keep the local config
+  }
+}
+
 /** A cheap auth/connectivity probe for the settings panel: one real call on a
  *  tiny synthetic image. Resolves with whether the provider answered. */
 export async function testVisionConnection(
   cfg: VisionConfig,
 ): Promise<{ ok: boolean; message: string }> {
+  cfg = await withServerProxy(cfg);
   if (!effectiveApiKey(cfg)) return { ok: false, message: "Add an API key first." };
   try {
     const blob = await tinyTestImage();

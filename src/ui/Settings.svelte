@@ -35,6 +35,20 @@
   let testMsg = $state("");
   let testing = $state(false);
 
+  // The panel used to read the config once at mount and then show — and
+  // write back — stale values: sign-in flips `enabled` on and every assisted
+  // receipt bumps `spent` while the panel is closed. Re-read on each open.
+  $effect(() => {
+    if (!app.settingsOpen) return;
+    const cfg = getVisionConfig();
+    aiEnabled = cfg.enabled;
+    provider = cfg.provider;
+    model = cfg.model;
+    apiKey = cfg.apiKey;
+    spendCap = cfg.spendCapUsd;
+    spent = cfg.spentUsd;
+  });
+
   function saveAi(): void {
     const next = saveVisionConfig({
       enabled: aiEnabled,

@@ -350,6 +350,39 @@
     if (proceed) void doGenerate();
   }
 
+  // Focus management for the confirm (role=dialog + aria-modal promise it):
+  // focus moves into the dialog on open, Escape cancels, Tab cycles its two
+  // buttons instead of walking the page behind the scrim, and focus returns
+  // to the Generate button on close.
+  let confirmEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    const el = confirmEl;
+    if (!el) return;
+    const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    el.focus();
+    return () => prev?.focus();
+  });
+  function onConfirmKey(e: KeyboardEvent): void {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      confirmBlank(false);
+      return;
+    }
+    if (e.key !== "Tab" || !confirmEl) return;
+    const buttons = Array.from(confirmEl.querySelectorAll<HTMLElement>("button:not([disabled])"));
+    const first = buttons[0];
+    const last = buttons[buttons.length - 1];
+    if (!first || !last) return;
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === confirmEl)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
   // ---- Save to OneDrive (only rendered when the build is configured) ------
   const oneDriveOn = oneDriveConfigured();
   let odSaving = $state(false);
@@ -672,7 +705,15 @@
         if (e.target === e.currentTarget) confirmBlank(false);
       }}
     >
-      <div class="confirm card" role="dialog" aria-modal="true" aria-label="Missing report details">
+      <div
+        class="confirm card"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Missing report details"
+        tabindex="-1"
+        bind:this={confirmEl}
+        onkeydown={onConfirmKey}
+      >
         <h4>Some report details are blank</h4>
         <p class="muted">
           {blankFields.join(", ")} will show empty in the workbook header.

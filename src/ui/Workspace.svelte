@@ -13,20 +13,35 @@
   const finished = $derived(app.counts.done + app.counts.needs_review + app.counts.failed);
 
   // ---- Board view + sorting -------------------------------------------------
+  // localStorage throws in a storage-blocked iframe (the Carrd embed) and in
+  // some private modes — every other access in the app is guarded, and an
+  // unguarded one here took the whole workspace down at mount.
+  function readPref(key: string): string | null {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+  function writePref(key: string, value: string): void {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      /* storage blocked — the preference just won't stick */
+    }
+  }
   type BoardView = "grid" | "kanban";
   type SortKey = "added" | "date" | "amount" | "vendor" | "category";
-  let view = $state<BoardView>(
-    (localStorage.getItem("board.view") as BoardView) || "kanban",
-  );
-  const storedSort = localStorage.getItem("board.sort");
+  let view = $state<BoardView>((readPref("board.view") as BoardView) || "kanban");
+  const storedSort = readPref("board.sort");
   let sortKey = $state<SortKey>(
     // "status" was a sort option before the kanban lanes made it redundant.
     // Default: category, then date — receipts group the way the workbook
     // files them, so the board previews the report.
     storedSort && storedSort !== "status" ? (storedSort as SortKey) : "category",
   );
-  $effect(() => localStorage.setItem("board.view", view));
-  $effect(() => localStorage.setItem("board.sort", sortKey));
+  $effect(() => writePref("board.view", view));
+  $effect(() => writePref("board.sort", sortKey));
 
   function compare(a: Receipt, b: Receipt): number {
     switch (sortKey) {
@@ -66,7 +81,7 @@
     new Set(
       (() => {
         try {
-          const raw = localStorage.getItem("board.hiddenCats");
+          const raw = readPref("board.hiddenCats");
           return raw ? (JSON.parse(raw) as string[]) : [];
         } catch {
           return [];
@@ -74,9 +89,7 @@
       })(),
     ),
   );
-  $effect(() =>
-    localStorage.setItem("board.hiddenCats", JSON.stringify([...hiddenCats])),
-  );
+  $effect(() => writePref("board.hiddenCats", JSON.stringify([...hiddenCats])));
   function toggleCat(c: string): void {
     const next = new Set(hiddenCats);
     if (next.has(c)) next.delete(c);
@@ -92,6 +105,13 @@
     }
     return [...m.entries()].map(([cat, items]) => ({ cat, items }));
   });
+  // The chip row must appear whenever a present category is hidden, not only
+  // when there are several: the hidden set persists across batches, so a
+  // single-category batch whose category was hidden last time rendered a
+  // blank grid with nothing to click.
+  const showCatFilter = $derived(
+    catGroups.length > 1 || catGroups.some((g) => hiddenCats.has(g.cat)),
+  );
 
   let cameraInput = $state<HTMLInputElement | null>(null);
 
@@ -115,7 +135,9 @@
         <BrandLogo size={28} />
       </button>
       {#if total > 0}
-        <div class="progress" aria-label="Processing progress">
+        <!-- role=status: aria-label is not permitted on a plain div, and a
+             live region lets screen readers hear the count advance. -->
+        <div class="progress" role="status" aria-live="polite" aria-atomic="true">
           <span class="muted">{finished}/{total} processed</span>
           {#if app.counts.needs_review > 0}
             <span class="chip chip-warn">{app.counts.needs_review} to review</span>
@@ -186,7 +208,7 @@
       </div>
 
       {#if view === "grid"}
-        {#if catGroups.length > 1}
+        {#if showCatFilter}
           <div class="cat-filter" role="group" aria-label="Categories shown">
             {#each catGroups as g (g.cat)}
               <button

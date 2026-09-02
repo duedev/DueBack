@@ -408,7 +408,15 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   (stored `ocrLines` inside the box; Node-tested). The completed review
   sweep fires `ui/confetti.ts` (multi-volley canvas burst, reduced-motion
   no-op). Grid view groups by category with show/hide chips (localStorage
-  `board.hiddenCats`).
+  `board.hiddenCats`); the chip row renders whenever a PRESENT category is
+  hidden, not only when there are several — the hidden set persists across
+  batches, and a single-category batch used to render a blank grid with
+  nothing to click. Workspace reads/writes its `board.*` preferences through
+  guarded helpers (localStorage throws in the Carrd embed). Settings re-reads
+  the AI-assist config on every open (sign-in flips it on, assisted receipts
+  bump `spent`) and its "Test connection" takes the same server-proxy path a
+  real receipt takes. Card `aria-label`s carry the review reason, date and
+  logo state; the header progress count is a `role="status"` live region.
 - **The Insights sheet defaults ON in the UI, OFF at the API.** The report-bar
   toggle defaults to checked (kv `report.insights`; only an explicit false
   turns it off) and the e2e pins that. `buildWorkbook`'s own
@@ -469,8 +477,10 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   (tests/theme.test.ts). ReviewModal renders each flag NEXT TO the field it
   questions (`FLAG_FIELD` map); only unmapped codes (duplicate,
   low_confidence) stay in the general list.
-- **Both dialogs manage focus** (ReviewModal, Settings): container
-  `tabindex="-1"` focused on open, a local Tab trap, focus restored on close;
+- **All three dialogs manage focus** (ReviewModal, Settings, ExportBar's
+  blank-details confirm): container
+  `tabindex="-1"` focused on open, a local Tab trap, Escape closes, focus
+  restored on close;
   ReviewModal's window-level Enter shortcut ignores BUTTON/A/SUMMARY/SELECT
   targets so Enter activates the focused control instead of approving.
 - **`vendor-tesseract.mjs` FAILS the build** (exit 1) when language data can't

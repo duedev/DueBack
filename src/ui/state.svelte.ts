@@ -65,8 +65,24 @@ class AppState {
     !this.wentHome && (this.entered || this.receipts.length > 0),
   );
 
-  /** Object URLs for stored blobs, keyed by blob key (revoked on refresh). */
+  /** Object URLs for stored blobs, keyed by blob key. Revoked when the
+   *  receipt that owns them is deleted — they otherwise pinned every
+   *  thumbnail's blob for the life of the tab. */
   private urlCache = new Map<string, string>();
+
+  private revokeBlobUrls(r: Receipt): void {
+    for (const key of [r.fileKey, r.cleanedKey, r.annotatedKey]) {
+      if (!key) continue;
+      const url = this.urlCache.get(key);
+      if (!url) continue;
+      this.urlCache.delete(key);
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
 
   async init(): Promise<void> {
     try {
@@ -198,6 +214,7 @@ class AppState {
    *  explicit enough and a blocking confirm popup was unwanted friction. */
   async clearAll(): Promise<void> {
     const ids = this.receipts.map((r) => r.id);
+    for (const r of this.receipts) this.revokeBlobUrls(r);
     for (const id of ids) await repo.deleteReceipt(id);
     this.toast(
       ids.length === 0
@@ -484,6 +501,8 @@ class AppState {
   }
 
   async deleteReceipt(id: string): Promise<void> {
+    const r = this.receipts.find((x) => x.id === id);
+    if (r) this.revokeBlobUrls(r);
     await repo.deleteReceipt(id);
     this.toast("Receipt removed.", "info");
   }

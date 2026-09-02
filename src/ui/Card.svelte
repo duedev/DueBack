@@ -22,7 +22,9 @@
     receipt.status === "queued" || receipt.status === "processing",
   );
 
-  /** What a screen reader hears on focus: status first, then the card's facts. */
+  /** What a screen reader hears on focus: status first, then the card's
+   *  facts — including the review reason, the date and the logo state the
+   *  visible card shows (aria-label replaces the button's content). */
   const ariaLabel = $derived.by(() => {
     const status =
       receipt.status === "needs_review" ? "Review needed" : meta.label;
@@ -32,7 +34,18 @@
           ? formatMoney(receipt.amount.value)
           : "no amount";
       const vendor = receipt.vendor.value || "Unknown vendor";
-      return `${status} — ${vendor}, ${amount}, ${receipt.fileName}`;
+      const date = receipt.date.value ? formatDate(receipt.date.value) : "no date";
+      const parts = [`${status} — ${vendor}, ${amount}, ${date}`];
+      if (receipt.status === "needs_review" && receipt.flags[0]) {
+        parts.push(receipt.flags[0].message);
+        if (receipt.flags.length > 1) parts.push(`${receipt.flags.length - 1} more`);
+      }
+      if (receipt.logoMatch?.source === "logo") parts.push("brand identified visually");
+      parts.push(receipt.fileName);
+      return parts.join(". ");
+    }
+    if (receipt.status === "failed") {
+      return `${status} — ${receipt.error ?? "Processing failed."} ${receipt.fileName}`;
     }
     return `${status} — ${receipt.fileName}`;
   });
