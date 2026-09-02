@@ -1,11 +1,13 @@
 <script lang="ts">
   // Steps open on hover and stay open (reading shouldn't require a click);
   // clicking the summary still toggles, so a click can close one again.
-  // Touch devices synthesize mouseenter right before the tap's click — the
-  // hover opened the step and the click closed it again, so every step took
-  // two taps. Only real hover-capable pointers get the hover behaviour.
-  function openOnHover(e: MouseEvent): void {
-    if (typeof matchMedia === "function" && !matchMedia("(hover: hover)").matches) return;
+  // Touch must not open here: Chromium fires a compat mouseenter before the
+  // tap's click, so hover-open + click-toggle closed the step on the first
+  // tap (two taps per step on Android). pointerenter carries the pointer
+  // type, which a (hover: hover) media check can't see on a laptop with a
+  // touchscreen — only a real mouse opens on hover.
+  function openOnHover(e: PointerEvent): void {
+    if (e.pointerType !== "mouse") return;
     (e.currentTarget as HTMLDetailsElement).open = true;
   }
 </script>
@@ -21,7 +23,7 @@
   <div class="how-cols">
     <ol class="steps">
       <li>
-        <details class="card step" open onmouseenter={openOnHover}>
+        <details class="card step" open onpointerenter={openOnHover}>
           <summary>
             <span class="step-n">1</span>
             <span class="step-head">
@@ -50,7 +52,7 @@
         </details>
       </li>
       <li>
-        <details class="card step" onmouseenter={openOnHover}>
+        <details class="card step" onpointerenter={openOnHover}>
           <summary>
             <span class="step-n">2</span>
             <span class="step-head">
@@ -83,7 +85,7 @@
         </details>
       </li>
       <li>
-        <details class="card step" onmouseenter={openOnHover}>
+        <details class="card step" onpointerenter={openOnHover}>
           <summary>
             <span class="step-n">3</span>
             <span class="step-head">

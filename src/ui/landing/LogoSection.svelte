@@ -10,8 +10,7 @@
       </p>
       <p>
         From then on it's recognized on sight and filed to the right category.
-        Matching runs on your device; sign in and taught brands are saved to
-        your own private workspace, so they follow you to any device.
+        Matching runs on your device.
       </p>
     </div>
 
@@ -64,6 +63,17 @@
       </div>
     </div>
   </div>
+
+  <!-- Nerd-gated (landing.css .db-nerd): the sync story stays future tense
+       until the cloud layer ships on the production deployment. -->
+  <aside class="db-nerd" aria-label="Technical details">
+    <span class="db-nerd-tag">nerd note · taught brands travel</span>
+    <p>
+      Once cloud sync lands, signing in will carry taught brands to your own
+      private workspace, so a logo taught on the phone is recognized on the
+      laptop too.
+    </p>
+  </aside>
 </section>
 
 <style>

@@ -199,3 +199,19 @@ test("html/body clip horizontal overflow, hidden fallback declared first", () =>
   // navigation, which the hash-routed landing relies on.
   assert.doesNotMatch(themeCss, /overscroll-behavior-x/);
 });
+
+// ── landing copy vs the real report bar ──────────────────────────────────────
+// The CSV button was removed and the images ZIP is hidden by product call;
+// the landing advertised both for weeks afterwards. Pinned only while the
+// bar still hides them, so the guard relaxes on its own when they return.
+test("the landing does not advertise the retired CSV or the hidden images ZIP", () => {
+  const bar = read("src/ui/ExportBar.svelte");
+  const zipHidden = bar.includes("const includeZip = false");
+  const csvGone = !/\bCSV\b/.test(bar.replace(/\/\/.*$/gm, "").replace(/<!--[\s\S]*?-->/g, ""));
+  if (!zipHidden && !csvGone) return;
+  for (const f of ["src/ui/landing/HowSection.svelte", "src/ui/landing/WorkbookSection.svelte", "src/ui/Landing.svelte"]) {
+    const copy = read(f).replace(/<!--[\s\S]*?-->/g, "").replace(/\/\/.*$/gm, "");
+    if (zipHidden) assert.ok(!/images ZIP|image archive/i.test(copy), `${f} still advertises the images ZIP`);
+    if (csvGone) assert.ok(!/\bCSV\b/.test(copy), `${f} still advertises a CSV`);
+  }
+});

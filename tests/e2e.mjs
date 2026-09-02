@@ -2,7 +2,7 @@
 // headless Chromium. Proves the browser-only paths the unit tests can't:
 // the landing hero, IndexedDB storage, canvas image-prep, on-device Tesseract
 // OCR, the board/review UI, and xlsx export. Run with: node tests/e2e.mjs
-import { chromium } from "playwright";
+import { chromium, devices } from "playwright";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -739,6 +739,31 @@ async function main() {
       (await page.locator(".drop-veil").count()) === 0,
       "the drop veil clears after the drop",
     );
+
+    // Touch: ONE tap opens a How step. Chromium fires a compat mouseenter
+    // before the tap's click, so a hover-open handler plus the click's
+    // toggle closed the step again (two taps per step on Android).
+    {
+      const touch = await browser.newContext({ ...devices["Pixel 7"] });
+      const tp = await touch.newPage();
+      await tp.goto(BASE, { waitUntil: "load" });
+      const second = tp.locator("#how .steps li:nth-child(2) details");
+      await second.locator("summary").tap();
+      check(await second.evaluate((d) => d.open), "one tap opens a How step on a touch device");
+      await touch.close();
+    }
+    // …and a real mouse hover still opens one without a click. A fresh
+    // context: the main one holds receipts, so its origin boots straight
+    // into the workspace.
+    {
+      const mouse = await browser.newContext();
+      const hp = await mouse.newPage();
+      await hp.goto(BASE, { waitUntil: "load" });
+      const third = hp.locator("#how .steps li:nth-child(3) details");
+      await third.locator("summary").hover();
+      check(await third.evaluate((d) => d.open), "hovering a How step with a mouse opens it");
+      await mouse.close();
+    }
 
     check(pageErrors === 0, `no uncaught or console errors during the run (got ${pageErrors})`);
   } finally {

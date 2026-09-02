@@ -174,8 +174,11 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   pointers get 16px fields so iOS Safari stops zooming on focus. The
   landing's footer column headings are `h3` in `--ink-soft`; the hero's
   scroll cue target (`.why`, no id) carries the same `scroll-margin-top` as
-  anchored sections; How steps open on hover only for hover-capable
-  pointers (touch synthesized mouseenter + click and took two taps).
+  anchored sections; How steps open on REAL mouse hover only
+  (`onpointerenter` with a `pointerType === "mouse"` guard — a
+  `(hover: hover)` media check can't tell a touch tap on a touchscreen
+  laptop apart; Chromium's compat mouseenter + the tap's click toggle took
+  two taps per step, e2e-pinned with a Pixel 7 context).
 - **The Drive-folder story is marketing for planned/in-progress work** — it
   lives in the nerd-gated FAQ entries ("What about cloud sync and the AI
   assist?", anchored `#account`, and "Can it watch a Google Drive or
@@ -266,7 +269,7 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   returning-user path, e2e-pinned); the page flows hero → why → How (the
   three steps with the time-race card as a sticky rail, feature-trio copy
   folded into step bodies) → Logo → Workbook → CTA → FAQ → roadmap →
-  Contact; How steps open on hover (`onmouseenter`, click still toggles;
+  Contact; How steps open on mouse hover (`onpointerenter`, click still toggles;
   step 1 starts open so touch users see one expanded); the workbook nav
   link and step 3 say "Excel workbook" while the section label is "The
   deliverable" (one "workbook" per heading stack — the old tab/page-no/
@@ -283,7 +286,14 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   condensed into the FAQ; turning Nerd mode ON fires
   `landing/binaryBits.ts` (green binary rain, reduced-motion no-op); the
   logo-recognition mock shows the fictional Corner Bistro cup logo, not
-  placeholder text.
+  placeholder text. Landmarks: a skip link, the nav is a `<header>`
+  (banner), hero → contact sit inside `<main id="main">`, the footer is
+  outside; the workbook mock carries the REAL Summary columns (no Notes)
+  and its chips/rail note name only what the sheet has; the logo section's
+  sync sentence is a nerd-gated aside (present-tense sync claims stay
+  behind Nerd mode until the cloud layer ships); `tests/theme.test.ts`
+  pins that the landing doesn't advertise the retired CSV / hidden images
+  ZIP while the report bar hides them.
 - **Board views:** Workspace has a Grid/Kanban toggle + sort select
   (localStorage `board.view`/`board.sort`); kanban lanes are status groups.
   Default sort is **category, then date**. A needs-review card shows its

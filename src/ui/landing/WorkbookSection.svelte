@@ -25,27 +25,27 @@
     <div class="body">
       <div class="table">
         <div class="thead">
-          <span>Vendor</span><span>Date</span><span>Category</span><span class="num">Amount</span><span class="notes">Notes</span>
+          <span>Vendor</span><span>Date</span><span>Category</span><span class="num">Amount</span>
         </div>
         <div class="trow">
           <span class="f-v">Maple St. Hardware</span><span class="f-d">06/24</span>
           <span class="cat"><i class="dot" style="background: #d97706"></i>Materials</span>
-          <span class="num f-a">27.45</span><span class="notes"></span>
+          <span class="num f-a">27.45</span>
         </div>
         <div class="trow">
           <span class="f-v">Corner Bistro</span><span class="f-d">06/24</span>
           <span class="cat"><i class="dot" style="background: #f97316"></i>Meals</span>
-          <span class="num f-a">18.20</span><span class="notes note">billable</span>
+          <span class="num f-a">18.20</span>
         </div>
         <div class="trow">
           <span class="f-v">CityGas #214</span><span class="f-d">06/25</span>
           <span class="cat"><i class="dot" style="background: #ef4444"></i>Fuel</span>
-          <span class="num f-a">41.03</span><span class="notes"></span>
+          <span class="num f-a">41.03</span>
         </div>
         <div class="trow">
           <span class="f-v">Parking meter</span><span class="f-d">06/26</span>
           <span class="cat"><i class="dot" style="background: #94a3b8"></i>Misc</span>
-          <span class="num f-a">4.00</span><span class="notes"></span>
+          <span class="num f-a">4.00</span>
         </div>
         <div class="tfoot">
           <span>TOTAL</span><span class="sum">$90.68</span>
@@ -60,12 +60,14 @@
           <div class="bar" style="height: 22%; background: #94a3b8"></div>
         </div>
         <p class="rail-note">
-          Insights sheet: KPI tiles, spend by day and by month, and category
-          and vendor breakdowns.
+          Insights sheet: spend by category and over time, your largest
+          vendors, and a count of anything still flagged.
         </p>
         <div class="chips">
           <span class="chip">receipt images embedded</span>
           <span class="chip">summary that foots with live formulas</span>
+          <span class="chip"># links jump to each receipt image</span>
+          <span class="chip">per diem &amp; phone allowance lines</span>
           <span class="chip">+ print packet PDF</span>
         </div>
       </div>
@@ -135,9 +137,9 @@
   .thead,
   .trow {
     display: grid;
+    /* Four columns — the real Summary has no Notes column. */
     grid-template-columns:
-      minmax(0, 1.5fr) minmax(0, 0.65fr) minmax(0, 1fr) minmax(0, 0.7fr)
-      minmax(0, 0.6fr);
+      minmax(0, 1.5fr) minmax(0, 0.65fr) minmax(0, 1fr) minmax(0, 0.7fr);
     gap: 0.6rem;
     padding: 0.45rem 0.6rem;
     align-items: center;
@@ -184,11 +186,6 @@
   .f-a {
     color: var(--ok);
     font-weight: 600;
-  }
-  .note {
-    color: var(--gold-text); /* --gold is only 4.0:1 in light — never small copy */
-    font-weight: 600;
-    font-size: 0.72rem;
   }
   .tfoot {
     display: grid;
@@ -242,9 +239,6 @@
         minmax(0, 1.4fr) minmax(0, 0.6fr) minmax(0, 0.95fr) minmax(0, 0.8fr);
       gap: 0.4rem;
       font-size: 0.72rem;
-    }
-    .notes {
-      display: none;
     }
   }
 </style>

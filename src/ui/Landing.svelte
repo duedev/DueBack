@@ -252,6 +252,10 @@
      there), so no hashchange fired and nothing scrolled. A real target lets
      the browser's own fragment navigation scroll to the top regardless. -->
 <div class="landing" id="home" class:nerd-on={prefs.nerd}>
+  <!-- Landmarks: the page had no <main> (the hero <header> read as the
+       banner and a screen reader's "jump to main" found nothing). The nav
+       is the banner, hero → contact is main, the footer stays outside. -->
+  <a class="skip-link" href="#main">Skip to content</a>
   {#if dragging}
     <div class="drop-veil" aria-hidden="true">
       <div class="drop-box">
@@ -265,7 +269,7 @@
   {/if}
 
   <!-- ======================= sticky anchor nav ======================= -->
-  <div class="nav-bar">
+  <header class="nav-bar">
     <nav class="wrap nav" aria-label="Site">
       <a class="brand" href="#home" aria-label="DueBack home">
         <BrandLogo size={30} />
@@ -294,8 +298,9 @@
         <ThemeToggle />
       </div>
     </nav>
-  </div>
+  </header>
 
+  <main id="main">
   <Hero onAdd={pick} />
 
   <!-- ======================= the pitch, in one breath ================ -->
@@ -355,7 +360,8 @@
         row-level security (<strong>user_id = auth.uid()</strong>),
         reconciled last-write-wins on <strong>updatedAt</strong> in both
         directions: a stale device can't clobber a newer edit, and deletes
-        propagate as tombstones so nothing you removed ever resurrects.
+        propagate as tombstones that a stale device can't undo — only a
+        genuinely newer edit brings a record back.
       </p>
       <p>
         The optional AI assist never sees a raw API key: calls route through
@@ -403,6 +409,7 @@
   </section>
 
   <ContactSection />
+  </main>
 
   <footer class="foot">
     <div class="wrap foot-in">
@@ -488,6 +495,20 @@
   }
 
   /* ---- nav ---- */
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: 0.5rem;
+    z-index: 100;
+    padding: 0.5rem 0.9rem;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    color: var(--accent-ink);
+    font: 600 0.9rem/1 var(--font-ui);
+  }
+  .skip-link:focus {
+    left: 0.75rem;
+  }
   .nav-bar {
     position: sticky;
     top: 0;
@@ -641,7 +662,9 @@
   .qa summary {
     cursor: pointer;
     font: 600 1rem/1.3 var(--font-ui);
-    padding: 1rem 1.2rem;
+    /* Right padding clears the absolute "+" marker: a long question that
+       wrapped at phone width ran its first line under the glyph. */
+    padding: 1rem 2.8rem 1rem 1.2rem;
     list-style: none;
     position: relative;
   }
