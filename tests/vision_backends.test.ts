@@ -7,7 +7,9 @@ import {
   type VisionConfig,
 } from "../src/pipeline/vision/config.ts";
 import {
+  CLOUD_MAX_TOKENS,
   CLOUD_TIMEOUT_MS,
+  LOCAL_MAX_TOKENS,
   LOCAL_TIMEOUT_MS,
   effectiveStrategy,
   endpointProblem,
@@ -511,4 +513,50 @@ test("an unreachable local server's hint names every cause fetch() hides, and po
   assert.doesNotMatch(unreachableHint(lan, "http:"), /Mixed Content/);
   // Cloud stays terse: none of these causes apply to a public API.
   assert.equal(unreachableHint(resolveEndpoint(cfg(), "k")), "couldn't reach https://openrouter.ai/api/v1.");
+});
+
+// ── Why a reply was unusable ─────────────────────────────────────────────────
+
+test("every dialect reports a reply the token limit cut off", () => {
+  const ep = resolveEndpoint(cfg({ backend: "local" }), "");
+  assert.equal(parseOpenAiReply({ choices: [{ finish_reason: "length", message: { content: "<think>" } }] }, ep).truncated, true);
+  assert.equal(parseOpenAiReply({ choices: [{ finish_reason: "stop", message: { content: "{}" } }] }, ep).truncated, false);
+  const an = resolveEndpoint(cfg({ cloud: { provider: "anthropic", model: "claude-haiku-4-5", apiKey: "k" } }), "");
+  assert.equal(parseAnthropicReply({ content: [], stop_reason: "max_tokens" }, an).truncated, true);
+  assert.equal(parseGeminiReply({ candidates: [{ content: { parts: [] }, finishReason: "MAX_TOKENS" }] }).truncated, true);
+});
+
+test("free backends get a roomy answer budget; metered cloud stays tight", () => {
+  assert.equal(resolveEndpoint(cfg({ backend: "local" }), "").maxTokens, LOCAL_MAX_TOKENS);
+  assert.equal(
+    resolveEndpoint(cfg({ backend: "selfhosted", selfhosted: { url: "http://x/v1", model: "m" } }), "").maxTokens,
+    LOCAL_MAX_TOKENS,
+  );
+  assert.equal(resolveEndpoint(cfg(), "k").maxTokens, CLOUD_MAX_TOKENS);
+  assert.ok(LOCAL_MAX_TOKENS > CLOUD_MAX_TOKENS);
+});
+
+test("an unparseable one-shot reply says how it began and whether it was cut off", async () => {
+  const thinking = scripted([{ text: "<think>The receipt shows a cafe. Let me look at the total", truncated: true }]);
+  await assert.rejects(runOneShot(thinking, IMAGE, { maxTokens: 4096 }), (err: Error) => {
+    assert.match(err.message, /returned no parseable JSON\. It began: "<think>The receipt shows a cafe/);
+    assert.match(err.message, /cut off at the 4096-token limit/);
+    assert.match(err.message, /turn thinking off/);
+    return true;
+  });
+  assert.equal(thinking.requests[0]!.maxTokens, 4096, "the endpoint's budget reaches the request");
+  await assert.rejects(runOneShot(scripted([{ text: "  " }]), IMAGE), /The reply was empty\.$/);
+  await assert.rejects(runOneShot(scripted([{ text: "I cannot read this." }]), IMAGE), (err: Error) => {
+    assert.doesNotMatch(err.message, /cut off/, "not truncated, so no token-limit advice");
+    return true;
+  });
+});
+
+test("an agent run that never answers quotes its last reply", async () => {
+  const chatter = Array.from({ length: MAX_AGENT_CALLS }, () => ({ text: "Still thinking…", truncated: true }));
+  await assert.rejects(runAgentic(scripted(chatter), IMAGE, { draft: null, lines: [] }), (err: Error) => {
+    assert.match(err.message, /no answer within 5 calls\. Its last reply: It began: "Still thinking…"/);
+    assert.match(err.message, /cut off at the 1024-token limit/);
+    return true;
+  });
 });

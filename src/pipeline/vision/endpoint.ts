@@ -29,6 +29,10 @@ export interface Endpoint {
   /** Whether calls cost money we can measure — the spend cap applies. */
   metered: boolean;
   timeoutMs: number;
+  /** Answer budget per call. Tight on metered cloud calls (it is money);
+   *  roomy on local/self-hosted ones, which cost nothing and often run
+   *  "thinking" models that reason for thousands of tokens before the JSON. */
+  maxTokens: number;
 }
 
 /** Every provider call carries a deadline: a stalled model call otherwise
@@ -36,8 +40,12 @@ export interface Endpoint {
  *  kept its lock alive while the fetch never resolved. The ai-extract proxy
  *  answers at 85 s, inside the cloud deadline. */
 export const CLOUD_TIMEOUT_MS = 90_000;
-/** A 7B vision model on a laptop CPU can take minutes on a receipt photo. */
-export const LOCAL_TIMEOUT_MS = 180_000;
+/** A vision model on a laptop can take minutes on a receipt photo, longer
+ *  still when it thinks through LOCAL_MAX_TOKENS first. */
+export const LOCAL_TIMEOUT_MS = 300_000;
+
+export const CLOUD_MAX_TOKENS = 1024;
+export const LOCAL_MAX_TOKENS = 4096;
 
 /** True when the model uses OpenRouter's free routing (the router, or any
  *  `:free` model), where strict structured outputs are best avoided. */
@@ -90,6 +98,7 @@ export function resolveEndpoint(
         viaProxy: false,
         metered: false,
         timeoutMs: LOCAL_TIMEOUT_MS,
+        maxTokens: LOCAL_MAX_TOKENS,
       };
     case "selfhosted":
       return {
@@ -103,6 +112,7 @@ export function resolveEndpoint(
         viaProxy: false,
         metered: false,
         timeoutMs: LOCAL_TIMEOUT_MS,
+        maxTokens: LOCAL_MAX_TOKENS,
       };
     case "cloud":
     default: {
@@ -118,6 +128,7 @@ export function resolveEndpoint(
         viaProxy: false,
         metered: true,
         timeoutMs: CLOUD_TIMEOUT_MS,
+        maxTokens: CLOUD_MAX_TOKENS,
       };
     }
   }

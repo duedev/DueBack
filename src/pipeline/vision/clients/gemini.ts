@@ -13,7 +13,7 @@ interface GeminiPart {
 }
 
 interface GeminiResponse {
-  candidates?: { content?: { role?: string; parts?: GeminiPart[] } }[];
+  candidates?: { content?: { role?: string; parts?: GeminiPart[] }; finishReason?: string }[];
 }
 
 /** Ids this adapter invented for calls that came without one; they are
@@ -146,6 +146,7 @@ export function parseGeminiReply(data: GeminiResponse): ChatReply {
     // Free tier → $0. Paid usage would be priced from usageMetadata; left
     // at 0 because the free tier is the intended path here.
     costUsd: 0,
+    truncated: data.candidates?.[0]?.finishReason === "MAX_TOKENS",
     raw: content ? { dialect: "gemini", message: content } : undefined,
   };
 }

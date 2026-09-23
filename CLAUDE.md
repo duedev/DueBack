@@ -587,11 +587,15 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   added. A failed receipt's card shows `friendlyError()`'s message (HEIC in
   a non-Safari browser, corrupt/password PDF, undecodable image) rather
   than the decoder's internals.
-- **Every AI call carries a deadline** (`visionFetch` in
-  `vision/clients/shared.ts`, the endpoint's `timeoutMs`: 90 s cloud, 180 s
-  local/self-hosted — a 7B model on a laptop CPU is slow) — a stalled model
-  call parked the receipt in "processing" for good because the heartbeat
-  kept its lock alive. `parseVisionJson` strips `<think>` blocks and walks balanced
+- **Every AI call carries a deadline and an answer budget** (`visionFetch` in
+  `vision/clients/shared.ts`; the endpoint's `timeoutMs`/`maxTokens`: 90 s and
+  1024 tokens on metered cloud, 300 s and 4096 local/self-hosted — they're
+  free, and "thinking" models spend 1024 reasoning before any JSON) — a
+  stalled model call parked the receipt in "processing" for good because the
+  heartbeat kept its lock alive. Every dialect maps its stop reason to
+  `ChatReply.truncated`, and an unusable reply's error quotes how it began
+  and says when the limit cut it off (`unusableReply`) — "no parseable
+  JSON" alone sent people to the server's logs. `parseVisionJson` strips `<think>` blocks and walks balanced
   objects, so prose or a stray brace before the JSON no longer sinks it.
 - **AI backend × strategy rules.** The `ai-extract` proxy relays exactly one
   image extraction (`messagesProblem` refuses a tool loop), so a PROXIED

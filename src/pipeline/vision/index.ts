@@ -54,6 +54,7 @@ function runPlan(plan: AssistPlan, image: ImagePart, ctx: AgentContext): Promise
   const opts = {
     onCost: recordSpend,
     canSpend: plan.endpoint.metered ? () => withinBudget() : undefined,
+    maxTokens: plan.endpoint.maxTokens,
   };
   return plan.strategy === "agentic"
     ? runAgentic(client, image, ctx, opts)

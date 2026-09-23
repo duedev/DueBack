@@ -78,6 +78,9 @@ export interface ChatReply {
   toolCalls: ToolCall[];
   /** Measured dollar cost of this call; 0 when free or unknowable. */
   costUsd: number;
+  /** The model stopped because it hit the token limit, not because it was
+   *  done — a "thinking" model can spend the whole budget reasoning. */
+  truncated?: boolean;
   raw?: { dialect: Dialect; message: unknown };
 }
 

@@ -25,6 +25,7 @@ interface OpenAiToolCall {
 
 interface OpenAiResponse {
   choices?: {
+    finish_reason?: string | null;
     message?: {
       content?: string | { type?: string; text?: string }[] | null;
       tool_calls?: OpenAiToolCall[];
@@ -145,7 +146,7 @@ export function parseOpenAiReply(data: OpenAiResponse, ep: Endpoint): ChatReply 
     }))
     .filter((tc) => tc.name);
   const costUsd = ep.openRouter && typeof data.usage?.cost === "number" ? data.usage.cost : 0;
-  return { text, toolCalls, costUsd };
+  return { text, toolCalls, costUsd, truncated: data.choices?.[0]?.finish_reason === "length" };
 }
 
 export function createOpenAiClient(ep: Endpoint): ChatClient {

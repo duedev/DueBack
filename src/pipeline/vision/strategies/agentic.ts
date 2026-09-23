@@ -1,4 +1,4 @@
-import type { ChatClient, ChatTurn, VisionExtraction } from "../types.ts";
+import type { ChatClient, ChatReply, ChatTurn, VisionExtraction } from "../types.ts";
 import { SYSTEM_PROMPT, parseVisionJson } from "../schema.ts";
 import {
   AGENT_TOOLS,
@@ -8,7 +8,7 @@ import {
   executeTool,
   type AgentContext,
 } from "./tools.ts";
-import type { ImagePart, StrategyOptions } from "./oneshot.ts";
+import { DEFAULT_MAX_TOKENS, unusableReply, type ImagePart, type StrategyOptions } from "./oneshot.ts";
 
 // Agentic: a short, bounded tool loop. The model gets the image AND the
 // on-device read, may call the app's own checks (tools.ts) to verify what it
@@ -44,12 +44,14 @@ export async function runAgentic(
   opts: StrategyOptions & { maxCalls?: number } = {},
 ): Promise<VisionExtraction> {
   const maxCalls = Math.max(1, opts.maxCalls ?? MAX_AGENT_CALLS);
+  const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
   const turns: ChatTurn[] = [
     { role: "user", content: [{ type: "text", text: agentBrief(ctx) }, image] },
   ];
   // A readable trace of the run, kept as the receipt's raw text for review.
   const trace: string[] = [];
   let cost = 0;
+  let lastReply: ChatReply | null = null;
   const finish = (fields: Record<string, unknown>, calls: number): VisionExtraction => {
     trace.push(`${SUBMIT_TOOL} ${JSON.stringify(fields)}`);
     return { fields, rawText: trace.join("\n"), costUsd: cost, model: client.model, calls };
@@ -65,10 +67,11 @@ export async function runAgentic(
       turns,
       tools: last ? [SUBMIT_SPEC] : AGENT_TOOLS,
       forceTool: last ? SUBMIT_TOOL : undefined,
-      maxTokens: 1024,
+      maxTokens,
     });
     cost += reply.costUsd;
     opts.onCost?.(reply.costUsd);
+    lastReply = reply;
 
     const submit = reply.toolCalls.find((tc) => tc.name === SUBMIT_TOOL);
     if (submit) return finish(submit.args, call);
@@ -92,5 +95,8 @@ export async function runAgentic(
       trace.push(`${tc.name} ${JSON.stringify(tc.args)} → ${clip(results[i]!.content)}`),
     );
   }
-  throw new Error(`${client.label} gave no answer within ${maxCalls} calls.`);
+  throw new Error(
+    `${client.label} gave no answer within ${maxCalls} calls.` +
+      (lastReply ? ` Its last reply:${unusableReply(lastReply, maxTokens)}` : ""),
+  );
 }
