@@ -106,6 +106,9 @@ export const CONFIDENCE = {
 export const FLAGS = {
   /** Flag receipts older than this many days as possibly stale. */
   staleAfterDays: 120,
+  /** Older than this, the date itself is suspect — almost always a misread
+   *  year ("2012-12-12" on a 2025 slip) — and forces a review. */
+  suspectAfterDays: 730,
   /** Flag unusually large amounts for a closer look. */
   largeAmount: 1000,
   /** Allowed gap between summed line items and printed total to "reconcile". */

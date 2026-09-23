@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from "./state.svelte.ts";
   import ThemeToggle from "./ThemeToggle.svelte";
+  import SettingsButton from "./SettingsButton.svelte";
   import BrandLogo from "./BrandLogo.svelte";
   import Hero from "./landing/Hero.svelte";
   import HowSection from "./landing/HowSection.svelte";
@@ -60,7 +61,12 @@
      the drop still lands on window), and dropping anywhere ingests via the
      same addFiles path as the pickers (which auto-enters the workspace).
      Depth-counted because dragenter/dragleave fire per element crossed;
-     listeners live here so they vanish with the landing on unmount. */
+     listeners live here so they vanish with the landing on unmount. While
+     Settings is open (the nav's gear) the page stands down: no veil (it
+     would paint over the dialog), no ingest, and a drop on a file input
+     (Brands' logo picker) is left to the input — preventing it swallowed
+     the logo and read it as a receipt. A drop anywhere else is still
+     prevented, or the browser would navigate away to the file. */
   let dragDepth = $state(0);
   const dragging = $derived(dragDepth > 0);
 
@@ -68,20 +74,26 @@
     return !!e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files");
   }
 
+  function onFileInput(e: DragEvent): boolean {
+    return e.target instanceof HTMLInputElement && e.target.type === "file";
+  }
+
   $effect(() => {
     const enter = (e: DragEvent): void => {
-      if (dragHasFiles(e)) dragDepth += 1;
+      if (dragHasFiles(e) && !app.settingsOpen) dragDepth += 1;
     };
     const leave = (e: DragEvent): void => {
-      if (dragHasFiles(e)) dragDepth = Math.max(0, dragDepth - 1);
+      if (dragHasFiles(e) && !app.settingsOpen) dragDepth = Math.max(0, dragDepth - 1);
     };
     const over = (e: DragEvent): void => {
-      if (dragHasFiles(e)) e.preventDefault(); // required to allow the drop
+      if (!dragHasFiles(e) || (app.settingsOpen && onFileInput(e))) return;
+      e.preventDefault(); // required to allow the drop
     };
     const drop = (e: DragEvent): void => {
-      if (!dragHasFiles(e)) return;
+      if (!dragHasFiles(e) || (app.settingsOpen && onFileInput(e))) return;
       e.preventDefault();
       dragDepth = 0;
+      if (app.settingsOpen) return;
       const files = e.dataTransfer?.files;
       if (files?.length) void app.addFiles(files);
     };
@@ -208,7 +220,7 @@
     },
     {
       q: "What do I hand to my office?",
-      a: "A polished multi-sheet Excel workbook: a summary that foots with real formulas, per-category sheets with the receipt images embedded and an insights dashboard. A print packet PDF of the receipts downloads alongside for offices that keep paper copies.",
+      a: "A polished multi-sheet Excel workbook: a summary that foots with real formulas, per-category sheets with the receipt images embedded and an insights dashboard. For offices that keep paper copies, a print packet PDF of the receipts is one more click (or zipped in with the workbook).",
     },
     {
       q: "What kinds of files work?",
@@ -295,6 +307,11 @@
           <span class="nt-mark" aria-hidden="true">&#123;&nbsp;&#125;</span>
           <span class="nt-label">Nerd mode</span>
         </button>
+        <!-- Hidden when boot couldn't open storage (a storage-blocked
+             embed lands here): Settings could save nothing there. -->
+        {#if !app.storageError}
+          <SettingsButton />
+        {/if}
         <ThemeToggle />
       </div>
     </nav>

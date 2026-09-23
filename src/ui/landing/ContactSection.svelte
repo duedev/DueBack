@@ -20,20 +20,18 @@
     let attachNote = "";
     try {
       if (cAttach) {
-        const { buildTuningBundle, downloadBundle } = await import("../../train/bundle.ts");
+        const { buildTuningBundle, downloadBundle, formatBytes } = await import("../../train/bundle.ts");
         const receipts = $state.snapshot(app.receipts) as Receipt[];
-        const bundle = await buildTuningBundle(receipts);
+        // Always compact: it goes out as an email attachment (mail caps near
+        // 25 MB), and the highlighted copies carry what feedback needs.
+        const bundle = await buildTuningBundle(receipts, { mode: "compact" });
         downloadBundle(bundle);
         attachNote =
           `
 
-(P.S. Please attach the file "${bundle.fileName}" that just downloaded. ` +
-          `It holds my ${bundle.receiptCount} receipts' extraction data and ` +
-          `${bundle.correctionCount} corrections for tuning.` +
-          (bundle.omittedOriginals > 0
-            ? ` ${bundle.omittedOriginals} original images were left out to keep it under 200 MB.`
-            : "") +
-          `)`;
+(P.S. Please attach the file "${bundle.fileName}" (${formatBytes(bundle.blob.size)}) that just downloaded. ` +
+          `It holds my ${bundle.receiptCount} receipts' extraction data, ` +
+          `${bundle.correctionCount} corrections and highlighted images for tuning.)`;
       }
     } catch {
       /* the message still goes out without the bundle */

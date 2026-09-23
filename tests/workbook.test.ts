@@ -4,8 +4,10 @@ import ExcelJS from "exceljs";
 import {
   buildWorkbook,
   blockRows,
+  blockSpan,
   imageRows,
   IMG_ROW_PT,
+  LINK_VIEW_PX,
 } from "../src/export/workbook.ts";
 import { rowPtToPx } from "../src/export/anchor.ts";
 import { APP_URL } from "../src/config/constants.ts";
@@ -13,12 +15,13 @@ import type { Batch, Receipt, Category } from "../src/types.ts";
 
 /** The Summary "#" cells are HYPERLINK formulas with a numeric result (a
  *  hyperlink-typed cell would be text and trip Excel's error triangle);
- *  accept either shape so the contract, not the encoding, is pinned. */
+ *  accept either shape so the contract, not the encoding, is pinned. The
+ *  target may be one cell or a block range ("A3:F21"). */
 function linkTarget(v: unknown): string | null {
   if (!v || typeof v !== "object") return null;
   const o = v as { hyperlink?: string; formula?: string };
   if (o.hyperlink) return o.hyperlink;
-  const m = /^HYPERLINK\("(#'[^']+'!A\d+)",\d+\)$/.exec(o.formula ?? "");
+  const m = /^HYPERLINK\("(#'[^']+'!A\d+(?::F\d+)?)",\d+\)$/.exec(o.formula ?? "");
   return m ? m[1]! : null;
 }
 
@@ -127,15 +130,17 @@ test("buildWorkbook produces a valid multi-sheet workbook with footing totals", 
   assert.equal(subtotals, 4, "one Subtotal row per category section");
   assert.ok(foundTotal, "summary has a TOTAL row");
 
-  // Every Summary "#" cell hyperlinks to its receipt's anchor row on the
-  // category image sheet (the ported linking feature).
+  // Every Summary "#" cell hyperlinks to its receipt's block on the
+  // category image sheet (the ported linking feature) — as a RANGE, so
+  // Excel scrolls the receipt into view instead of parking one cell on the
+  // window's bottom edge.
   const links: string[] = [];
   summary.eachRow((row) => {
     const t = linkTarget(row.getCell(1).value);
     if (t) links.push(t);
   });
   assert.equal(links.length, 4, `one link per receipt (got ${JSON.stringify(links)})`);
-  assert.ok(links.every((l) => /^#'[^']+'!A\d+$/.test(l)), links.join(", "));
+  assert.ok(links.every((l) => /^#'[^']+'!A\d+:F\d+$/.test(l)), links.join(", "));
   // …as a formula carrying the receipt NUMBER, so Excel sees a number, not
   // "1" stored as text under a hyperlink.
   let numeric = 0;
@@ -550,14 +555,14 @@ test("category sheets link back to the Summary", async () => {
 // ── the receipt block layout ─────────────────────────────────────────────────
 // buildWorkbook can't embed images in Node (thumbnail() needs a canvas), so
 // every workbook test above runs the img === undefined branch. The Summary's
-// hyperlink anchors and its amount references are computed from these two
-// helpers, so a desync between them and the image sheet would be silent —
-// assert the contract directly.
+// hyperlink ranges and its amount references are computed from these
+// helpers (blockSpan on top of imageRows/blockRows), so a desync between
+// them and the image sheet would be silent — assert the contract directly.
 
 test("imageRows and blockRows are one definition of the block", () => {
   const carrierPx = rowPtToPx(IMG_ROW_PT); // 19
   assert.equal(imageRows(undefined), 1, "a missing image still gets a row");
-  assert.equal(blockRows(undefined), 5, "header + anchor + 1 + data + spacer");
+  assert.equal(blockRows(undefined), 5, "header + gap + 1 + data + spacer");
   assert.equal(imageRows({ h: carrierPx }), 1);
   assert.equal(imageRows({ h: carrierPx + 1 }), 2);
   assert.equal(imageRows({ h: 570 }), 30);
@@ -569,6 +574,87 @@ test("imageRows and blockRows are one definition of the block", () => {
       `block of a ${h}px image`,
     );
   }
+});
+
+test("each Summary # link selects its receipt's block, header band → data row", async () => {
+  const rows = [
+    receipt({ vendor: "Shell", amount: 41.2, category: "Fuel", date: "2026-01-04" }),
+    receipt({ vendor: "Chevron", amount: 80.29, category: "Fuel", date: "2026-01-05" }),
+    receipt({ vendor: "Arco", amount: 38.5, category: "Fuel", date: "2026-01-06" }),
+    receipt({ vendor: "Delta", amount: 320.5, category: "Travel", date: "2026-01-04" }),
+  ];
+  const result = await buildWorkbook(batch, rows, async () => undefined);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await result.blob.arrayBuffer());
+  const spans: string[] = [];
+  wb.getWorksheet("Summary")!.eachRow((row) => {
+    const v = row.getCell(1).value as { formula?: string; result?: unknown } | null;
+    const m = /^HYPERLINK\("#'([^']+)'!A(\d+):F(\d+)",(\d+)\)$/.exec(
+      (v && typeof v === "object" && v.formula) || "",
+    );
+    if (!m) return;
+    const [, sheet, top, end, n] = m;
+    const ws = wb.getWorksheet(sheet!)!;
+    // The range's top-left (its active cell) is the receipt's OWN band…
+    assert.match(
+      String(ws.getCell(Number(top), 1).value ?? ""),
+      new RegExp(`^Receipt ${n}\\s+·`),
+      `${sheet}!A${top} is receipt ${n}'s header band`,
+    );
+    // …and a short (image-less) block runs through the data row the
+    // Summary amount references: one row, two consumers.
+    const amt = row.getCell(6).value as { formula?: string };
+    assert.equal(amt.formula, `'${sheet}'!F${end}`, `link ${sheet}!${top}:${end} ends at the amount row`);
+    assert.equal(v!.result, Number(n), "numeric result, not text");
+    spans.push(`${sheet}!${top}:${end}`);
+  });
+  // Image-less blocks are 5 rows: band, gap, 1 carrier, data, spacer.
+  assert.deepEqual(spans, ["Fuel!3:6", "Fuel!8:11", "Fuel!13:16", "Travel!3:6"]);
+});
+
+test("blockSpan: header band → data row, blocks tile, link range fits LINK_VIEW_PX", () => {
+  const px = (pts: number[]): number => pts.reduce((s, pt) => s + rowPtToPx(pt), 0);
+  // Row heights (pt) of a block's rows, in the order buildImageSheet writes
+  // them: band 16, gap 4, carriers, data 22, spacer 8.
+  const blockPts = (img: { h: number } | undefined): number[] => [
+    16,
+    4,
+    ...Array<number>(imageRows(img)).fill(IMG_ROW_PT),
+    22,
+    8,
+  ];
+  for (const h of [undefined, 19, 254, 304, 305, 491, 760, 1833]) {
+    const img = h === undefined ? undefined : { id: 1, w: 380, h };
+    for (const top of [3, 33, 1291]) {
+      const s = blockSpan(top, img);
+      assert.equal(s.top, top);
+      assert.equal(s.data, top + 2 + imageRows(img), `data row of a ${h}px block`);
+      assert.equal(s.next, top + blockRows(img), `next block of a ${h}px block`);
+      assert.equal(s.next, s.data + 2, "only the spacer sits between data row and next band");
+      assert.ok(s.top < s.linkEnd && s.linkEnd <= s.data, `${top} < ${s.linkEnd} ≤ ${s.data}`);
+      const pts = blockPts(img);
+      // The rows the link selects (top..linkEnd) always fit the budget…
+      const linkPx = px(pts.slice(0, s.linkEnd - top + 1));
+      assert.ok(linkPx <= LINK_VIEW_PX, `${h}px block: link range ${linkPx}px ≤ ${LINK_VIEW_PX}`);
+      // …and reach the data row exactly when the whole block (to its data
+      // row) does; otherwise they fill the budget as far as whole rows go.
+      const wholePx = px(pts.slice(0, s.data - top + 1));
+      assert.equal(s.linkEnd === s.data, wholePx <= LINK_VIEW_PX, `${h}px block`);
+      if (s.linkEnd < s.data) {
+        assert.ok(linkPx + rowPtToPx(IMG_ROW_PT) > LINK_VIEW_PX, "no carrier row left unused");
+      }
+    }
+  }
+  // The owner's real Chevron e-receipt block (Fuel #1): 26 carrier rows, the
+  // amount at 'Fuel'!F31, the next band at row 33 — and a link capped to
+  // A3:F21, the band plus the top of the image.
+  assert.deepEqual(blockSpan(3, { id: 1, w: 380, h: 491 }), {
+    top: 3,
+    data: 31,
+    linkEnd: 21,
+    next: 33,
+  });
+  assert.deepEqual(blockSpan(3, undefined), { top: 3, data: 6, linkEnd: 6, next: 8 });
 });
 
 test("the carrier band always covers the image it carries", () => {

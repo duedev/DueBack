@@ -5,7 +5,10 @@ import {
   printPdfFileName,
   receiptStrip,
   layoutPrintPages,
+  textWidth,
+  fitText,
   type PrintImage,
+  type StripLine,
 } from "../src/export/printPdf.ts";
 
 // The print packet is a hand-built PDF (no library): these tests pin the
@@ -81,6 +84,89 @@ test("receiptStrip needs all three boxes and spans them with padding", () => {
   );
 });
 
+// Real OCR lines from the owner's Chevron-app e-receipt (page 4 of 37 in
+// their uploaded extraction.json; boxes rounded to four places), normalized
+// to the Letter page they were read on.
+const CHEVRON_P4: StripLine[] = [
+  { text: "Receipt — 2025-07-02", bbox: { x: 0.0662, y: 0.0265, w: 0.2129, h: 0.0115 } },
+  { text: "3304 14th Street", bbox: { x: 0.0667, y: 0.0535, w: 0.1388, h: 0.0073 } },
+  { text: "Riverside CA 92501", bbox: { x: 0.1632, y: 0.0673, w: 0.1567, h: 0.0073 } },
+  { text: "3304 14TH Street", bbox: { x: 0.0667, y: 0.0950, w: 0.1388, h: 0.0073 } },
+  { text: "Bubble Machine Car w", bbox: { x: 0.0662, y: 0.1088, w: 0.1756, h: 0.0073 } },
+  { text: "00096984", bbox: { x: 0.0672, y: 0.1227, w: 0.0672, h: 0.0073 } },
+  { text: "Riverside, CA", bbox: { x: 0.0662, y: 0.1365, w: 0.1139, h: 0.0088 } },
+  { text: "07/02/2025 287159880", bbox: { x: 0.0672, y: 0.1496, w: 0.1731, h: 0.0088 } },
+  { text: "05:20:52 PM", bbox: { x: 0.0672, y: 0.1642, w: 0.0950, h: 0.0073 } },
+  { text: "XXXXXKXXXXXXX2007", bbox: { x: 0.0657, y: 0.1923, w: 0.1393, h: 0.0073 } },
+  { text: "P97", bbox: { x: 0.0667, y: 0.2062, w: 0.0234, h: 0.0073 } },
+  { text: "INVOICE 0000005539", bbox: { x: 0.0672, y: 0.2200, w: 0.1557, h: 0.0073 } },
+  { text: "AUTH 149746", bbox: { x: 0.0652, y: 0.2338, w: 0.0960, h: 0.0073 } },
+  { text: "SITE ID: chevron0009-6984", bbox: { x: 0.0667, y: 0.2615, w: 0.2174, h: 0.0073 } },
+  { text: "AmericanExpress Credit", bbox: { x: 0.0652, y: 0.2754, w: 0.1930, h: 0.0096 } },
+  { text: "PUMP# 6", bbox: { x: 0.0667, y: 0.3031, w: 0.0597, h: 0.0085 } },
+  { text: "UNLEAD REG 1.7.:9396", bbox: { x: 0.0662, y: 0.3312, w: 0.1751, h: 0.0073 } },
+  { text: "PRICE/GAL $5.999", bbox: { x: 0.0667, y: 0.3442, w: 0.1741, h: 0.0092 } },
+  { text: "FUEL TOTAL $ 107.62", bbox: { x: 0.0667, y: 0.3723, w: 0.1736, h: 0.0088 } },
+  { text: "TOTAL = $ 107.62", bbox: { x: 0.0930, y: 0.4138, w: 0.1473, h: 0.0088 } },
+  { text: "CREDIT $ 107.62", bbox: { x: 0.0662, y: 0.4419, w: 0.1741, h: 0.0088 } },
+  { text: "THANK YOU FOR BEING A REWARDS MEMBER", bbox: { x: 0.0662, y: 0.4842, w: 0.3169, h: 0.0069 } },
+  { text: "Customer Copy", bbox: { x: 0.0925, y: 0.5538, w: 0.1139, h: 0.0092 } },
+];
+const P4_VENDOR = { x: 0.0662, y: 0.1088, w: 0.1756, h: 0.0073 };
+const P4_DATE = { x: 0.1726, y: 0.0265, w: 0.1065, h: 0.0115 };
+const P4_AMOUNT = { x: 0.1905, y: 0.3727, w: 0.0498, h: 0.0073 };
+
+test("receiptStrip runs past the amount through the tender lines printed under it", () => {
+  const strip = receiptStrip([P4_VENDOR, P4_DATE, P4_AMOUNT], { lines: CHEVRON_P4 })!;
+  assert.ok(strip, "a strip");
+  assert.ok(strip.y0 < 0.0265, `header kept (y0 ${strip.y0})`);
+  // "TOTAL = $ 107.62" and "CREDIT $ 107.62" were cut off the owner's packet.
+  assert.ok(strip.y1 >= 0.4419 + 0.0088, `CREDIT line kept (y1 ${strip.y1})`);
+  // The walk ends at the first non-tender stretch: no footer.
+  assert.ok(strip.y1 < 0.5538, `Customer Copy footer not chased (y1 ${strip.y1})`);
+  // Without stored lines the bottom still gets more room than the top.
+  const bare = receiptStrip([P4_VENDOR, P4_DATE, P4_AMOUNT])!;
+  assert.ok(bare.y1 - (P4_AMOUNT.y + P4_AMOUNT.h) > 0.045, `fallback pad (y1 ${bare.y1})`);
+});
+
+test("the tender walk steps over unlabeled lines but stops at a real gap", () => {
+  const amount = { x: 0.5, y: 0.3, w: 0.2, h: 0.01 };
+  const line = (text: string, y: number): StripLine => ({ text, bbox: { x: 0.1, y, w: 0.6, h: 0.01 } });
+  const lines = [
+    line("FUEL SALE $82.93", 0.3),
+    line("CRIND P97 $82.93", 0.317), // no tender word: steps over it
+    line("MOBILE", 0.337),
+    line("AmericanExpress", 0.355),
+    line("CREDIT", 0.375),
+    line("TOTAL SAVINGS 3.20", 0.6), // 20+ line heights on: not chased
+  ];
+  const strip = receiptStrip([{ x: 0.1, y: 0.05, w: 0.3, h: 0.01 }, { x: 0.1, y: 0.1, w: 0.3, h: 0.01 }, amount], { lines })!;
+  assert.ok(Math.abs(strip.y1 - (0.385 + 0.045)) < 1e-9, `ends under CREDIT (y1 ${strip.y1})`);
+  // SUBTOTAL/CASHIER don't read as tender lines.
+  const noise = receiptStrip(
+    [{ x: 0.1, y: 0.05, w: 0.3, h: 0.01 }, { x: 0.1, y: 0.1, w: 0.3, h: 0.01 }, amount],
+    { lines: [line("CASHIER: DANA", 0.33), line("SUBTOTAL REWARDS", 0.35)] },
+  )!;
+  assert.ok(Math.abs(noise.y1 - (0.31 + 0.045)) < 1e-9, `amount bottom + pad (y1 ${noise.y1})`);
+});
+
+test("receiptStrip takes its top edge only from fields above the amount", () => {
+  // The vendor found in a footer ad ("Thank you for shopping Chevron")
+  // below the amount: the top comes from the date above it, and the footer
+  // box only extends the bottom so the vendor it names stays on paper.
+  const date = { x: 0.1, y: 0.12, w: 0.3, h: 0.02 };
+  const amount = { x: 0.5, y: 0.4, w: 0.2, h: 0.02 };
+  const footerVendor = { x: 0.1, y: 0.7, w: 0.4, h: 0.02 };
+  const strip = receiptStrip([footerVendor, date, amount])!;
+  assert.ok(Math.abs(strip.y0 - (0.12 - 0.045)) < 1e-9, `top from the date (y0 ${strip.y0})`);
+  assert.ok(strip.y1 >= 0.72, `bottom reaches the footer vendor (y1 ${strip.y1})`);
+  // Nothing above the amount: the strip starts at the amount itself.
+  const low = receiptStrip([footerVendor, { ...date, y: 0.6 }, amount])!;
+  assert.ok(Math.abs(low.y0 - (0.4 - 0.045)) < 1e-9, `top from the amount (y0 ${low.y0})`);
+  // The pre-options signature still takes a bare padding number.
+  assert.ok(Math.abs(receiptStrip([footerVendor, date, amount], 0.01)!.y0 - 0.11) < 1e-9);
+});
+
 test("short field strips pack several to a page", () => {
   // 800×600 strips scale to ~196pt tall — three per column, six per page.
   const strips = Array.from({ length: 6 }, () => ({ width: 800, height: 600 }));
@@ -96,7 +182,8 @@ test("captions carry the file name and amount; delimiters are escaped", () => {
   const pdf = ascii(
     buildPrintPdf([fakeImage({ name: "receipt (page 1).jpg", amount: "$7.61" })], {}),
   );
-  assert.ok(pdf.includes("receipt \\(page 1\\).jpg"));
+  assert.ok(pdf.includes("(receipt \\(page 1\\)) Tj"), "name, escaped, without its .jpg");
+  assert.ok(!pdf.includes(".jpg"), "the extension says nothing on paper");
   assert.ok(pdf.includes("$7.61"));
 });
 
@@ -175,8 +262,48 @@ test("the section label precedes the file name in the caption and is never trunc
       {},
     ),
   );
-  assert.ok(pdf.includes("Ground Transportation #12  transport_"), "label first, then the (shortened) name");
-  assert.ok(!pdf.includes("uber_technologies_inc.jpg"), "the file name gave way, not the label");
+  assert.ok(pdf.includes("Ground Transportation #12  transport_06-25-26_"), "label first, then the (shortened) name");
+  assert.ok(!pdf.includes("technologies_inc"), "the file name gave way, not the label");
+  assert.match(pdf, /\.\.\.\) Tj/, "the cut is marked");
   const plain = ascii(buildPrintPdf([fakeImage({ name: "receipt (page 1).jpg" })], {}));
-  assert.ok(plain.includes("receipt \\(page 1\\).jpg"));
+  assert.ok(plain.includes("receipt \\(page 1\\)"));
+});
+
+/** The caption strings drawn at 8 pt, unescaped, in stream order. */
+function captions8(pdf: string): string[] {
+  return [...pdf.matchAll(/BT \/F1 8 Tf [\d.]+ [\d.]+ Td \(((?:\\.|[^\\)])*)\) Tj ET/g)].map((m) =>
+    m[1]!.replace(/\\(.)/g, "$1"),
+  );
+}
+
+test("caption file names give way by MEASURED width, never past the amount", () => {
+  // The owner's packet cut "fuel_05-09-25_bubble_machine_car_w.jpg" to
+  // "…car_w.j..." on a 46-character budget, although it fits the cell.
+  const owner = captions8(
+    ascii(buildPrintPdf([fakeImage({ label: "Fuel #1", name: "fuel_05-09-25_bubble_machine_car_w.jpg", amount: "$110.57" })], {})),
+  );
+  assert.equal(owner[0], "Fuel #1  fuel_05-09-25_bubble_machine_car_w");
+  // Narrow glyphs fit past the old character budget…
+  const narrow = "fuel_07-24-25_illinois_little_filling_station_iii_lil_rill";
+  assert.ok(narrow.length > 46);
+  const n = captions8(ascii(buildPrintPdf([fakeImage({ label: "Fuel #3", name: `${narrow}.jpg` })], {})));
+  assert.equal(n[0], `Fuel #3  ${narrow}`);
+  // …and wide ones are cut before they reach the right-aligned amount.
+  const wide = captions8(
+    ascii(buildPrintPdf([fakeImage({ label: "Materials #14", name: "materials_01-02-26_WWW_MMM_WWW_MMM_WWW_MMM.jpg", amount: "$1,234.56" })], {})),
+  );
+  const [cap, amt] = wide as [string, string];
+  assert.ok(cap.startsWith("Materials #14  materials_01-02-26_") && cap.endsWith("..."), cap);
+  const cellW = (612 - 36 * 2 - 18) / 2;
+  assert.ok(textWidth(cap, 8) + textWidth(amt, 8) <= cellW, `${textWidth(cap, 8)} + ${textWidth(amt, 8)} fits ${cellW}`);
+});
+
+test("fitText and textWidth use Helvetica's AFM widths", () => {
+  assert.equal(textWidth("i", 1000), 222);
+  assert.equal(textWidth("W", 1000), 944);
+  assert.equal(textWidth("$110.57", 8), 28.912);
+  assert.equal(fitText("short", 8, 100), "short");
+  const cut = fitText("WWWWWWWWWW", 10, 50);
+  assert.ok(cut.endsWith("...") && textWidth(cut, 10) <= 50, cut);
+  assert.equal(fitText("anything", 8, 1), "", "not even the ellipsis fits");
 });

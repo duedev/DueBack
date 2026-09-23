@@ -125,7 +125,7 @@ Deno.serve(async (req) => {
     return json(429, { error: "daily AI request limit reached" });
   }
 
-  // Answer BEFORE the client's own 90 s deadline (vision/providers/shared.ts)
+  // Answer BEFORE the client's own 90 s deadline (vision/endpoint.ts CLOUD_TIMEOUT_MS)
   // with a clean JSON 504, instead of the browser seeing a network error —
   // and never hold the function open on a stalled upstream.
   const UPSTREAM_TIMEOUT_MS = 85_000;

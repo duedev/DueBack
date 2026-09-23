@@ -3,9 +3,10 @@ import { queue } from "../pipeline/queue.ts";
 import { sync } from "../store/sync.ts";
 import { syncConfigured } from "../supabase/client.ts";
 import { onAuthChange, currentUser } from "../supabase/auth.ts";
-import { saveVisionConfig } from "../pipeline/vision/config.ts";
+import { getVisionConfig, saveVisionConfig } from "../pipeline/vision/config.ts";
 import { validateFile, safeBasename, isPdf, isZip } from "../util/files.ts";
 import { chooseAdoptionBatch, type AdoptionCandidate } from "../store/syncMerge.ts";
+import { annotateReceipt } from "../pipeline/annotate.ts";
 import { uid } from "../util/id.ts";
 import { LIMITS, CURRENCY_DEFAULT } from "../config/constants.ts";
 import type { Batch, Receipt, ReceiptStatus } from "../types.ts";
@@ -23,6 +24,10 @@ export interface Toast {
 
 const ACTIVE_BATCH_KEY = "activeBatchId";
 const THEME_KEY = "theme";
+/** kv flag: reading is paused on this device (survives a reload). */
+const PAUSED_KEY = "queue.paused";
+/** Carries the pause to this origin's other tabs — they share the jobs table. */
+const PAUSE_CHANNEL = "dueback-queue";
 
 export type ThemePref = "auto" | "light" | "dark";
 
@@ -33,7 +38,14 @@ class AppState {
 
   batch = $state<Batch | null>(null);
   receipts = $state<Receipt[]>([]);
+  /** Jobs in this browser's work-list (waiting, running or paused). */
   pendingJobs = $state(0);
+  /** Receipts mid-read right now. While paused, the reload bar waits only
+   *  on these — a paused job is unclaimed and strands nothing. */
+  runningJobs = $state(0);
+  /** Reading is paused on this device (the header toggle): nothing is
+   *  claimed, and new drops queue and wait. Per device — never synced. */
+  paused = $state(false);
   toasts = $state<Toast[]>([]);
   theme = $state<ThemePref>("auto");
   /** The OS scheme, tracked live — "auto" follows it, and the toggle's icon
@@ -49,6 +61,8 @@ class AppState {
   /** Receipt currently open in the review modal (id), if any. */
   reviewId = $state<string | null>(null);
   settingsOpen = $state(false);
+  /** Settings → This batch: a re-check is running (`recheckBatch`). */
+  rechecking = $state(false);
 
   /** Boot could not open IndexedDB (a storage-blocked embed, some private
    *  modes): the landing shows it and every add explains itself with it. */
@@ -144,9 +158,14 @@ class AppState {
     this.batch = batch;
 
     repo.subscribe(() => this.scheduleRefresh());
-    queue.onProgress((remaining) => {
-      this.pendingJobs = remaining;
+    queue.onProgress((p) => {
+      this.pendingJobs = p.remaining;
+      this.runningJobs = p.running;
     });
+    // Restore the pause BEFORE the leftover-work wake below — a reload
+    // (the update bar's, say) must not quietly resume reading.
+    if ((await repo.getSetting<boolean>(PAUSED_KEY)) === true) this.applyPause(true);
+    this.listenForPause();
 
     await this.refresh();
     if (this.receipts.length > 0) this.entered = true;
@@ -176,10 +195,12 @@ class AppState {
   private async onSignedIn(userId: string, email: string): Promise<void> {
     this.userEmail = email || "signed in";
     // First sign-in on this device: turn the server-keyed AI assist on once
-    // (the user can switch it off in Settings; we never flip it again).
+    // (the user can switch it off in Settings; we never flip it again). Only
+    // for the cloud backend — the key the account unlocks is a cloud key,
+    // and someone who picked a local or self-hosted model chose that server.
     const flag = await repo.getSetting<boolean>("ai.autoEnabledOnSignIn");
     if (!flag) {
-      saveVisionConfig({ enabled: true });
+      if (getVisionConfig().backend === "cloud") saveVisionConfig({ enabled: true });
       await repo.setSetting("ai.autoEnabledOnSignIn", true);
     }
     // Adopt a synced batch only when this call actually started the engine
@@ -249,7 +270,12 @@ class AppState {
     // Receipts first, then jobs: a receipt and its job land in one
     // transaction, so this order can only ever see a job for a receipt
     // already listed — never a listed receipt whose job is still coming.
-    this.localJobIds = new Set(await repo.listJobReceiptIds());
+    const jobIds = await repo.listJobReceiptIds();
+    this.localJobIds = new Set(jobIds);
+    // The queue only reports after a run, so this read 0 from boot until
+    // the first receipt finished (the reload bar was enabled mid-job); a
+    // drop or a delete moves the count too.
+    this.pendingJobs = jobIds.length;
     const fresh = await repo.getBatch(this.batch.id);
     if (fresh) this.batch = fresh;
   }
@@ -291,19 +317,51 @@ class AppState {
    *  receipt (a human's work outranks a retry) and re-runs the same intake
    *  path as addFiles, so the pipeline's completion write lands a full
    *  extraction: the retry's updatedAt precedes the claim. Fields a human
-   *  already edited stay theirs (`touchedBeforeClaim`). */
+   *  already edited stay theirs (`touchedBeforeClaim`). The re-check and
+   *  both writes are one transaction that reuses the receipt's job when it
+   *  still has one (`repo.requeueFailed`): a receipt that failed while
+   *  paused keeps its released job, and a second one made resume read it
+   *  twice at once. */
   async retryReceipt(id: string): Promise<boolean> {
-    const r = await repo.getReceipt(id);
-    if (!r || r.status !== "failed" || r.approved) return false;
-    await repo.updateReceipt(id, {
-      status: "queued",
-      error: undefined,
-      flags: [],
-      reviewRequired: false,
-    });
-    await repo.enqueue(id);
+    if (!(await repo.requeueFailed(id))) return false;
     void queue.wake();
     return true;
+  }
+
+  /** Re-check the active batch from STORED data only — no OCR call, no AI
+   *  call (pipeline/recheck.ts): legacy AI reads get the outlines a fresh
+   *  read's anchoring gives them (plus the re-baked annotated copy), and
+   *  duplicate pairs the old dedup missed get their flag. Plans from the
+   *  rows as stored (never the reactive board — no $state proxy may reach
+   *  IndexedDB) and applies each receipt's fixes as ONE compare-and-swap
+   *  write, so a save, read or sync that lands meanwhile wins. Refused while
+   *  this device still has receipts to read: they'd be skipped unread. */
+  async recheckBatch(): Promise<void> {
+    if (!this.batch || this.rechecking) return;
+    if (this.pendingJobs > 0) {
+      this.toast("Finish reading this batch first — then re-check it.", "warn");
+      return;
+    }
+    this.rechecking = true;
+    try {
+      const { runBatchRecheck, recheckSummary } = await import("../pipeline/recheck.ts");
+      const result = await runBatchRecheck(this.batch.id, {
+        listReceipts: (id) => repo.listReceipts(id),
+        getBlob: (key) => repo.getBlob(key),
+        putBlob: (blob, kind) => repo.putBlob(blob, kind),
+        deleteBlob: (key) => repo.deleteBlob(key),
+        updateReceipt: (id, patch, expect) => repo.updateReceipt(id, patch, expect),
+        bake: (blob, marks) => annotateReceipt(blob, marks),
+      });
+      await this.refresh();
+      const changed = result.boxes + result.duplicates > 0;
+      this.toast(recheckSummary(result), result.skipped > 0 || result.failed > 0 ? "warn" : changed ? "ok" : "info");
+    } catch (err) {
+      console.error("re-check failed", err);
+      this.toast("The re-check stopped part-way — run it again to finish.", "err");
+    } finally {
+      this.rechecking = false;
+    }
   }
 
   /** Retry every failed receipt on the board. */
@@ -313,9 +371,58 @@ class AppState {
       if (r.status === "failed" && (await this.retryReceipt(r.id))) n++;
     }
     this.toast(
-      n === 0 ? "Nothing to retry." : n === 1 ? "Reading 1 receipt again." : `Reading ${n} receipts again.`,
+      n === 0
+        ? "Nothing to retry."
+        : this.paused
+          ? `Queued ${n} to read again — resume reading to start.`
+          : n === 1
+            ? "Reading 1 receipt again."
+            : `Reading ${n} receipts again.`,
       "info",
     );
+  }
+
+  // ---- Pause ---------------------------------------------------------------
+
+  private pauseChannel: BroadcastChannel | null = null;
+
+  /** Other tabs' pause toggles. Without BroadcastChannel (old browsers,
+   *  some sandboxed iframes) they pick the pause up on their next load. */
+  private listenForPause(): void {
+    try {
+      this.pauseChannel = new BroadcastChannel(PAUSE_CHANNEL);
+      this.pauseChannel.onmessage = (e: MessageEvent<{ paused?: unknown }>) => {
+        if (typeof e.data?.paused === "boolean") this.applyPause(e.data.paused);
+      };
+    } catch {
+      /* no channel — each tab keeps its own until reload */
+    }
+  }
+
+  private applyPause(paused: boolean): void {
+    this.paused = paused;
+    if (paused) queue.pause();
+    else queue.resume();
+  }
+
+  /** Pause or resume reading on this device: in every tab (the channel)
+   *  and across reloads (kv). Only a boolean is stored — never synced. */
+  async setPaused(paused: boolean): Promise<void> {
+    this.applyPause(paused);
+    try {
+      this.pauseChannel?.postMessage({ paused });
+    } catch {
+      /* channel closed */
+    }
+    try {
+      await repo.setSetting(PAUSED_KEY, paused);
+    } catch {
+      /* storage refused — the pause holds for this visit */
+    }
+  }
+
+  togglePause(): void {
+    void this.setPaused(!this.paused);
   }
 
   /** Wipe every receipt, batch, job, blob, taught brand and queued delete on
@@ -643,11 +750,12 @@ class AppState {
     }
 
     if (accepted > 0) {
+      const queued = accepted === 1 ? "1 receipt queued." : `${accepted} receipts queued.`;
       this.toast(
-        accepted === 1 ? "1 receipt queued." : `${accepted} receipts queued.`,
-        "ok",
+        this.paused ? `${queued} Reading is paused — resume it from the top bar.` : queued,
+        this.paused ? "info" : "ok",
       );
-      void queue.wake();
+      void queue.wake(); // a no-op while paused
     } else if (failed > 0) {
       this.toast("No files could be added — storage may be full.", "err");
     }

@@ -611,7 +611,11 @@ test("total far above the printed subtotal (no tax read) demands review", () => 
   assert.ok(forcesManualReview(r.flags));
 });
 
-test("clean receipts do not force manual review", () => {
+test("clean receipts do not force manual review", (t) => {
+  // The fixtures are dated 2026: pin the clock so the "more than two years
+  // old" date_suspect (rules/date.ts dateFlags) can't fire as the calendar
+  // moves on — only the direct dateFlags test exercises the age rule.
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 8, 23) });
   const r = parseReceipt(
     ocr(["BLUE BOTTLE COFFEE", "Date: 03/14/2026", "Subtotal 8.25", "Tax 0.74", "TOTAL 8.99"]),
   );
@@ -634,7 +638,12 @@ test("a comma-for-dot per-gallon price ($4,599) never flags the total", () => {
     !r.flags.some((f) => f.code === "total_mismatch"),
     JSON.stringify(r.flags),
   );
-  assert.equal(forcesManualReview(r.flags), false);
+  // A 2022 slip: the total forces nothing — its only review-forcing flag is
+  // its age (more than two years old, rules/date.ts dateFlags).
+  assert.deepEqual(
+    r.flags.filter((f) => forcesManualReview([f])).map((f) => f.code),
+    ["date_suspect"],
+  );
 });
 
 // ── Round-5 adversarial-review findings ──────────────────────────────────────
@@ -663,7 +672,9 @@ test("corroborated fuel + big-store total is kept for review, not slip-corrected
   assert.ok(forcesManualReview(r.flags), JSON.stringify(r.flags));
 });
 
-test("advisory reconcile warns no longer force review (tip + savings receipts)", () => {
+test("advisory reconcile warns no longer force review (tip + savings receipts)", (t) => {
+  // A 2026 fixture date: pinned clock (see "clean receipts do not force manual review").
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 8, 23) });
   const tip = parseReceipt(
     ocr(["OLIVE GARDEN", "SUBTOTAL 20.00", "TAX 1.60", "TIP 4.00", "TOTAL 25.60", "VISA 25.60"]),
   );
@@ -881,9 +892,10 @@ function lines2(texts: string[]): OcrLine[] {
 
 test("readValueInBox reads the OCR lines under a hand-drawn box", () => {
   const lines = [
-    { text: "JOES DINER", confidence: 0.9, bbox: { x: 0.2, y: 0.05, w: 0.6, h: 0.04 }, words: [] },
-    { text: "Date: 05/10/2026", confidence: 0.9, bbox: { x: 0.1, y: 0.4, w: 0.5, h: 0.03 }, words: [] },
-    { text: "TOTAL   $24.11", confidence: 0.9, bbox: { x: 0.1, y: 0.6, w: 0.8, h: 0.03 }, words: [] },
+    // Line confidence is on the engines' 0..100 scale (ocr.ts, paddle/lines.ts).
+    { text: "JOES DINER", confidence: 90, bbox: { x: 0.2, y: 0.05, w: 0.6, h: 0.04 }, words: [] },
+    { text: "Date: 05/10/2026", confidence: 90, bbox: { x: 0.1, y: 0.4, w: 0.5, h: 0.03 }, words: [] },
+    { text: "TOTAL   $24.11", confidence: 90, bbox: { x: 0.1, y: 0.6, w: 0.8, h: 0.03 }, words: [] },
   ];
   assert.equal(readValueInBox(lines, "vendor", { x: 0.1, y: 0.02, w: 0.8, h: 0.1 }), "JOES DINER");
   assert.equal(readValueInBox(lines, "date", { x: 0, y: 0.36, w: 1, h: 0.1 }), "2026-05-10");
@@ -1144,7 +1156,9 @@ test("refund/return totals keep their magnitude and demand review", () => {
   }
 });
 
-test("component tax lines sum when the footing corroborates them; TOTAL TAX wins outright", () => {
+test("component tax lines sum when the footing corroborates them; TOTAL TAX wins outright", (t) => {
+  // A 2026 fixture date: pinned clock (see "clean receipts do not force manual review").
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 8, 23) });
   const printed = parseReceipt(
     ocr(["OFFICE DEPOT", "Date: 03/14/2026", "SUBTOTAL 100.00", "STATE TAX 6.00", "COUNTY TAX 1.00", "CITY TAX 1.25", "TOTAL TAX 8.25", "TOTAL 108.25", "VISA 108.25"]),
   );
@@ -1173,6 +1187,26 @@ test("a clock time never donates its hour as the year of a month-name date", () 
   // ctime order recovers the trailing year.
   assert.equal(parseReceipt(ocr(["SHOP", "Wed Sep 11 12:30:45 PDT 2024", "TOTAL 12.00"])).date.value, "2024-09-11");
   assert.equal(parseReceipt(ocr(["SHOP", "WEL SEPTEMBER 11.2024", "TOTAL 12.00"])).date.value, "2024-09-11");
+});
+
+test("a return-policy expiry ranks with the deadlines: the sale date wins wherever it prints", () => {
+  // Home Depot prints "POLICY ID  DAYS  POLICY EXPIRES ON" over
+  // "A 1 90 12/01/2025" — the day the return window closes, 90 days after
+  // the sale (real: mats_09-02-25_home_depot, whose sale line OCR garbled).
+  const block = ["POLICY ID DAYS POLICY EXPIRES ON", "A 1 90 12/01/2025", "B 1 365 09/02/2026"];
+  const dateOf = (lines: string[]) => parseReceipt(ocr(lines)).date.value;
+  assert.equal(dateOf(["HOME DEPOT", ...block, "6593 00053 09/02/25 12:21", "TOTAL 43.74"]), "2025-09-02");
+  // OCR's garbled headers still open the block ("LAPIRES", "POI ICY … py").
+  for (const head of ["POLICY ID DAYS POLICY LAPIRES ON", "POLICY ID DAYS POI ICY EXPIRES py", "| POLICY'ID ~ DAYS POLICY EXPIRES ON"]) {
+    assert.equal(dateOf(["HOME DEPOT", head, "B90 12/01/2025", "6593 00053 09/02/25 12:21", "TOTAL 43.74"]), "2025-09-02", head);
+  }
+  // A line that says it expires is demoted by itself.
+  assert.equal(dateOf(["SHOP", "REWARDS EXPIRE ON 10/31/2025", "09/02/2025 14:03", "TOTAL 5.00"]), "2025-09-02");
+  assert.equal(dateOf(["SHOP", "REWARDS EXPIRE ON 10/31/2025", "09/02/2025", "TOTAL 5.00"]), "2025-09-02");
+  // Still a last resort when it is the only date on the receipt…
+  assert.equal(dateOf(["HOME DEPOT", "68S 09/02, 25 0). ™M", ...block.slice(0, 2), "TOTAL 43.74"]), "2025-12-01");
+  // …and a sale date printed first still wins by line order, as before.
+  assert.equal(dateOf(["HOME DEPOT", "6893 00067 05/26/25 02:18", ...block, "TOTAL 43.74"]), "2025-05-26");
 });
 
 test("Due Date printed above Invoice Date never becomes the expense date", () => {
@@ -1214,4 +1248,224 @@ test("a garbled tax at or above the total is dropped even with no subtotal print
   );
   assert.equal(fuel.amount.value, 43.2);
   assert.equal(fuel.tax.value, 0, "pump-verified total still sheds the garbled tax");
+});
+
+// ── Vendor validity (2026-09 batch): cities, card networks, site IDs ─────────
+import { dateFlags } from "../src/pipeline/extract.ts";
+
+/** A real OCR line from the owner's uploaded batch: text, confidence (0..100),
+ *  and its box (x, y, w, h). */
+type Raw = [string, number, number, number, number, number];
+const real = (rows: Raw[]): OcrLine[] =>
+  rows.map(([text, confidence, x, y, w, h]) => ({ text, confidence, bbox: { x, y, w, h }, words: [] }));
+const realOcr = (lines: OcrLine[]): OcrResult => ({
+  text: lines.map((l) => l.text).join("\n"),
+  confidence: lines.reduce((s, l) => s + l.confidence, 0) / lines.length,
+  lines,
+  words: [],
+});
+
+// Chevron-app e-receipt, page 5 of the owner's Chevron PDF: the app prints
+// the state in lowercase, and the only brand is glued into the SITE ID.
+const ANAHEIM_APP = real([
+  ["Receipt — 2025-07-09", 93.1, 0.0662, 0.0265, 0.2134, 0.0115],
+  ["3085 La Palma Ave", 96.1, 0.0667, 0.0535, 0.1478, 0.0073],
+  ["H&S 2049, 00209813", 94.3, 0.0662, 0.0673, 0.1567, 0.0088],
+  ["Anaheim, ca", 95, 0.0652, 0.0812, 0.0965, 0.0088],
+  ["07/09/2025 121166199", 94.3, 0.0672, 0.1219, 0.1736, 0.0088],
+  ["09:00:21 AM", 96.2, 0.0672, 0.1365, 0.095, 0.0073],
+  ["XXXXXKXXXXXXX2007", 41.7, 0.0657, 0.1642, 0.1393, 0.0073],
+  ["P97", 90.2, 0.0667, 0.1785, 0.0234, 0.0073],
+  ["INVOICE 0000010980", 96.1, 0.0672, 0.1923, 0.1557, 0.0073],
+  ["AUTH 105525", 96.7, 0.0652, 0.2062, 0.096, 0.0073],
+  ["SITE ID: chevron0020-981", 91.6, 0.0667, 0.22, 0.209, 0.0073],
+  ["3", 97, 0.0667, 0.2338, 0.0065, 0.0073],
+  ["AmericanExpress Credit", 93.1, 0.0652, 0.2477, 0.193, 0.0096],
+  ["SITE ID: chevron0020-981", 91.8, 0.0667, 0.2615, 0.209, 0.0073],
+  ["3", 96.4, 0.0667, 0.2754, 0.0065, 0.0073],
+  ["AmericanExpress Credit", 93.1, 0.0652, 0.2892, 0.193, 0.0096],
+  ["PUMP# 7", 87.1, 0.0667, 0.3169, 0.0587, 0.0085],
+  ["UNLEAD REG 15.770G", 92.3, 0.0662, 0.345, 0.2104, 0.0073],
+  ["PRICE/GAL $4.699", 91.6, 0.0667, 0.3581, 0.2095, 0.0092],
+  ["FUEL TOTAL $ 74.10", 90.1, 0.0667, 0.3862, 0.209, 0.0088],
+  ["Total = $ 74.10", 82.5, 0.1368, 0.4419, 0.1388, 0.0088],
+  ["CREDIT $ 74.10", 88.4, 0.0662, 0.4696, 0.2095, 0.0088],
+  ["THANK YOU FOR BEING", 96, 0.0662, 0.5119, 0.1667, 0.0069],
+  ["A REWARDS MEMBER", 95.7, 0.0657, 0.5258, 0.1408, 0.0069],
+  ["Customer Copy", 96.1, 0.1104, 0.6231, 0.1134, 0.0092],
+]);
+
+// Page 11: the same app, but the operator's name is printed.
+const GM_OIL = real([
+  ["Receipt — 2025-08-18", 92.9, 0.0662, 0.0265, 0.2129, 0.0115],
+  ["72276 RAMON RD.", 96.1, 0.0667, 0.0535, 0.1279, 0.0073],
+  ["G&M OIL #185", 90.7, 0.0662, 0.0669, 0.104, 0.0085],
+  ["00091475", 96.7, 0.0672, 0.0812, 0.0677, 0.0073],
+  ["THOUSAND PALMS, CA", 96.4, 0.0662, 0.0954, 0.1582, 0.0085],
+  ["08/18/2025 599748654", 96.2, 0.0672, 0.1081, 0.1731, 0.0088],
+  ["01:24:38 PM", 96.2, 0.0672, 0.1227, 0.095, 0.0073],
+  ["XXXXXXXXXKXXX2007", 33.9, 0.0657, 0.1504, 0.1393, 0.0073],
+  ["P97", 65.8, 0.0667, 0.1642, 0.0234, 0.0073],
+  ["INVOICE 0000010102", 95.6, 0.0672, 0.1785, 0.1552, 0.0073],
+  ["AUTH 162563", 95.2, 0.0652, 0.1923, 0.096, 0.0073],
+  ["SITE ID: chevron0009-1475", 92.9, 0.0667, 0.22, 0.2179, 0.0073],
+  ["AmericanExpress Credit", 93.1, 0.0652, 0.2338, 0.193, 0.0096],
+  ["PUMP# 1", 92.9, 0.0667, 0.2612, 0.0592, 0.0085],
+  ["UNLEAD REG 16.080G", 93.5, 0.0662, 0.2892, 0.1751, 0.0073],
+  ["PRICE/GAL $4.499", 91.1, 0.0667, 0.3027, 0.1741, 0.0092],
+  ["FUEL TOTAL $ 72.34", 91.9, 0.0667, 0.3308, 0.1736, 0.0088],
+  ["TOTAL = $ 72.34", 92.7, 0.1015, 0.3723, 0.1388, 0.0088],
+  ["CREDIT $ 72.34", 86.2, 0.0662, 0.4, 0.1741, 0.0088],
+  ["THANK YOU FOR BEING A REWARDS MEMBER", 95.7, 0.0662, 0.4427, 0.3169, 0.0069],
+  ["RESTROOM CODE 7028#", 84.2, 0.1632, 0.4973, 0.1657, 0.0085],
+  ["VISIT WWW.GMOC.COM", 89.9, 0.1622, 0.5115, 0.1592, 0.0073],
+  ["Customer Copy", 95.6, 0.0925, 0.5396, 0.1139, 0.0092],
+]);
+
+// Page 28: the owner corrected "Chevron" to the printed "Chevron Stations Inc".
+const CHEVRON_STATIONS = real([
+  ["Receipt — 2026-02-20", 92.4, 0.0662, 0.0265, 0.2129, 0.0115],
+  ["8000 Santa Ana Cyn", 96.2, 0.0672, 0.0535, 0.1562, 0.0096],
+  ["Chevron Stations Inc", 96.4, 0.0662, 0.0673, 0.1751, 0.0073],
+  ["00201029", 96.7, 0.0672, 0.0812, 0.0677, 0.0073],
+  ["Anaheim Hills, CA", 96.1, 0.0657, 0.095, 0.1498, 0.0088],
+  ["02/20/2026 245014572", 95.2, 0.0672, 0.1081, 0.1731, 0.0088],
+  ["03:34:17 PM", 95.4, 0.0672, 0.1227, 0.095, 0.0073],
+  ["XXXXXXXXXKXXX2007", 33.9, 0.0657, 0.1504, 0.1393, 0.0073],
+  ["P97", 65.8, 0.0667, 0.1642, 0.0234, 0.0073],
+  ["INVOICE 0000014305", 96.4, 0.0672, 0.1785, 0.1557, 0.0073],
+  ["AUTH 123432", 94.9, 0.0652, 0.1923, 0.0955, 0.0073],
+  ["SITE ID: chevron0020-1029", 89.2, 0.0667, 0.22, 0.2179, 0.0073],
+  ["AmericanExpress Credit", 93.1, 0.0652, 0.2338, 0.193, 0.0096],
+  ["PUMP# 1", 92.9, 0.0667, 0.2612, 0.0592, 0.0085],
+  ["UNLEAD REG 18.784G", 91.5, 0.0662, 0.2892, 0.1751, 0.0073],
+  ["PRICE/GAL $4.459", 91.6, 0.0667, 0.3027, 0.1741, 0.0092],
+  ["DISCOUNTS BEFORE", 95, 0.0667, 0.3315, 0.1388, 0.0069],
+  ["FUELING", 96.9, 0.0751, 0.3454, 0.0607, 0.0069],
+  ["CHEVRON/GAL $-0.500", 81.3, 0.0662, 0.3581, 0.1741, 0.0092],
+  ["FUEL TOTAL $ 83.76", 93.2, 0.0667, 0.3862, 0.1741, 0.0088],
+  ["TOTAL = $ 83.76", 92.5, 0.1015, 0.4281, 0.1393, 0.0088],
+  ["CREDIT $ 83.76", 91.9, 0.0662, 0.4558, 0.1746, 0.0088],
+  ["YOUR CHEVRON REWARDS AMOUNT IS $0.50/GAL", 95, 0.0662, 0.4969, 0.3512, 0.0092],
+  ["VONS-ALB REWARDS SYSTEM NOT AVAILABLE", 92.6, 0.0652, 0.5119, 0.3259, 0.0069],
+  ["Customer Copy", 95.5, 0.0925, 0.5815, 0.1139, 0.0092],
+]);
+
+test("a lowercase-state city line never wins; the SITE ID brand names the Chevron-app receipt", () => {
+  const r = parseReceipt(realOcr(ANAHEIM_APP));
+  assert.equal(r.vendor.value, "Chevron", "was \"Anaheim, ca\"");
+  assert.equal(r.category.value, "Fuel");
+  assert.equal(r.amount.value, 74.1);
+  assert.equal(r.date.value, "2025-07-09");
+  // Outlined on the "chevron" slice of the first SITE ID line.
+  const site = ANAHEIM_APP[10]!;
+  assert.equal(r.vendor.bbox?.y, site.bbox.y);
+  assert.ok(r.vendor.bbox!.x > site.bbox.x && r.vendor.bbox!.w < site.bbox.w / 2, JSON.stringify(r.vendor.bbox));
+  assert.ok(!r.flags.some((f) => f.code === "vendor_unclear"), JSON.stringify(r.flags));
+  // Page 19 (Discover Credit) is the same slip.
+  const discover = ANAHEIM_APP.map((l) => (/AmericanExpress/.test(l.text) ? { ...l, text: "Discover Credit" } : l));
+  assert.equal(parseReceipt(realOcr(discover)).vendor.value, "Chevron");
+  // The comma'd and ZIP forms are case-blind; the bare form takes all-caps or
+  // all-lower only — a title-case tail is a company suffix, not a state.
+  for (const city of ["Anaheim, ca", "Irvine, cA 92618", "Riverside ca", "Riverside CA"]) {
+    assert.equal(parseReceipt(ocr([city, "TOTAL 12.00"])).vendor.value, "", city);
+  }
+  assert.equal(parseReceipt(ocr(["Acme Co", "TOTAL 12.00"])).vendor.value, "Acme Co");
+});
+
+test("a title-case \", Co.\" tail is the company suffix, not Colorado; every other comma'd state still rejects", () => {
+  const vendorOf = (lines: string[]) => parseReceipt(ocr(lines)).vendor.value;
+  const body = ["4410 Van Buren Blvd", "Riverside, CA 92503", "05/01/2026", "LUMBER 12.00", "TOTAL 12.00"];
+  assert.equal(vendorOf(["Johnson Lumber, Co.", ...body]), "Johnson Lumber, Co.");
+  assert.equal(vendorOf(["Smith & Sons, Co", ...body]), "Smith & Sons, Co");
+  // "Cabazon, Ca" is a real Chevron-app address line (title case); only the
+  // one tail that doubles as a company suffix is exempt.
+  for (const city of ["Cabazon, Ca", "Anaheim, ca", "Irvine, cA", "Denver, CO", "denver, co", "Irvine, cA 92618"]) {
+    assert.equal(vendorOf([city, "TOTAL 12.00"]), "", city);
+  }
+});
+
+test("a printed operator beats the SITE ID brand; only distinctive labeled IDs count", () => {
+  assert.equal(parseReceipt(realOcr(GM_OIL)).vendor.value, "G&M OIL");
+  // A printed brand line still names the brand, as before.
+  assert.equal(parseReceipt(realOcr(CHEVRON_STATIONS)).vendor.value, "Chevron");
+  const vendorOf = (lines: string[]) => parseReceipt(ocr(lines)).vendor.value;
+  assert.equal(vendorOf(["Riverside, CA", "SITE ID: shell0042-1", "TOTAL 12.00"]), "", "a generic alias proves nothing");
+  assert.equal(vendorOf(["Riverside, CA", "SITE ID: bp0042", "TOTAL 12.00"]), "", "nor a 2-letter code");
+  assert.notEqual(vendorOf(["Riverside, CA", "SKU chevron0020", "TOTAL 12.00"]), "Chevron", "unlabeled");
+  assert.equal(vendorOf(["Riverside, CA", "STATION ID: arco1234", "TOTAL 12.00"]), "ARCO");
+  // An ID line is never the merchant itself.
+  assert.equal(vendorOf(["STORE NUMBER 0442", "Riverside, CA", "TOTAL 12.00"]), "");
+});
+
+test("card networks and processors never become the vendor; real merchants that share a word do", () => {
+  for (const tender of ["AM Express", "Powered by Toast", "MASTERCRD XXXX1234", "Discover Credit", "Chase Visa"]) {
+    assert.equal(parseReceipt(ocr([tender, "INVOICE 879212", "TOTAL 12.00"])).vendor.value, "", tender);
+  }
+  assert.equal(parseReceipt(ocr(["Clover Food Lab", "TOTAL 12.00"])).vendor.value, "Clover Food Lab");
+  assert.equal(parseReceipt(ocr(["SQ *JOES COFFEE", "TOTAL 12.00"])).vendor.value, "JOES COFFEE");
+});
+
+test("a drawn vendor box reads the printed line, confirms the current value, and never autofills a garble", () => {
+  const at = (text: string, y: number, confidence: number): OcrLine => ({
+    text,
+    confidence,
+    bbox: { x: 0.15, y, w: 0.7, h: 0.02 },
+    words: [],
+  });
+  // Real: the Costco logo box (fuel_05-16-25 → "——— WEFT SOLE"). The box
+  // holds "COs:" (read at 20.9) and the garble (9.4) — neither replaces the
+  // field, whatever it holds.
+  const costco = real([
+    ["COs:", 20.9, 0.1443, 0.0592, 0.6096, 0.0442],
+    ["——— WEFT SOLE", 9.4, 0.1499, 0.1054, 0.7069, 0.0196],
+    ["Palm De: i 141", 62.4, 0.1678, 0.1381, 0.6376, 0.0146],
+  ]);
+  const costcoBox = { x: 0.1911, y: 0.0665, w: 0.723, h: 0.0615 };
+  assert.equal(readValueInBox(costco, "vendor", costcoBox, "Costco Wholesale"), null);
+  assert.equal(readValueInBox(costco, "vendor", costcoBox), null);
+  // The printed text wins as printed — never renamed to the canonical brand.
+  const mobil = [at("WELCOME TO", 0.02, 95.5), at("MOBIL", 0.05, 93.3), at("MOBIL MART", 0.08, 95.6), at("Anaheim CA", 0.11, 95.8)];
+  assert.equal(readValueInBox(mobil, "vendor", { x: 0, y: 0, w: 1, h: 0.14 }), "MOBIL MART");
+  const header = CHEVRON_STATIONS[2]!;
+  assert.equal(readValueInBox(CHEVRON_STATIONS, "vendor", header.bbox), "Chevron Stations Inc");
+  // A box over the value already in the field confirms it: no rename, no
+  // correction logged (the owner's own fix must never be reverted).
+  assert.equal(readValueInBox(CHEVRON_STATIONS, "vendor", header.bbox, "Chevron Stations Inc"), null);
+  assert.equal(readValueInBox(CHEVRON_STATIONS, "vendor", header.bbox, "chevron stations inc"), null);
+  // A line naming a brand outranks the longer plain line under it.
+  const logo = [at("COSTCO", 0.05, 91), at("WHOLESALE", 0.08, 93)];
+  assert.equal(readValueInBox(logo, "vendor", { x: 0, y: 0, w: 1, h: 0.12 }), "COSTCO");
+  assert.equal(readValueInBox(logo, "vendor", { x: 0, y: 0, w: 1, h: 0.12 }, "Costco"), null);
+  // Only a glyph/fuzzy read is renamed to its brand.
+  assert.equal(readValueInBox([at("M0BIL", 0.05, 70)], "vendor", { x: 0, y: 0.04, w: 1, h: 0.04 }), "Mobil");
+  // No clean merchant line: the brand the box prints (the site ID here), else nothing.
+  const site = ANAHEIM_APP[10]!;
+  assert.equal(readValueInBox(ANAHEIM_APP, "vendor", site.bbox), "Chevron");
+  assert.equal(readValueInBox(ANAHEIM_APP, "vendor", { x: 0, y: 0.075, w: 1, h: 0.07 }), null, "city/date/time lines");
+  assert.equal(readValueInBox(GM_OIL, "vendor", GM_OIL[2]!.bbox), "G&M OIL");
+  assert.equal(readValueInBox([at("AM Express", 0.37, 88.1)], "vendor", { x: 0, y: 0.36, w: 1, h: 0.03 }), null);
+});
+
+test("a date more than two years old is a review-forcing date_suspect, not also stale", () => {
+  const now = new Date(2026, 8, 23);
+  const field = (value: string) => ({ value, confidence: 0.9 });
+  // The owner's PrintMyStuff slip read 2012-12-12.
+  assert.deepEqual(dateFlags(field("2012-12-12"), now), [
+    { code: "date_suspect", severity: "warn", message: "Dated 2012-12-12 — more than two years old; check the year." },
+  ]);
+  assert.deepEqual(dateFlags(field("2024-09-22"), now).map((f) => f.code), ["date_suspect"], "731 days");
+  assert.deepEqual(dateFlags(field("2024-09-23"), now).map((f) => f.code), ["stale_date"], "730 days");
+  assert.deepEqual(dateFlags(field("2026-03-01"), now).map((f) => f.code), ["stale_date"]);
+  assert.deepEqual(dateFlags(field("2026-09-01"), now), []);
+  assert.deepEqual(dateFlags(field("2026-10-01"), now).map((f) => f.code), ["future_date"]);
+  assert.deepEqual(dateFlags(null, now), []);
+  // Through the rules, relative to today: three years back forces review.
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 3);
+  const us = `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
+  const r = parseReceipt(ocr(["JOES DINER", `Date: ${us}`, "TOTAL 12.00"]));
+  assert.ok(r.flags.some((f) => f.code === "date_suspect"), JSON.stringify(r.flags));
+  assert.ok(!r.flags.some((f) => f.code === "stale_date"));
+  assert.equal(forcesManualReview(r.flags), true);
 });

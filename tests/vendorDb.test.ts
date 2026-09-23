@@ -46,3 +46,10 @@ test("the only digit-only alias is the deliberate 76 (see the glyph-pass gotcha 
   );
   assert.deepEqual(digitOnly, ["76:76"]);
 });
+
+import { isPaymentBrandName } from "../src/config/vendors.ts";
+
+test("no brand name or alias is a payment network/processor (a vendor that IS one is rejected)", () => {
+  const hits = ALL_VENDORS.flatMap((v) => [v.name, ...v.aliases].filter(isPaymentBrandName).map((a) => `${v.name}:${a}`));
+  assert.deepEqual(hits, []);
+});

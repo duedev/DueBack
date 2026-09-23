@@ -1,243 +1,19 @@
 <script lang="ts">
-  import { app, type ThemePref } from "./state.svelte.ts";
-  import { repo } from "../store/repo.ts";
-  import { CATEGORIES } from "../config/categories.ts";
-  import {
-    getVisionConfig,
-    saveVisionConfig,
-    PROVIDERS,
-    hasBuiltInOpenRouterKey,
-  } from "../pipeline/vision/config.ts";
-  import { testVisionConnection } from "../pipeline/vision/index.ts";
-  import { addBrandFromImage } from "../pipeline/logo/index.ts";
-  import { signInWithGoogle, signInWithEmail, signOut } from "../supabase/auth.ts";
-  import {
-    connectOneDrive,
-    disconnectOneDrive,
-    oneDriveAccount,
-    oneDriveConfigured,
-  } from "../onedrive/index.ts";
-  import { listSavedJobs, forgetJob, type SavedJob } from "../store/jobs.ts";
-  import { formatMoney } from "../util/money.ts";
-  import { getCorrections, clearCorrections } from "../train/corrections.ts";
-  import type { Receipt } from "../types.ts";
-  import type { ProviderId } from "../pipeline/vision/types.ts";
-  import type { Category, StoredBrand } from "../types.ts";
+  import { app } from "./state.svelte.ts";
+  import AppearanceSection from "./settings/AppearanceSection.svelte";
+  import AccountSection from "./settings/AccountSection.svelte";
+  import OneDriveSection from "./settings/OneDriveSection.svelte";
+  import SavedJobsSection from "./settings/SavedJobsSection.svelte";
+  import AiAssistSection from "./settings/AiAssistSection.svelte";
+  import BrandsSection from "./settings/BrandsSection.svelte";
+  import BatchSection from "./settings/BatchSection.svelte";
+  import ImprovementSection from "./settings/ImprovementSection.svelte";
 
-  // ---- AI assist (vision booster) ----------------------------------------
-  const cfg0 = getVisionConfig();
-  let aiEnabled = $state(cfg0.enabled);
-  let provider = $state<ProviderId>(cfg0.provider);
-  let model = $state(cfg0.model);
-  let apiKey = $state(cfg0.apiKey);
-  let spendCap = $state<number | null>(cfg0.spendCapUsd);
-  let spent = $state(cfg0.spentUsd);
-  let testMsg = $state("");
-  let testing = $state(false);
-
-  // The panel used to read the config once at mount and then show — and
-  // write back — stale values: sign-in flips `enabled` on and every assisted
-  // receipt bumps `spent` while the panel is closed. Re-read on each open.
-  $effect(() => {
-    if (!app.settingsOpen) return;
-    const cfg = getVisionConfig();
-    aiEnabled = cfg.enabled;
-    provider = cfg.provider;
-    model = cfg.model;
-    apiKey = cfg.apiKey;
-    spendCap = cfg.spendCapUsd;
-    spent = cfg.spentUsd;
-  });
-
-  function saveAi(): void {
-    // An emptied cap field is "unchanged", not "$0 — never assist"; a
-    // negative is clamped; the persisted value is echoed back so an uncap
-    // is visible.
-    const cap =
-      spendCap === null || (spendCap as unknown) === ""
-        ? getVisionConfig().spendCapUsd
-        : Math.max(0, Number(spendCap) || 0);
-    const next = saveVisionConfig({
-      enabled: aiEnabled,
-      provider,
-      model,
-      apiKey: apiKey.trim(),
-      spendCapUsd: cap,
-    });
-    spendCap = next.spendCapUsd;
-    spent = next.spentUsd;
-  }
-
-  function onProviderChange(): void {
-    model = PROVIDERS[provider].defaultModel;
-    saveAi();
-  }
-
-  async function testConnection(): Promise<void> {
-    testing = true;
-    testMsg = "";
-    saveAi();
-    const res = await testVisionConnection(getVisionConfig());
-    testMsg = res.message;
-    testing = false;
-  }
-
-  // ---- Teach a brand (visual logo index) ----------------------------------
-  let brands = $state<StoredBrand[]>([]);
-  let brandName = $state("");
-  let brandCategory = $state<Category>("Other");
-  let brandBusy = $state(false);
-  let brandFile = $state<HTMLInputElement | null>(null);
-
-  async function loadBrands(): Promise<void> {
-    brands = await repo.listBrands();
-  }
-  void loadBrands();
-
-  // ---- Improvement log (review corrections) -------------------------------
-  let correctionCount = $state(0);
-  $effect(() => {
-    if (!app.settingsOpen) return;
-    void getCorrections().then((r) => (correctionCount = r.length));
-  });
-
-  async function downloadCorrections(): Promise<void> {
-    const records = await getCorrections();
-    const blob = new Blob([JSON.stringify(records, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `dueback_corrections_${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    // Deferred like ExportBar's download(): a synchronous revoke can abort
-    // the download in Safari.
-    setTimeout(() => URL.revokeObjectURL(url), 30_000);
-  }
-
-  async function resetCorrections(): Promise<void> {
-    await clearCorrections();
-    correctionCount = 0;
-    app.toast("Improvement log cleared.", "ok");
-  }
-
-  // One ZIP with everything a tuning session needs (shared with the
-  // contact form's attach checkbox) — see src/train/bundle.ts.
-  let bundleBusy = $state(false);
-  async function downloadTuningBundle(): Promise<void> {
-    bundleBusy = true;
-    try {
-      const { buildTuningBundle, downloadBundle } = await import("../train/bundle.ts");
-      const bundle = await buildTuningBundle($state.snapshot(app.receipts) as Receipt[]);
-      downloadBundle(bundle);
-      app.toast(
-        `Tuning bundle packaged: ${bundle.receiptCount} receipts, ${bundle.correctionCount} corrections.` +
-          (bundle.omittedOriginals > 0
-            ? ` ${bundle.omittedOriginals} originals were left out to keep it under 200 MB.`
-            : ""),
-        "ok",
-      );
-    } catch (err) {
-      app.toast(err instanceof Error ? err.message : "Couldn't build the bundle.", "err");
-    } finally {
-      bundleBusy = false;
-    }
-  }
-
-  async function addBrand(): Promise<void> {
-    const file = brandFile?.files?.[0];
-    if (!brandName.trim() || !file) {
-      app.toast("Give the brand a name and pick a logo image.", "warn");
-      return;
-    }
-    brandBusy = true;
-    try {
-      await addBrandFromImage(brandName.trim(), brandCategory, file);
-      app.toast(
-        `Learned "${brandName.trim()}". Receipts showing this logo will now be recognized.`,
-        "ok",
-      );
-      brandName = "";
-      if (brandFile) brandFile.value = "";
-      await loadBrands();
-    } catch (err) {
-      app.toast(
-        `Couldn't learn the brand: ${err instanceof Error ? err.message : String(err)}`,
-        "err",
-      );
-    } finally {
-      brandBusy = false;
-    }
-  }
-
-  async function removeBrand(id: string): Promise<void> {
-    await repo.deleteBrand(id);
-    await loadBrands();
-  }
-
-  // ---- OneDrive (save reports to Microsoft OneDrive) ----------------------
-  const odConfigured = oneDriveConfigured();
-  let odAccount = $state(oneDriveAccount());
-  let odBusy = $state(false);
-
-  // Re-read on every open: the report bar's "Save to OneDrive" can connect
-  // an account while this panel isn't looking.
-  $effect(() => {
-    if (app.settingsOpen) odAccount = oneDriveAccount();
-  });
-
-  async function connectOd(): Promise<void> {
-    odBusy = true;
-    try {
-      odAccount = await connectOneDrive();
-      app.toast("OneDrive connected.", "ok");
-    } catch (err) {
-      app.toast(
-        err instanceof Error ? err.message : "OneDrive sign-in failed.",
-        "err",
-      );
-    } finally {
-      odBusy = false;
-    }
-  }
-
-  function disconnectOd(): void {
-    disconnectOneDrive();
-    odAccount = null;
-    app.toast("OneDrive disconnected.", "info");
-  }
-
-  // ---- Saved jobs (name ⇄ number pairs for the report bar) -----------------
-  let savedJobs = $state<SavedJob[]>([]);
-  $effect(() => {
-    // Re-read on every open: the report bar's "Save job" adds pairs while
-    // this panel isn't looking.
-    if (app.settingsOpen) void listSavedJobs().then((j) => (savedJobs = j));
-  });
-
-  async function removeSavedJob(name: string): Promise<void> {
-    savedJobs = await forgetJob(name);
-  }
-
-  // ---- Account & sync ------------------------------------------------------
-  let email = $state("");
-  let emailSent = $state(false);
-
-  async function magicLink(): Promise<void> {
-    const res = await signInWithEmail(email.trim());
-    if (res.error) app.toast(res.error, "err");
-    else emailSent = true;
-  }
-
-  /** The way out of the foreign-owner sync block: another account's data
-   *  is on this device. Wipes the local stores WITHOUT queuing tombstones
-   *  (those rows were never this account's) and starts sync over. */
-  async function resetLocalCopy(): Promise<void> {
-    const ok = confirm(
-      "Remove every receipt, batch and taught brand stored on this device? Your own cloud workspace is not touched — this device will sync it afresh.",
-    );
-    if (!ok) return;
-    await app.resetLocalCopy();
-  }
+  // The Settings dialog shell: scrim, focus management and the shared
+  // section vocabulary (styles below). Each section is its own component
+  // under settings/ and mounts with the dialog, so every open reads fresh
+  // state (sign-in flips the AI assist on, the report bar saves jobs and
+  // connects OneDrive while this panel is closed).
 
   function close(): void {
     app.settingsOpen = false;
@@ -251,13 +27,18 @@
   let dialogEl = $state<HTMLElement | null>(null);
 
   // On open, remember what had focus and move it into the dialog; on close
-  // ({#if} unmount → bind:this null) the effect cleanup gives it back.
+  // ({#if} unmount → bind:this null) the effect cleanup gives it back. The
+  // dialog lives in App.svelte and outlives a surface swap, so the opener
+  // may be gone by then — fall back to the gear the visible header shows.
   $effect(() => {
     const el = dialogEl;
     if (!el) return;
     const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     el.focus();
-    return () => prev?.focus();
+    return () => {
+      if (prev?.isConnected) prev.focus();
+      else document.querySelector<HTMLElement>("[data-settings-btn]")?.focus();
+    };
   });
 
   /** Keep Tab cycling inside the dialog instead of walking the obscured page. */
@@ -308,332 +89,20 @@
       </header>
 
       <div class="p-body">
-        <!-- ============== appearance ============== -->
-        <section>
-          <h3>Appearance</h3>
-          <!-- The header button only flips light/dark; "Match system" is
-               reachable here (it used to be unreachable once toggled). -->
-          <div class="theme-row" role="radiogroup" aria-label="Theme">
-            {#each [["auto", "Match system"], ["light", "Light"], ["dark", "Dark"]] as const as [v, label] (v)}
-              <label class="theme-opt">
-                <input
-                  type="radio"
-                  name="theme"
-                  value={v}
-                  checked={app.theme === v}
-                  onchange={() => app.applyTheme(v as ThemePref)}
-                />
-                {label}
-              </label>
-            {/each}
-          </div>
-        </section>
-
-        <!-- ============== account & sync ============== -->
-        <section>
-          <h3>Account &amp; sync</h3>
-          {#if !app.syncConfigured}
-            <p class="muted small">
-              Sign-in (Google or email) needs a cloud workspace configured at
-              build time (<code>VITE_SUPABASE_URL</code> +
-              <code>VITE_SUPABASE_ANON_KEY</code>). This deployment doesn't
-              have one, so everything stays on this device. Add the keys and
-              redeploy to enable accounts, settings sync and cross-device
-              batches.
-            </p>
-          {:else}
-            {#if app.userEmail}
-              <p class="muted">
-                Signed in as <strong>{app.userEmail}</strong> · sync
-                <span
-                  class="chip {app.syncStatus === 'error'
-                    ? 'chip-err'
-                    : app.syncStatus === 'idle'
-                      ? 'chip-ok'
-                      : ''}">{app.syncStatus}</span
-                >
-              </p>
-              {#if app.syncStatus === "error" && app.syncError}
-                <p class="sync-error small" role="alert">{app.syncError}</p>
-                {#if app.syncForeign}
-                  <p>
-                    <button class="btn btn-sm btn-danger" onclick={() => void resetLocalCopy()}>
-                      Remove this device's local copy
-                    </button>
-                  </p>
-                {/if}
-              {/if}
-              <p class="muted small">
-                Batches, receipts and taught brands are mirrored to your own
-                private cloud workspace (row-level security, only you). The AI
-                assist runs through a secure server proxy, so no API key lives
-                in your browser.
-              </p>
-              <button class="btn btn-sm" onclick={() => void signOut()}>Sign out</button>
-            {:else}
-              <p class="muted small">
-                Optional: the app is fully functional without an account. Sign
-                in to keep batches across devices and to use the AI assist
-                without handling API keys.
-              </p>
-              <div class="auth-row">
-                <button class="btn" onclick={() => void signInWithGoogle()}>
-                  Continue with Google
-                </button>
-              </div>
-              <div class="auth-row">
-                <input
-                  type="email"
-                  placeholder="you@example.com"
-                  bind:value={email}
-                  aria-label="Email for magic link"
-                />
-                <button class="btn btn-sm" onclick={magicLink} disabled={!email.includes("@")}>
-                  Email me a link
-                </button>
-              </div>
-              {#if emailSent}
-                <p class="ok small">Check your inbox; the link signs you in here.</p>
-              {/if}
-            {/if}
-          {/if}
-        </section>
-
-        <!-- ============== OneDrive ============== -->
-        <section>
-          <h3>OneDrive</h3>
-          {#if !odConfigured}
-            <p class="muted small">
-              Saving workbooks straight to OneDrive needs a (free) Microsoft
-              app registration configured at build time
-              (<code>VITE_ONEDRIVE_CLIENT_ID</code> — see
-              <code>ONEDRIVE_SETUP.md</code>). This deployment doesn't have
-              one, so the option stays hidden.
-            </p>
-          {:else if odAccount}
-            <p class="muted">
-              Connected as
-              <strong>{odAccount.name || odAccount.email || "Microsoft account"}</strong>
-              {#if odAccount.name && odAccount.email}
-                <span class="small">· {odAccount.email}</span>
-              {/if}
-            </p>
-            <p class="muted small">
-              "Save to OneDrive" in the report bar uploads the generated
-              workbook — and, when the print packet is enabled, the packet
-              PDF beside it — to <code>OneDrive / Apps / DueBack</code>.
-              Sign-in tokens stay in this browser; disconnecting forgets them.
-            </p>
-            <button class="btn btn-sm" onclick={disconnectOd}>Disconnect</button>
-          {:else}
-            <p class="muted small">
-              Connect a Microsoft account to save generated reports (the
-              workbook and its print packet) straight to
-              <code>OneDrive / Apps / DueBack</code>. Receipts are still read
-              on this device — only the reports you explicitly save are
-              uploaded.
-            </p>
-            <button class="btn" onclick={() => void connectOd()} disabled={odBusy}>
-              {odBusy ? "Connecting…" : "Connect OneDrive"}
-            </button>
-          {/if}
-        </section>
-
-        <!-- ============== saved jobs ============== -->
-        <section>
-          <h3>Saved jobs</h3>
-          <p class="muted small">
-            Job names and numbers travel as a pair: in the report bar, typing
-            (or picking) a saved one autofills the other. Save a pair with the
-            "☆ Save job" button next to the fields; forget pairs here.
-          </p>
-          {#if savedJobs.length}
-            <ul class="brand-list">
-              {#each savedJobs as j (j.name)}
-                <li>
-                  <span class="chip">{j.name}</span>
-                  <span class="muted small">#{j.number}</span>
-                  <button
-                    class="btn btn-ghost btn-sm btn-danger"
-                    onclick={() => void removeSavedJob(j.name)}
-                    aria-label={`Forget job ${j.name}`}
-                  >
-                    forget
-                  </button>
-                </li>
-              {/each}
-            </ul>
-          {:else}
-            <p class="muted small">No saved jobs yet.</p>
-          {/if}
-        </section>
-
-        <!-- ============== AI assist ============== -->
-        <section>
-          <h3>AI assist (for hard receipts)</h3>
-          <p class="muted small">
-            Off = everything stays on this device. On = receipts the on-device
-            reader isn't confident about are sent to the model below for a
-            second opinion.
-            {#if hasBuiltInOpenRouterKey()}
-              This build includes a free OpenRouter tier, no key needed.
-            {/if}
-          </p>
-          <label class="check">
-            <input type="checkbox" bind:checked={aiEnabled} onchange={saveAi} />
-            <span>Use AI for low-confidence receipts</span>
-          </label>
-
-          {#if aiEnabled}
-            <div class="grid2">
-              <div>
-                <label for="st-provider">Provider</label>
-                <select id="st-provider" bind:value={provider} onchange={onProviderChange}>
-                  {#each Object.values(PROVIDERS) as p (p.id)}
-                    <option value={p.id}>{p.label}{p.free ? " · free" : ""}</option>
-                  {/each}
-                </select>
-              </div>
-              <div>
-                <label for="st-model">Model</label>
-                <input id="st-model" type="text" list="st-models" bind:value={model} onchange={saveAi} />
-                <datalist id="st-models">
-                  {#each PROVIDERS[provider].models as m (m)}
-                    <option value={m}></option>
-                  {/each}
-                </datalist>
-              </div>
-            </div>
-            <p class="muted small">{PROVIDERS[provider].note}</p>
-            <div class="grid2">
-              <div>
-                <label for="st-key">API key {app.userEmail && provider === "openrouter" ? "(optional, server proxy is used)" : ""}</label>
-                <input
-                  id="st-key"
-                  type="password"
-                  placeholder={app.userEmail && provider === "openrouter" ? "handled by your account" : "sk-…"}
-                  bind:value={apiKey}
-                  onchange={saveAi}
-                />
-                <a class="small" href={PROVIDERS[provider].keyUrl} target="_blank" rel="noopener">
-                  Get a key ↗
-                </a>
-              </div>
-              <div>
-                <label for="st-cap">Spend cap (USD, 0 = uncapped)</label>
-                <input id="st-cap" type="number" min="0" step="0.5" bind:value={spendCap} onchange={saveAi} />
-                <span class="muted small">Spent so far: {formatMoney(spent)}</span>
-              </div>
-            </div>
-            <div class="test-row">
-              <button class="btn btn-sm" onclick={testConnection} disabled={testing}>
-                {testing ? "Testing…" : "Test connection"}
-              </button>
-              <!-- Always present so its insertion is announced. -->
-              <span class="muted small" role="status" aria-live="polite">{testMsg}</span>
-            </div>
-          {/if}
-        </section>
-
-        <!-- ============== teach a brand ============== -->
-        <section>
-          <h3>Teach a brand (logo recognition)</h3>
-          <p class="muted small">
-            When a merchant prints its name only as a logo, the text reader
-            can't spell it. Upload one clear image of the logo and the app will
-            recognize it visually on future receipts. No retraining, works
-            offline after the first model download (~40&nbsp;MB, cached).
-          </p>
-          <div class="grid3">
-            <div>
-              <label for="st-bname">Brand name</label>
-              <input id="st-bname" type="text" placeholder="e.g. Maple St. Hardware" bind:value={brandName} />
-            </div>
-            <div>
-              <label for="st-bcat">Category</label>
-              <select id="st-bcat" bind:value={brandCategory}>
-                {#each CATEGORIES as c (c)}
-                  <option value={c}>{c}</option>
-                {/each}
-              </select>
-            </div>
-            <div>
-              <label for="st-bfile">Logo image</label>
-              <input id="st-bfile" type="file" accept="image/*" bind:this={brandFile} />
-            </div>
-          </div>
-          <button class="btn btn-primary btn-sm" onclick={addBrand} disabled={brandBusy}>
-            {brandBusy ? "Learning…" : "Add brand"}
-          </button>
-
-          {#if brands.length}
-            <ul class="brand-list">
-              {#each brands as b (b.id)}
-                <li>
-                  <span class="chip">{b.name}</span>
-                  <span class="muted small">{b.category}</span>
-                  <button
-                    class="btn btn-ghost btn-sm btn-danger"
-                    onclick={() => void removeBrand(b.id)}
-                    aria-label={`Forget ${b.name}`}
-                  >
-                    forget
-                  </button>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </section>
-
-        <!-- ============== improvement log ============== -->
-        <section>
-          <h3>Improvement log</h3>
-          <p class="muted small">
-            Every correction you make in review is recorded with where the
-            right value sits on the receipt and what the reader believed
-            beforehand. Download the tuning bundle below — the log plus every
-            receipt's extraction and images — to tune extraction against your
-            real receipts. Stays on this device.
-          </p>
-          <div class="test-row">
-            <span class="chip">{correctionCount} corrections</span>
-            <button class="btn btn-primary btn-sm" onclick={() => void downloadTuningBundle()} disabled={bundleBusy || app.receipts.length === 0}>
-              {bundleBusy ? "Packaging…" : "Download tuning bundle"}
-            </button>
-            <button class="btn btn-sm" onclick={() => void downloadCorrections()} disabled={correctionCount === 0}>
-              Corrections JSON
-            </button>
-            <button class="btn btn-ghost btn-sm btn-danger" onclick={() => void resetCorrections()} disabled={correctionCount === 0}>
-              Clear
-            </button>
-          </div>
-          <p class="muted small">
-            The bundle zips the corrections log, every receipt's extraction
-            (fields, flags, OCR text and positions), the report CSV, and the
-            original + highlighted images: one file to hand over for tuning.
-          </p>
-        </section>
+        <AppearanceSection />
+        <AccountSection />
+        <OneDriveSection />
+        <SavedJobsSection />
+        <AiAssistSection />
+        <BrandsSection />
+        <BatchSection />
+        <ImprovementSection />
       </div>
     </div>
   </div>
 {/if}
 
 <style>
-  .theme-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-  }
-  .theme-opt {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    cursor: pointer;
-  }
-  .sync-error {
-    color: var(--err);
-    margin: 0.25rem 0 0.5rem;
-  }
   .scrim {
     position: fixed;
     inset: 0;
@@ -667,20 +136,24 @@
     display: grid;
     gap: 1.6rem;
   }
-  section {
-    display: grid;
-    gap: 0.6rem;
-    align-content: start;
-  }
   .p-title {
     margin: 0;
     font: 600 1rem/1.2 var(--font-ui);
     letter-spacing: 0;
     text-wrap: auto;
   }
+
+  /* Shared section vocabulary. The sections are child components, so
+     these reach into them with :global — scoped under .p-body, they can't
+     leak to the rest of the app. */
+  .p-body :global(section) {
+    display: grid;
+    gap: 0.6rem;
+    align-content: start;
+  }
   /* h3s (they were h4s under no h2/h3 — a heading list that jumped from
      the page's h1 to level 4); the UI-font look is re-pinned. */
-  section h3 {
+  .p-body :global(section h3) {
     margin: 0;
     padding-bottom: 0.35rem;
     border-bottom: 1px solid var(--line);
@@ -688,13 +161,13 @@
     letter-spacing: 0;
     text-wrap: auto;
   }
-  .small {
+  .p-body :global(.small) {
     font-size: 0.84rem;
   }
-  .ok {
+  .p-body :global(.ok) {
     color: var(--ok);
   }
-  .check {
+  .p-body :global(.check) {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -703,38 +176,34 @@
     font: 550 0.95rem/1.3 var(--font-ui);
     color: var(--ink);
   }
-  .check input {
+  .p-body :global(.check input) {
     width: auto;
     accent-color: var(--accent);
   }
-  .grid2 {
+  .p-body :global(.grid2) {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 0.8rem;
   }
-  .grid3 {
+  .p-body :global(.grid3) {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
     gap: 0.8rem;
   }
-  .test-row,
-  .auth-row {
+  .p-body :global(.row) {
     display: flex;
     align-items: center;
     gap: 0.6rem;
     flex-wrap: wrap;
   }
-  .auth-row input {
-    max-width: 260px;
-  }
-  .brand-list {
+  .p-body :global(.item-list) {
     list-style: none;
     padding: 0;
     margin: 0.4rem 0 0;
     display: grid;
     gap: 0.4rem;
   }
-  .brand-list li {
+  .p-body :global(.item-list li) {
     display: flex;
     align-items: center;
     gap: 0.6rem;

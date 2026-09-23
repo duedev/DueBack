@@ -28,12 +28,14 @@ for the web with two new pillars: **visual logo recognition** and an
 3. **Download the workbook:** a themed `.xlsx` (Summary that foots with real
    formulas, per-category sheets with the receipt images embedded, and — with
    **Insights sheet** ticked in the report bar, as it is by default — a
-   charts + KPI dashboard tab) plus a **print packet** PDF with the receipts
-   laid out on Letter pages under the employee/job header (bundle both into
-   one ZIP if you prefer a single download). Deployments configured for it
-   also get a **Save to OneDrive** button that uploads the workbook straight
-   to `OneDrive / Apps / DueBack` (see
-   [`ONEDRIVE_SETUP.md`](./ONEDRIVE_SETUP.md)).
+   charts + KPI dashboard tab). The **print packet** PDF — the receipts laid
+   out on Letter pages under the employee/job header — is one more click
+   (**Download packet**), or tick **Include the print packet (one ZIP)** to
+   get both in a single download: each click hands the browser exactly one
+   file, so it never asks to allow multiple downloads. Deployments
+   configured for it also get a **Save to OneDrive** button that uploads the
+   workbook and its print packet straight to `OneDrive / Apps / DueBack`
+   (see [`ONEDRIVE_SETUP.md`](./ONEDRIVE_SETUP.md)).
 
 The report bar also remembers your **jobs**: save a job name + number pair
 once (☆ Save job) and typing either one autofills the other from then on
@@ -56,7 +58,7 @@ feeds the grand TOTAL.
 | **See the logo** | when the name is a logo the OCR can't spell: CLIP image embeddings (transformers.js, on-device) vs. a brand-logo index. **Teach it any brand with one image**, no retraining |
 | Extract | grand-total selection reconciled against the receipt's own arithmetic (subtotal + tax footing, pump math on fuel receipts), US-first dates, tax, category — amounts are always US dollars |
 | Trust | per-field confidence + provenance boxes, flags, semantic + image-hash duplicate detection; anything the rules can't verify is queued for manual review instead of shipping wrong |
-| Assist (optional) | low-confidence receipts can get a vision-LLM second opinion. Bring your own key, or sign in and use the server-keyed proxy |
+| Assist (optional) | low-confidence receipts can get a vision-LLM second opinion — from a local model (Ollama / LM Studio), your own self-hosted server, or a cloud provider (bring your own key, or sign in and use the server-keyed proxy); one-shot, or an agent that checks the math and the brand database before it answers |
 
 Everything above the "Assist" row runs entirely in your browser.
 
@@ -67,7 +69,9 @@ Everything above the "Assist" row runs entirely in your browser.
 - **AI assist:** low-confidence receipts go to the model you chose. Off
   unless you turn it on — except that a build made with `OPENROUTER_API_KEY`
   turns the free OpenRouter tier on by default (switch it off in Settings →
-  AI assist).
+  AI assist). Pick the **Local** backend (Ollama / LM Studio on your own
+  computer) and the assist never leaves your machine either; **Self-hosted**
+  sends receipts only to the server you name.
 - **Sync (opt-in):** signing in mirrors your data to *your own* Supabase
   workspace with row-level security. See [`SUPABASE_SETUP.md`](./SUPABASE_SETUP.md).
 - **OneDrive (opt-in):** only the workbooks you explicitly save are uploaded,
@@ -106,6 +110,16 @@ Optional build-time settings:
 `VITE_CF_ANALYTICS_TOKEN` (cookieless
 visit stats via Cloudflare Web Analytics; page views only). The app is embeddable in an iframe
 (e.g. a Carrd Embed block); it's a single relative-path static bundle.
+
+**Pull-request previews** (`.github/workflows/preview.yml`): each PR from a
+branch in this repo can build to its own Cloudflare Pages site at
+`https://pr-<number>.<project>.pages.dev` without touching production. It's
+off until you add a repo variable `CF_PAGES_PROJECT` (e.g. `dueback-preview`;
+created on the first run) and secrets `CLOUDFLARE_API_TOKEN` (Account ›
+Cloudflare Pages › Edit) + `CLOUDFLARE_ACCOUNT_ID`; until then the run's
+`setup` job names whatever is missing. Previews leave out
+Supabase, OneDrive and analytics (their sign-in redirects only allow the
+production domain, and previews must never sync into real workspaces).
 
 ## Stack
 

@@ -8,12 +8,13 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtemp, access, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { deflateRawSync, crc32 } from "node:zlib";
+import { deflateRawSync, inflateRawSync, crc32 } from "node:zlib";
 import sharp from "sharp";
 import ExcelJS from "exceljs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PORT = 5179;
+// E2E_PORT lets parallel checkouts (git worktrees) run the gate side by side.
+const PORT = Number(process.env.E2E_PORT) || 5179;
 const BASE = `http://localhost:${PORT}/`;
 
 const log = (...a) => console.log("•", ...a);
@@ -270,6 +271,30 @@ function makeZip(entries) {
   return Buffer.concat([...parts, centralBuf, eocd]);
 }
 
+// A downloaded ZIP's entries, read from its central directory (stored or
+// deflated) — enough to inspect the tuning bundle.
+function readZipEntries(buf) {
+  let eocd = buf.length - 22;
+  while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054b50) eocd--;
+  const count = buf.readUInt16LE(eocd + 10);
+  let p = buf.readUInt32LE(eocd + 16);
+  const out = [];
+  for (let n = 0; n < count; n++) {
+    const method = buf.readUInt16LE(p + 10);
+    const size = buf.readUInt32LE(p + 20);
+    const nameLen = buf.readUInt16LE(p + 28);
+    const extra = buf.readUInt16LE(p + 30);
+    const comment = buf.readUInt16LE(p + 32);
+    const local = buf.readUInt32LE(p + 42);
+    const name = buf.subarray(p + 46, p + 46 + nameLen).toString("utf8");
+    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+    const raw = buf.subarray(start, start + size);
+    out.push({ name, data: method === 8 ? inflateRawSync(raw) : raw });
+    p += 46 + nameLen + extra + comment;
+  }
+  return out;
+}
+
 // Natural size of an embedded image — the aspect ratio the sheet is supposed
 // to render. Receipt thumbnails are JPEG; Insights charts are PNG.
 function imageSize(buf) {
@@ -409,7 +434,26 @@ async function main() {
           method: r.methodUsed,
           status: r.status,
           flags: (r.flags || []).map((f) => f.message).join(" | "),
+          dims: [r.imageWidth, r.imageHeight],
+          abox: r.amount.bbox ?? null,
         }));
+      });
+    // The device-local work-list (store/repo.ts jobs): the pause's contract
+    // is that a paused job is unlocked with no attempt used.
+    const readJobs = () =>
+      page.evaluate(async () => {
+        const open = indexedDB.open("reimbursements-f5");
+        const db = await new Promise((res, rej) => {
+          open.onsuccess = () => res(open.result);
+          open.onerror = () => rej(open.error);
+        });
+        const tx = db.transaction("jobs", "readonly");
+        const all = await new Promise((res) => {
+          const req = tx.objectStore("jobs").getAll();
+          req.onsuccess = () => res(req.result);
+        });
+        db.close();
+        return all.map((j) => ({ receiptId: j.receiptId, attempts: j.attempts, lockedAt: j.lockedAt }));
       });
     let rows = [];
     const deadline = Date.now() + 180000;
@@ -489,28 +533,46 @@ async function main() {
     );
 
     const dlDir = await mkdtemp(join(tmpdir(), "reimb-"));
+    // One click, one download: a second file from the same click trips the
+    // browser's "download multiple files" prompt, so the packet has its own
+    // button and zipping it in with the workbook is opt-in (default off).
+    const packetZipOpt = page
+      .locator(".opt", { hasText: "Include the print packet (one ZIP)" })
+      .locator("input");
+    check(!(await packetZipOpt.isChecked()), "the print-packet ZIP option defaults to off");
     // Job number was left blank on purpose: generating must first raise the
     // blank-details prompt, and "Generate anyway" proceeds.
     await page.getByRole("button", { name: /Generate workbook/ }).click();
     const blankDialog = page.getByRole("dialog", { name: "Missing report details" });
     await blankDialog.waitFor({ timeout: 5000 });
     check(true, "blank job number raises the missing-details prompt");
-    // Generating yields TWO files: the workbook and (default-on) the print
-    // packet PDF. Collect both before validating either.
     const downloads = [];
     const onDownload = (d) => downloads.push(d);
     page.on("download", onDownload);
+    const dlNames = () => downloads.map((d) => d.suggestedFilename()).join(", ") || "none";
+    // Wait for the click's first download, then linger: a second file from
+    // the same click would land within the grace period.
+    const settleDownloads = async () => {
+      for (let i = 0; i < 240 && downloads.length < 1; i++) await page.waitForTimeout(500);
+      await page.waitForTimeout(2500);
+    };
     await page.getByRole("button", { name: "Generate anyway" }).click();
-    for (let i = 0; i < 240 && downloads.length < 2; i++) {
-      await page.waitForTimeout(500);
-    }
-    page.off("download", onDownload);
+    await settleDownloads();
     const download = downloads.find((d) => d.suggestedFilename().endsWith(".xlsx"));
-    const packetDl = downloads.find((d) => d.suggestedFilename().endsWith(".pdf"));
-    check(!!download, "generate downloads the workbook");
     check(
-      !!packetDl && /^Receipt_Packet_Ada_Lovelace_\d{8}\.pdf$/.test(packetDl.suggestedFilename()),
-      `print packet PDF downloads alongside (got ${packetDl?.suggestedFilename()})`,
+      downloads.length === 1 && !!download,
+      `Generate downloads exactly one file, the workbook (got ${dlNames()})`,
+    );
+
+    // Download packet: its own click, so its own (single) download.
+    downloads.length = 0;
+    await page.getByRole("button", { name: "Download packet" }).click();
+    await settleDownloads();
+    const packetDl = downloads[0];
+    check(
+      downloads.length === 1 &&
+        /^Receipt_Packet_Ada_Lovelace_\d{8}\.pdf$/.test(packetDl?.suggestedFilename() ?? ""),
+      `Download packet downloads exactly the print packet PDF (got ${dlNames()})`,
     );
     if (packetDl) {
       const pdfPath = join(dlDir, packetDl.suggestedFilename());
@@ -525,6 +587,34 @@ async function main() {
         "print packet header carries the employee",
       );
     }
+
+    // Opted in, Generate hands over ONE ZIP holding both files.
+    downloads.length = 0;
+    await packetZipOpt.check();
+    await page.getByRole("button", { name: /Generate workbook/ }).click();
+    await blankDialog.waitFor({ timeout: 5000 });
+    await page.getByRole("button", { name: "Generate anyway" }).click();
+    await settleDownloads();
+    const zipDl = downloads[0];
+    check(
+      downloads.length === 1 &&
+        /^Report_Ada_Lovelace_\d{8}\.zip$/.test(zipDl?.suggestedFilename() ?? ""),
+      `the ZIP option downloads exactly one archive (got ${dlNames()})`,
+    );
+    if (zipDl) {
+      const zipPath = join(dlDir, zipDl.suggestedFilename());
+      await zipDl.saveAs(zipPath);
+      const zipRaw = await readFile(zipPath);
+      check(
+        zipRaw.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) &&
+          zipRaw.includes(Buffer.from(download?.suggestedFilename() ?? "\0")) &&
+          /Receipt_Packet_Ada_Lovelace_\d{8}\.pdf/.test(zipRaw.toString("latin1")),
+        "the archive holds the workbook and the print packet",
+      );
+    }
+    await packetZipOpt.uncheck();
+    page.off("download", onDownload);
+
     const xlsxPath = join(dlDir, download.suggestedFilename());
     await download.saveAs(xlsxPath);
     log("downloaded", download.suggestedFilename());
@@ -542,16 +632,51 @@ async function main() {
       !names.includes("All Receipts") && names[names.length - 1] === "Insights",
       "summary+receipts merged; Insights is the rightmost tab",
     );
-    // The Summary "#" cells hyperlink to each receipt's image-sheet anchor.
+    // The Summary "#" cells hyperlink to each receipt's image-sheet block.
     const summarySheet = wb.getWorksheet("Summary");
     let linkCount = 0;
+    let blockLinks = 0;
     summarySheet.eachRow((row) => {
       const v = row.getCell(1).value;
-      // HYPERLINK("#'Sheet'!A4", n) formulas (numeric result) — a hyperlink
-      // -typed cell would be "1" stored as text.
+      // HYPERLINK("#'Sheet'!A3:F21", n) formulas (numeric result) — a
+      // hyperlink-typed cell would be "1" stored as text.
       if (v && typeof v === "object" && (v.hyperlink || /^HYPERLINK\("#'/.test(v.formula ?? ""))) linkCount++;
+      // The target is a RANGE from the receipt's own header band that fits
+      // a laptop window (LINK_VIEW_PX = 360): Excel scrolls a range that
+      // fits fully into view, where a single cell reached going down sat on
+      // the bottom edge with the image off-screen. Real images, real row
+      // heights — the only end-to-end run of the image-branch block math.
+      const m = /^HYPERLINK\("#'([^']+)'!A(\d+):F(\d+)",(\d+)\)$/.exec(v?.formula ?? "");
+      if (!m) return;
+      const [, sheet, top, end, n] = m.map((x, i) => (i >= 2 ? Number(x) : x));
+      const ws = wb.getWorksheet(sheet);
+      const amt = /^'([^']+)'!F(\d+)$/.exec(row.getCell(6).value?.formula ?? "");
+      if (!ws || !amt || amt[1] !== sheet) return;
+      const data = Number(amt[2]);
+      const px = (a, b) => {
+        let t = 0;
+        for (let r = a; r <= b; r++) t += Math.round(((ws.findRow(r)?.height ?? 15) * 4) / 3);
+        return t;
+      };
+      const band = String(ws.getCell(top, 1).value ?? "");
+      if (
+        band.startsWith(`Receipt ${n} `) &&
+        end <= data &&
+        px(top, end) <= 360 &&
+        // The whole block through its data row when it fits; capped inside
+        // the image otherwise.
+        (end === data) === (px(top, data) <= 360)
+      ) {
+        blockLinks++;
+      } else {
+        log(`bad link ${v.formula} (band "${band}", amount row ${data}, ${px(top, end)}px)`);
+      }
     });
     check(linkCount === 4, `summary links every receipt to its image (got ${linkCount})`);
+    check(
+      blockLinks === 4,
+      `every link selects its receipt's block from the header band, fitting the window (got ${blockLinks})`,
+    );
 
     // 7a-bis. Receipt images must render at their true aspect ratio. An
     // anchor expressed as a FRACTION of a column was rescaled by ExcelJS's
@@ -586,6 +711,80 @@ async function main() {
       `every embedded image was measured — receipts and charts (got ${imagesChecked})`,
     );
 
+    // 7b. A possible duplicate still in the TOTAL makes Generate ask first
+    // (a flagged $80.29 repeat once shipped unreviewed in a real report).
+    // Re-uploading the coffee receipt is a byte-identical duplicate: the OCR
+    // cache answers it, and dedup flags it.
+    log("re-uploading the coffee receipt as a duplicate…");
+    await page
+      .locator("input[type=file][multiple]")
+      .first()
+      .setInputFiles([{ name: "coffee-again.png", mimeType: "image/png", buffer: await makeReceiptPng() }]);
+    let dupRow = {};
+    const dupDeadline = Date.now() + 120000;
+    while (Date.now() < dupDeadline) {
+      dupRow = (await readRows()).find((r) => r.file === "coffee-again.png") ?? {};
+      if (["done", "needs_review", "failed"].includes(dupRow.status)) break;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    // Byte-identical → "Looks identical to …"; should the cleaned re-encode
+    // ever differ, the semantic match (vendor + date + amount) flags it.
+    const dupMsg = /Looks identical|possible duplicate/;
+    check(
+      dupRow.status === "needs_review" && dupMsg.test(dupRow.flags || ""),
+      `a re-uploaded receipt is flagged as a duplicate (got ${dupRow.status}: ${dupRow.flags})`,
+    );
+    // Every report detail filled, so the duplicate alone raises the prompt.
+    await page.locator("#xb-num").fill("24-117");
+    await page.locator("#xb-num").dispatchEvent("change");
+    await page.getByRole("button", { name: /Generate workbook/ }).click();
+    const dupDialog = page.getByRole("dialog", { name: "Possible duplicates in this report" });
+    await dupDialog.waitFor({ timeout: 5000 });
+    check(
+      /1 possible duplicate is still in the total: .+ — \$8\.99/.test(await dupDialog.innerText()),
+      "Generate names the unresolved duplicate and its amount",
+    );
+    await dupDialog.getByRole("button", { name: "Review duplicate" }).click();
+    const reviewDialog = page.getByRole("dialog", { name: /Review receipt/ });
+    await reviewDialog.waitFor({ timeout: 5000 });
+    // The review opens straight into the side-by-side compare (the warning
+    // lives in the compare panel there, not in the flag list).
+    const twinPanel = reviewDialog.getByRole("region", { name: /Possible duplicate/ });
+    await twinPanel.waitFor({ timeout: 5000 }).catch(() => {});
+    check(
+      (await dupDialog.count()) === 0 && (await twinPanel.count()) === 1,
+      "Review duplicate closes the prompt and opens the flagged receipt beside its twin",
+    );
+    // Resolve it the way a human would: delete the repeat. The modal then
+    // moves on to a neighbour — close it only once the delete has landed
+    // (an Escape mid-delete would be undone by that hand-off).
+    await reviewDialog.getByRole("button", { name: "Delete", exact: true }).click();
+    let afterDup = [];
+    for (let i = 0; i < 40; i++) {
+      afterDup = await readRows();
+      if (afterDup.length === 4) break;
+      await page.waitForTimeout(250);
+    }
+    check(afterDup.length === 4, `the duplicate is deleted (rows ${afterDup.length})`);
+    await page.waitForTimeout(300);
+    if (await reviewDialog.isVisible()) await page.keyboard.press("Escape");
+    await reviewDialog.waitFor({ state: "hidden", timeout: 5000 });
+
+
+    // Phone-width measure (7c, 8b): neither surface may overflow the
+    // viewport sideways — an overflowing row used to let touch swipes pan
+    // the whole page, and under the root overflow-x clip it would instead
+    // strand controls off-screen. Measured with the clip disabled so the
+    // check catches the underlying overflow, not the backstop masking it.
+    const contentWidth = () =>
+      page.evaluate(() => {
+        document.documentElement.style.setProperty("overflow-x", "visible", "important");
+        document.body.style.setProperty("overflow-x", "visible", "important");
+        const w = document.scrollingElement.scrollWidth;
+        document.documentElement.style.removeProperty("overflow-x");
+        document.body.style.removeProperty("overflow-x");
+        return w;
+      });
 
     // 7c. Multi-page PDF: every page becomes its own receipt — the scanner
     // workflow (processing only page 1 silently dropped the rest).
@@ -596,6 +795,78 @@ async function main() {
       .setInputFiles([
         { name: "stack.pdf", mimeType: "application/pdf", buffer: makeTwoPagePdf() },
       ]);
+
+    // 7c-i. Pause mid-read: catch a page while it is being read, pause, and
+    // the read in flight must unwind to "queued" — never "failed" — with its
+    // job unlocked and no attempt used; nothing moves while paused; resume
+    // then reads both pages to the same amounts the checks below expect.
+    const isPdfRow = (r) => /^stack\.pdf \(page /.test(r.file);
+    const settledStatus = (s) => ["done", "needs_review", "failed"].includes(s);
+    let inFlight = null;
+    {
+      const end = Date.now() + 60000;
+      while (Date.now() < end) {
+        const seen = (await readRows()).filter(isPdfRow);
+        inFlight = seen.find((r) => r.status === "processing") ?? null;
+        if (inFlight) break;
+        if (seen.length === 2 && seen.every((r) => settledStatus(r.status))) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    const pauseBtn = page.getByRole("button", { name: "Pause reading" });
+    await pauseBtn.click({ timeout: 10000 });
+    check((await pauseBtn.getAttribute("aria-pressed")) === "true", "the pause toggle reports pressed");
+    await page
+      .locator(".ws-head [role=status]")
+      .getByText("Paused", { exact: true })
+      .waitFor({ timeout: 20000 });
+    check(true, "the header says Paused once the reads in flight unwind");
+    if (inFlight) {
+      let paused = [];
+      const end = Date.now() + 15000;
+      while (Date.now() < end) {
+        paused = (await readRows()).filter(isPdfRow);
+        if (paused.length === 2 && paused.every((r) => r.status !== "processing")) break;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      for (const r of paused) log(`paused → ${r.file} [${r.status}]`);
+      check(
+        paused.length === 2 && paused.every((r) => r.status !== "failed" && r.status !== "processing"),
+        "pausing unwinds in-flight reads to queued, never failed",
+      );
+      const unwound = paused.filter((r) => r.status === "queued");
+      check(unwound.length >= 1, `a read caught mid-flight went back to queued (${unwound.length} queued)`);
+      let jobs = [];
+      const jobsEnd = Date.now() + 5000;
+      while (Date.now() < jobsEnd) {
+        jobs = await readJobs();
+        if (jobs.every((j) => j.lockedAt === null)) break;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      check(
+        jobs.length === unwound.length && jobs.every((j) => j.lockedAt === null && j.attempts === 0),
+        `paused jobs are unclaimed with no attempt used (${JSON.stringify(jobs)})`,
+      );
+      await page.waitForTimeout(3000);
+      const still = (await readRows()).filter(isPdfRow);
+      check(
+        still.filter((r) => r.status === "queued").length === unwound.length,
+        "nothing is read while paused",
+      );
+      check(
+        (await page.locator(".rc").filter({ hasText: "Paused — resume reading" }).count()) === unwound.length,
+        "a paused receipt's card says so instead of \"Reading on your device…\"",
+      );
+    } else {
+      log("both PDF pages finished before one was seen mid-read — skipping the unwind checks");
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    const pausedW = await contentWidth();
+    check(pausedW <= 390, `workspace header fits 390px with the pause control and Paused chip (scrollWidth ${pausedW})`);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await pauseBtn.click();
+    check((await pauseBtn.getAttribute("aria-pressed")) === "false", "resume: the toggle is released");
+
     let pdfRows = [];
     const pdfDeadline = Date.now() + 180000;
     while (Date.now() < pdfDeadline) {
@@ -615,6 +886,28 @@ async function main() {
     check(/TARGET/i.test(pdfP1.vendor || ""), `PDF page 1: vendor (got ${pdfP1.vendor})`);
     check(pdfP2.amount === 4.25, `PDF page 2: total read (got ${pdfP2.amount})`);
     check(/STARBUCKS/i.test(pdfP2.vendor || ""), `PDF page 2: vendor (got ${pdfP2.vendor})`);
+
+    // 7c-bis. A digital PDF page is stored cropped to its print (the ink
+    // crop), not as the whole blank Letter sheet — the Chevron-app
+    // e-receipts exported as full 8.5×11 images. A whole page renders at
+    // 2010×2600 and stores at 1237×1600; each fixture's print covers under
+    // half the page's height, so its crop stores smaller (the aspect is no
+    // test: page 1's crop happens to land near Letter's). And the TOTAL —
+    // the last printed line, at the column's right edge — ends in the
+    // bottom quarter and right 30% of the stored frame; on the uncropped
+    // page it sat mid-sheet (~0.5 across, 0.33–0.5 down).
+    for (const [label, r] of [["page 1", pdfP1], ["page 2", pdfP2]]) {
+      const [w, h] = r.dims ?? [];
+      const b = r.abox;
+      check(
+        w > 0 && h > 0 && Math.max(w, h) < 1400,
+        `PDF ${label}: stored cropped to the print, not the Letter page (got ${w}×${h})`,
+      );
+      check(
+        !!b && b.y + b.h > 0.75 && b.x + b.w > 0.7,
+        `PDF ${label}: the total sits at the crop's bottom-right edge (got ${b ? `x2 ${(b.x + b.w).toFixed(2)}, y2 ${(b.y + b.h).toFixed(2)}` : "no box"})`,
+      );
+    }
 
     // 7d. ZIP intake: an archive of nested folders (the "here's the folder of
     // Tesla charging receipts" case) becomes one receipt per usable file, and
@@ -663,6 +956,423 @@ async function main() {
       `Tesla: kWh quantity doesn't flag the total (got "${tesla.flags}")`,
     );
 
+    // 7e runs in its own block: 7b declares the same helper names.
+    {
+      // 7e. A suspected duplicate reviews side by side. Re-upload coffee.png
+      // under another name: the read flags it and names its twin by id
+      // (Flag.ref), review shows both, Keep both clears the warning on BOTH
+      // rows, and deleting the copy leaves the board as step 8 expects.
+      // (A local reader, not readRows: it needs ids and the flags themselves.)
+      const readDupRows = () =>
+        page.evaluate(async () => {
+          const open = indexedDB.open("reimbursements-f5");
+          const db = await new Promise((res, rej) => {
+            open.onsuccess = () => res(open.result);
+            open.onerror = () => rej(open.error);
+          });
+          const tx = db.transaction("receipts", "readonly");
+          const all = await new Promise((res) => {
+            const req = tx.objectStore("receipts").getAll();
+            req.onsuccess = () => res(req.result);
+          });
+          db.close();
+          return all.map((r) => ({
+            id: r.id,
+            file: r.originalFileName ?? r.fileName,
+            status: r.status,
+            dups: (r.flags || [])
+              .filter((f) => f.code === "duplicate")
+              .map((f) => ({ message: f.message, ref: f.ref ?? null })),
+            apart: r.notDuplicateOf ?? [],
+          }));
+        });
+      log("re-uploading coffee.png as a duplicate…");
+      await page
+        .locator("input[type=file][multiple]")
+        .first()
+        .setInputFiles([
+          { name: "coffee-again.png", mimeType: "image/png", buffer: await makeReceiptPng() },
+        ]);
+      let dupRows = [];
+      const dupDeadline = Date.now() + 180000;
+      while (Date.now() < dupDeadline) {
+        dupRows = await readDupRows();
+        const again = dupRows.find((r) => r.file === "coffee-again.png");
+        if (again && ["done", "needs_review", "failed"].includes(again.status)) break;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      const coffeeRow = dupRows.find((r) => r.file === "coffee.png") ?? {};
+      const againRow = dupRows.find((r) => r.file === "coffee-again.png") ?? {};
+      const againFlag = againRow.dups?.[0] ?? {};
+      log(`duplicate → ${againRow.file}: [${againRow.status}] ${againFlag.message ?? "no duplicate flag"}`);
+      check(againRow.status === "needs_review", `re-uploaded copy is held for review (got ${againRow.status})`);
+      check(
+        !!coffeeRow.id && againFlag.ref === coffeeRow.id,
+        `duplicate flag names its twin by id (ref ${againFlag.ref}, twin ${coffeeRow.id})`,
+      );
+      check(
+        /"coffee\.png"/.test(againFlag.message ?? ""),
+        `duplicate flag quotes the twin's upload name (got "${againFlag.message}")`,
+      );
+      await page.locator(".rc", { hasText: /Looks identical|possible duplicate/ }).first().click();
+      const dupDialog = page.getByRole("dialog", { name: /Review receipt/ });
+      await dupDialog.waitFor({ timeout: 10000 });
+      const peerRegion = page.getByRole("region", { name: /Possible duplicate/ });
+      await peerRegion.waitFor({ timeout: 10000 });
+      await peerRegion.locator("img").waitFor({ timeout: 10000 });
+      check(
+        ((await peerRegion.textContent()) ?? "").includes("coffee.png"),
+        "review shows the twin side by side, named by its upload",
+      );
+      check((await peerRegion.locator("img").count()) === 1, "the twin panel shows the twin's image");
+      // Zoom at phone width, where the compare stacks: each zoomed column
+      // used to collapse to 0 px (a scroll container in an `auto` grid row
+      // with no free space) and take its own Zoom toggle out of reach.
+      await page.setViewportSize({ width: 390, height: 844 });
+      for (const [name, column] of [
+        ["Zoom this receipt", dupDialog.locator(".m-image")],
+        ["Zoom the possible duplicate", peerRegion],
+      ]) {
+        const zoom = page.getByRole("button", { name });
+        await zoom.click();
+        const zoomedH = (await column.boundingBox())?.height ?? 0;
+        check(zoomedH > 100 && zoomedH <= 844 * 0.7 + 1, `${name}: the zoomed column keeps its height (${zoomedH}px)`);
+        const unzoomed = await zoom
+          .click({ timeout: 5000 })
+          .then(() => true)
+          .catch(() => false);
+        check(
+          unzoomed && (await zoom.getAttribute("aria-pressed")) === "false",
+          `${name}: Zoom stays reachable and zooms back out`,
+        );
+      }
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await page.getByRole("button", { name: "Keep both" }).click();
+      await peerRegion.waitFor({ state: "detached", timeout: 10000 });
+      const keptRows = await readDupRows();
+      check(
+        keptRows.length === 8 && keptRows.every((r) => r.dups.length === 0),
+        "Keep both clears the duplicate warning on both copies",
+      );
+      // …and remembers the verdict so no later read or re-check pairs them
+      // again — on the row that held the warning; the original, which held
+      // none, isn't rewritten (rows sync whole, last writer wins).
+      const keptA = keptRows.find((r) => r.file === "coffee.png");
+      const keptB = keptRows.find((r) => r.file === "coffee-again.png");
+      check(
+        !!keptA && !!keptB && keptB.apart.includes(keptA.id) && keptA.apart.length === 0,
+        "Keep both records the verdict on the copy that held the warning, and leaves the original alone",
+      );
+      check(
+        await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')),
+        "focus stays inside the review dialog after Keep both",
+      );
+      // Delete the copy (the footer Delete), then close: back to 7 receipts.
+      await page.getByRole("button", { name: "Delete", exact: true }).click();
+      await page.waitForFunction(() => document.querySelectorAll(".rc").length === 7, { timeout: 15000 });
+      await page.keyboard.press("Escape");
+      await dupDialog.waitFor({ state: "hidden", timeout: 5000 });
+      const afterDup = await readDupRows();
+      check(
+        afterDup.length === 7 && !afterDup.some((r) => r.file === "coffee-again.png"),
+        `deleting the copy leaves the original (${afterDup.length} receipts)`,
+      );
+    }
+
+    // 7f. The tuning bundle is COMPACT by default (for sharing: no
+    // originals, each highlighted copy re-encoded at ≤ 1100 px through the
+    // real canvas path) and full on request (every original verbatim).
+    {
+      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      const tuneDialog = page.getByRole("dialog", { name: "Settings" });
+      await tuneDialog.waitFor({ timeout: 5000 });
+      const compactOpt = tuneDialog.getByLabel("Compact (smaller, for sharing)");
+      check(await compactOpt.isChecked(), "the tuning bundle defaults to compact");
+      const grabBundle = async () => {
+        const [dl] = await Promise.all([
+          page.waitForEvent("download", { timeout: 60000 }),
+          tuneDialog.getByRole("button", { name: "Download tuning bundle" }).click(),
+        ]);
+        const path = join(dlDir, dl.suggestedFilename());
+        await dl.saveAs(path);
+        const buf = await readFile(path);
+        return { name: dl.suggestedFilename(), size: buf.length, entries: readZipEntries(buf) };
+      };
+      const small = await grabBundle();
+      const smallImgs = small.entries.filter((e) => e.name.startsWith("images/"));
+      const edges = smallImgs.map((e) => {
+        const d = jpegSize(e.data);
+        return d ? Math.max(d.w, d.h) : Infinity;
+      });
+      const rows = JSON.parse(small.entries.find((e) => e.name === "extraction.json")?.data.toString("utf8") ?? "[]");
+      check(
+        /^dueback_tuning_compact_\d{8}\.zip$/.test(small.name) &&
+          ["corrections.json", "extraction.json", "report.csv"].every((n) => small.entries.some((e) => e.name === n)) &&
+          smallImgs.length === 7 &&
+          smallImgs.every((e) => e.name.startsWith("images/annotated/")) &&
+          edges.every((px) => px <= 1100) &&
+          rows.length === 7 &&
+          rows.every((r) => r.originalOmitted === true),
+        `compact bundle: data files + ${smallImgs.length} highlighted images ≤ 1100 px, no originals, every row marked (${small.name}, edges ${edges.join("/")})`,
+      );
+      await compactOpt.uncheck();
+      const full = await grabBundle();
+      check(
+        /^dueback_tuning_\d{8}\.zip$/.test(full.name) &&
+          full.entries.some((e) => e.name.startsWith("images/original/")) &&
+          full.size > small.size,
+        `full bundle carries the originals and is the bigger one (${full.size} vs ${small.size} bytes)`,
+      );
+      await compactOpt.check();
+      await page.keyboard.press("Escape");
+      await tuneDialog.waitFor({ state: "hidden", timeout: 5000 });
+    }
+
+    // 7g runs in its own block too.
+    {
+      // 7g. Settings → "Re-check this batch" heals rows stored before two
+      // read-time fixes, from STORED data only (pipeline/recheck.ts). Seed,
+      // straight into IndexedDB and with no job (nothing reads them):
+      //  (a) a legacy AI read — a copy of the coffee receipt as the assist
+      //      stored it before provenance: methodUsed "paid", no `assist`, no
+      //      boxes, no annotated copy, the model's JSON in ocrText;
+      //  (b) a missed pair — a copy of the gas receipt whose vendor reads
+      //      "Shell Oil #42" (same brand identity, date and amount as the
+      //      original "Shell"; the old dedup compared spellings).
+      // The re-check boxes (a) on the lines that print its values and bakes
+      // its annotated copy — values and ocrText untouched — and flags both
+      // later copies against their originals; a second run finds nothing.
+      // Both seeds are then deleted from review so step 8's count holds.
+      const seeded = await page.evaluate(async () => {
+        const open = indexedDB.open("reimbursements-f5");
+        const db = await new Promise((res, rej) => {
+          open.onsuccess = () => res(open.result);
+          open.onerror = () => rej(open.error);
+        });
+        const req = (r) =>
+          new Promise((res, rej) => {
+            r.onsuccess = () => res(r.result);
+            r.onerror = () => rej(r.error);
+          });
+        const tx = db.transaction(["receipts", "blobs"], "readwrite");
+        const receipts = tx.objectStore("receipts");
+        const blobs = tx.objectStore("blobs");
+        const all = await req(receipts.getAll());
+        const byUpload = (n) => all.find((r) => (r.originalFileName ?? r.fileName) === n);
+        const coffee = byUpload("coffee.png");
+        const gas = byUpload("gas.png");
+        // Each seed owns copies of its blobs: deleting it must not take the
+        // original's images with it.
+        const copyBlob = async (key, tag) => {
+          if (!key) return undefined;
+          const rec = await req(blobs.get(key));
+          if (!rec) return undefined;
+          const copy = `blob_e2e_${tag}_${rec.kind}`;
+          await req(blobs.put({ ...rec, key: copy }));
+          return copy;
+        };
+        const bare = (f) => ({ value: f.value, confidence: f.confidence });
+        const now = Date.now();
+        const answer = JSON.stringify({
+          vendor: coffee.vendor.value,
+          date: coffee.date.value,
+          amount: coffee.amount.value,
+          tax: coffee.tax.value,
+          category: coffee.category.value,
+        });
+        const legacy = {
+          ...coffee,
+          id: "rcpt_e2e-legacy-ai",
+          fileKey: await copyBlob(coffee.fileKey, "legacy"),
+          cleanedKey: await copyBlob(coffee.cleanedKey, "legacy"),
+          fileName: "meals_03-14-26_legacy_ai_seed.jpg",
+          originalFileName: "legacy-ai-seed.png",
+          imageHash: "e2e-seed-legacy-ai",
+          vendor: bare(coffee.vendor),
+          date: bare(coffee.date),
+          amount: bare(coffee.amount),
+          methodUsed: "paid",
+          methodDetail: "Self-hosted · test-model",
+          ocrText: answer,
+          flags: [],
+          status: "done",
+          approved: false,
+          reviewRequired: false,
+          createdAt: now,
+          updatedAt: now,
+        };
+        delete legacy.annotatedKey;
+        delete legacy.assist;
+        const pair = {
+          ...gas,
+          id: "rcpt_e2e-missed-pair",
+          fileKey: await copyBlob(gas.fileKey, "pair"),
+          cleanedKey: await copyBlob(gas.cleanedKey, "pair"),
+          annotatedKey: await copyBlob(gas.annotatedKey, "pair"),
+          fileName: "fuel_06-12-26_shell_oil_42.jpg",
+          originalFileName: "missed-pair-seed.png",
+          imageHash: "e2e-seed-missed-pair",
+          vendor: { ...gas.vendor, value: "Shell Oil #42" },
+          flags: [],
+          status: "done",
+          approved: false,
+          reviewRequired: false,
+          createdAt: now + 1,
+          updatedAt: now + 1,
+        };
+        await req(receipts.put(legacy));
+        await req(receipts.put(pair));
+        await new Promise((res, rej) => {
+          tx.oncomplete = res;
+          tx.onerror = () => rej(tx.error);
+        });
+        db.close();
+        return {
+          legacyId: legacy.id,
+          pairId: pair.id,
+          coffeeId: coffee.id,
+          gasId: gas.id,
+          gasVendor: gas.vendor.value,
+          answer,
+          values: [legacy.vendor.value, legacy.date.value, legacy.amount.value],
+          coffeeBoxes: [coffee.vendor.bbox ?? null, coffee.date.bbox ?? null, coffee.amount.bbox ?? null],
+          blobKeys: [legacy.fileKey, legacy.cleanedKey, pair.fileKey, pair.cleanedKey, pair.annotatedKey].filter(Boolean),
+        };
+      });
+      log(`seeded a legacy AI read and a "Shell Oil #42" copy of "${seeded.gasVendor}"`);
+
+      /** The seeded rows (and their original twins) as stored, with the
+       *  annotated blob each one points at. */
+      const readSeeded = () =>
+        page.evaluate(async (ids) => {
+          const open = indexedDB.open("reimbursements-f5");
+          const db = await new Promise((res, rej) => {
+            open.onsuccess = () => res(open.result);
+            open.onerror = () => rej(open.error);
+          });
+          const req = (r) =>
+            new Promise((res, rej) => {
+              r.onsuccess = () => res(r.result);
+              r.onerror = () => rej(r.error);
+            });
+          const tx = db.transaction(["receipts", "blobs"], "readonly");
+          const out = {};
+          for (const id of ids) {
+            const r = await req(tx.objectStore("receipts").get(id));
+            if (!r) {
+              out[id] = null;
+              continue;
+            }
+            const ann = r.annotatedKey ? await req(tx.objectStore("blobs").get(r.annotatedKey)) : null;
+            out[id] = {
+              status: r.status,
+              methodUsed: r.methodUsed,
+              ocrText: r.ocrText,
+              values: [r.vendor.value, r.date.value, r.amount.value],
+              boxes: [r.vendor.bbox ?? null, r.date.bbox ?? null, r.amount.bbox ?? null],
+              annotatedKey: r.annotatedKey ?? null,
+              annotated: ann ? { kind: ann.kind, size: ann.blob.size } : null,
+              dups: (r.flags || [])
+                .filter((f) => f.code === "duplicate")
+                .map((f) => ({ ref: f.ref ?? null, message: f.message })),
+            };
+          }
+          db.close();
+          return out;
+        }, [seeded.legacyId, seeded.pairId, seeded.coffeeId, seeded.gasId]);
+
+      await page.getByRole("button", { name: "Settings" }).click();
+      const settings = page.getByRole("dialog", { name: "Settings" });
+      await settings.waitFor({ timeout: 5000 });
+      const recheck = settings.getByRole("button", { name: "Re-check this batch" });
+      await recheck.click({ timeout: 10000 });
+      await page
+        .getByText("Added outlines to 1 older AI read and flagged 2 possible duplicates.", { exact: true })
+        .waitFor({ timeout: 20000 });
+      check(true, "Re-check reports what it healed (1 set of outlines, 2 duplicate flags)");
+
+      const healed = await readSeeded();
+      const legacy = healed[seeded.legacyId] ?? {};
+      const pair = healed[seeded.pairId] ?? {};
+      const [vBox, dBox, aBox] = legacy.boxes ?? [];
+      check(!!vBox && !!dBox && !!aBox, `legacy AI read: vendor/date/amount outlined (got ${JSON.stringify(legacy.boxes)})`);
+      // Same stored lines as the coffee read → each box sits on the line the
+      // rules read that value from.
+      const sameLine = (a, b) => !!a && !!b && a.y < b.y + b.h && b.y < a.y + a.h;
+      check(
+        [vBox, dBox, aBox].every((b, i) => sameLine(b, seeded.coffeeBoxes[i])),
+        "legacy AI read: each outline sits on the line that prints its value",
+      );
+      check(
+        !!legacy.annotatedKey && legacy.annotated?.kind === "annotated" && legacy.annotated.size > 0,
+        `legacy AI read: the annotated copy is baked and stored (${legacy.annotatedKey})`,
+      );
+      check(
+        legacy.ocrText === seeded.answer &&
+          legacy.methodUsed === "paid" &&
+          JSON.stringify(legacy.values) === JSON.stringify(seeded.values),
+        "legacy AI read: values, method and ocrText untouched (no OCR, no AI call)",
+      );
+      check(
+        legacy.dups?.length === 1 && legacy.dups[0].ref === seeded.coffeeId && legacy.status === "needs_review",
+        `legacy AI read: flagged as the coffee receipt's copy and sent to review (${JSON.stringify(legacy.dups)} [${legacy.status}])`,
+      );
+      check(
+        pair.dups?.length === 1 && pair.dups[0].ref === seeded.gasId && pair.status === "needs_review",
+        `missed pair: "Shell Oil #42" flagged against "${seeded.gasVendor}" by id, sent to review (${JSON.stringify(pair.dups)} [${pair.status}])`,
+      );
+      check(
+        healed[seeded.coffeeId]?.dups.length === 0 && healed[seeded.gasId]?.dups.length === 0,
+        "the originals gain no flag — only the copy read second holds it",
+      );
+
+      await recheck.click({ timeout: 10000 });
+      await page.getByText("Nothing to fix — this batch is up to date.", { exact: true }).waitFor({ timeout: 20000 });
+      check(true, "a second re-check finds nothing to fix");
+      await page.keyboard.press("Escape");
+      await settings.waitFor({ state: "hidden", timeout: 5000 });
+
+      // Delete both seeds from review (row + blobs): back to 7 receipts.
+      await page.waitForFunction(() => document.querySelectorAll(".rc").length === 9, { timeout: 15000 });
+      const review = page.getByRole("dialog", { name: /Review receipt/ });
+      for (const name of ["fuel_06-12-26_shell_oil_42.jpg", "meals_03-14-26_legacy_ai_seed.jpg"]) {
+        await page.locator(".rc", { hasText: name }).click();
+        await review.waitFor({ timeout: 10000 });
+        await review.getByRole("button", { name: "Delete", exact: true }).click();
+        await page.waitForFunction(
+          (n) => ![...document.querySelectorAll(".rc .fname")].some((el) => el.textContent === n),
+          name,
+          { timeout: 15000 },
+        );
+        await page.keyboard.press("Escape");
+        await review.waitFor({ state: "hidden", timeout: 5000 });
+      }
+      await page.waitForFunction(() => document.querySelectorAll(".rc").length === 7, { timeout: 15000 });
+      const gone = await readSeeded();
+      const leftBlobs = await page.evaluate(async (keys) => {
+        const open = indexedDB.open("reimbursements-f5");
+        const db = await new Promise((res, rej) => {
+          open.onsuccess = () => res(open.result);
+          open.onerror = () => rej(open.error);
+        });
+        const tx = db.transaction("blobs", "readonly");
+        const found = [];
+        for (const k of keys) {
+          const rec = await new Promise((res) => {
+            const r = tx.objectStore("blobs").get(k);
+            r.onsuccess = () => res(r.result);
+          });
+          if (rec) found.push(k);
+        }
+        db.close();
+        return found;
+      }, [...seeded.blobKeys, legacy.annotatedKey].filter(Boolean));
+      check(
+        gone[seeded.legacyId] === null && gone[seeded.pairId] === null && leftBlobs.length === 0,
+        `the seeds are deleted with their images (left blobs: ${leftBlobs.join(", ") || "none"})`,
+      );
+    }
+
     // 8. Header brand navigates home; the hero offers the way back.
     await page.locator("header.ws-head .brand").click();
     await page.getByRole("heading", { name: /Receipts in/ }).waitFor({ timeout: 10000 });
@@ -671,20 +1381,8 @@ async function main() {
     await page.getByText("Drop receipts here").waitFor({ timeout: 10000 });
     check(true, "landing offers the way back to the workspace");
 
-    // 8b. Phone width: neither surface may overflow the viewport sideways —
-    // an overflowing row used to let touch swipes pan the whole page, and
-    // under the root overflow-x clip it would instead strand controls
-    // off-screen. Measured with the clip disabled so the check catches the
-    // underlying overflow, not the backstop masking it.
-    const contentWidth = () =>
-      page.evaluate(() => {
-        document.documentElement.style.setProperty("overflow-x", "visible", "important");
-        document.body.style.setProperty("overflow-x", "visible", "important");
-        const w = document.scrollingElement.scrollWidth;
-        document.documentElement.style.removeProperty("overflow-x");
-        document.body.style.removeProperty("overflow-x");
-        return w;
-      });
+    // 8b. Phone width: neither surface may overflow the viewport sideways
+    // (contentWidth, above 7c).
     await page.setViewportSize({ width: 390, height: 844 });
     const wsW = await contentWidth();
     check(wsW <= 390, `workspace fits a 390px phone with receipts on the board (scrollWidth ${wsW})`);
@@ -696,6 +1394,35 @@ async function main() {
     await settingsDialog.waitFor({ state: "hidden", timeout: 5000 });
     await page.locator("header.ws-head .brand").click();
     await page.getByRole("heading", { name: /Receipts in/ }).waitFor({ timeout: 10000 });
+    // Settings from the landing: the nav's gear opens the same App-level
+    // dialog, without touching the hash or leaving the landing.
+    const gear = page.getByRole("button", { name: "Settings", exact: true });
+    await gear.click();
+    await settingsDialog.waitFor({ timeout: 5000 });
+    check(true, "Settings opens from the landing nav at phone width");
+    check(
+      (await page.locator("input[type=file][multiple]").count()) === 1,
+      "the landing's picker stays the page's only multi-file input with Settings open",
+    );
+    // A file dragged over the open dialog (Brands' logo picker) must not
+    // raise the page-wide drop veil over it.
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.items.add(new File(["x"], "logo.png", { type: "image/png" }));
+      window.dispatchEvent(new DragEvent("dragenter", { dataTransfer: dt, bubbles: true, cancelable: true }));
+    });
+    check((await page.locator(".drop-veil").count()) === 0, "a file drag over open Settings raises no drop veil");
+    await page.keyboard.press("Escape");
+    await settingsDialog.waitFor({ state: "hidden", timeout: 5000 });
+    check(
+      await gear.evaluate((el) => el === document.activeElement),
+      "closing Settings returns focus to the landing gear",
+    );
+    check((await page.evaluate(() => location.hash)) !== "#process", "Settings on the landing leaves the hash alone");
+    check(
+      await page.getByRole("heading", { name: /Receipts in/ }).isVisible(),
+      "the landing stays put under Settings",
+    );
     const landW = await contentWidth();
     check(landW <= 390, `landing fits a 390px phone (scrollWidth ${landW})`);
     await page.setViewportSize({ width: 1280, height: 720 });

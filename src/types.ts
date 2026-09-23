@@ -11,8 +11,11 @@ export type ReceiptStatus =
   | "needs_review"
   | "failed";
 
-/** Which extraction tier produced a result. Recorded per-receipt so the
- *  "this batch cost you $0.00" line is honest and a spend-cap is trivial. */
+/** Which extraction tier produced a result, recorded per-receipt so the
+ *  "this batch cost you $0.00" line is honest. "paid" is the PERSISTED name
+ *  for any AI-assist read — local and self-hosted models included, which
+ *  cost $0 — kept so stored and synced rows need no migration;
+ *  `methodDetail` names the backend/model/strategy and `cost` what it cost. */
 export type ExtractionMethod = "rules" | "paid";
 
 /** Expense categories used for the per-category sheets and the lookup table. */
@@ -46,6 +49,7 @@ export type FlagCode =
   | "no_vendor"
   | "total_mismatch"
   | "total_suspect"
+  | "date_suspect"
   | "vendor_unclear"
   | "future_date"
   | "stale_date"
@@ -58,6 +62,14 @@ export interface Flag {
   code: FlagCode;
   message: string;
   severity: "info" | "warn" | "error";
+  /** On a `duplicate` flag only: the id of the receipt this one appears to
+   *  duplicate, so review can show the two side by side. File names are
+   *  labels — renamed on every edit, and twins COLLIDE — so the message's
+   *  quoted name is never the lookup key. Absent on flags stored before it
+   *  existed; review resolves those from the message
+   *  (dedup.resolveDuplicateFlag). Rides the sync payload jsonb — no
+   *  migration. */
+  ref?: string;
 }
 
 /** A single extracted field plus where on the image it came from and how
@@ -119,6 +131,55 @@ export interface LogoMatch {
   source: "ocr" | "logo" | "ai";
 }
 
+/** Who read a receipt when the AI assist produced its result, and how
+ *  (vision/provenance.ts builds it). Rides the sync payload with no
+ *  migration. Absent on rules reads — and on AI reads stored before it
+ *  existed, whose `ocrText` holds the model's answer instead of the OCR read
+ *  (`isLegacyAiRead`). The endpoint URL and key are deliberately NOT
+ *  recorded: a self-hosted host name is internal network topology that
+ *  would sync and ship in mailed tuning bundles, and the key is a secret —
+ *  `host` and `keySource` answer "where" and "whose" without either. The
+ *  literal unions keep this file free of pipeline imports; assigning
+ *  vision's `Backend`/`Strategy` to them makes tsc catch any drift. */
+export interface AssistProvenance {
+  backend: "local" | "selfhosted" | "cloud";
+  /** The endpoint's label — the server KIND ("Ollama", "Self-hosted",
+   *  "OpenRouter"…), never its address. */
+  provider: string;
+  /** The configured model id. */
+  model: string;
+  /** The model the server says answered, when it differs from `model`:
+   *  OpenRouter's free router picks one per request, and a dated snapshot
+   *  answers for an alias. An agent run lists each ("a, b"). */
+  servedModel?: string;
+  /** Where the model ran — this machine, the local network, or the internet
+   *  (did the image leave the building?). Derived from the URL, never it. */
+  host: "this-device" | "private-network" | "internet";
+  /** Whose credential the call used: the user's own key, the build's free
+   *  router key, the signed-in account proxy, or none (a keyless server). */
+  keySource: "own" | "builtin" | "account" | "none";
+  /** The strategy Settings asked for, and the one that ran — the account
+   *  proxy relays one-shot reads only, so the two can differ. */
+  requestedStrategy: "oneshot" | "agentic";
+  strategy: "oneshot" | "agentic";
+  viaProxy: boolean;
+  /** Model calls the read took (1 for one-shot). */
+  calls: number;
+  /** The model's own answer — one-shot JSON, the agent's trace, or a
+   *  thinking model's reasoning — tail-capped (`ASSIST_RAW_MAX`). */
+  rawAnswer: string;
+  /** The free rules tier's read the AI replaced: tells "rules were right and
+   *  the model broke it" apart from "both missed". */
+  rules: {
+    vendor: string;
+    date: string;
+    amount: number;
+    tax: number;
+    category: Category;
+    confidence: number;
+  };
+}
+
 /** A brand the user taught the app by uploading a logo image (zero-shot,
  *  no retraining) — stored locally, synced to `brand_logos` when signed in. */
 export interface StoredBrand {
@@ -162,8 +223,17 @@ export interface Receipt {
   /** Overall 0..1 confidence across the receipt. */
   confidence: number;
   flags: Flag[];
+  /** Receipts a human said this one is NOT a duplicate of (review's "Keep
+   *  both"), by id, stored on BOTH rows. Clearing the flags alone left no
+   *  trace, so the next read or re-check paired them again; dedup never
+   *  pairs a kept-apart couple (`dedup.keptApart`). Rides the sync payload,
+   *  no migration. */
+  notDuplicateOf?: string[];
 
-  /** Full OCR text, kept for re-parsing and the review panel. */
+  /** Full OCR text — the on-device read, reused by the image-hash cache and
+   *  shipped in the tuning bundle. Never an AI answer (that lives in
+   *  `assist.rawAnswer`); AI reads stored before `assist` existed are the
+   *  exception (vision/provenance.ts isLegacyAiRead). */
   ocrText?: string;
   /** Pruned per-line OCR geometry (no words), kept so a human correction can
    *  be located and re-highlighted on the image and logged for training. */
@@ -173,10 +243,13 @@ export interface Receipt {
   logoMatch?: LogoMatch;
 
   methodUsed: ExtractionMethod;
-  /** When a paid tier produced the result, which provider/model (for the
-   *  review panel + an honest audit trail). Absent on the free rules path. */
+  /** When an AI assist produced the result, "provider · model · one-shot|
+   *  agentic, N calls" (vision/provenance.ts `assistMethodDetail`) for the
+   *  review panel + an honest audit trail. Absent on the free rules path. */
   methodDetail?: string;
   cost: number; // dollars spent on this receipt (free path = 0)
+  /** Who read it and how, when an AI assist produced the result. */
+  assist?: AssistProvenance;
 
   approved: boolean;
   reviewRequired: boolean;

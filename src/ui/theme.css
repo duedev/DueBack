@@ -343,6 +343,7 @@ input[type="date"],
 input[type="number"],
 input[type="password"],
 input[type="email"],
+input[type="url"],
 select,
 textarea {
   font: 400 0.95rem/1.4 var(--font-ui);
@@ -390,6 +391,7 @@ textarea:focus-visible {
   input[type="number"],
   input[type="password"],
   input[type="email"],
+  input[type="url"],
   select,
   textarea {
     font-size: 1rem;

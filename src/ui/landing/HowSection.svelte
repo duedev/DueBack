@@ -91,8 +91,8 @@
             <span class="step-head">
               <span class="step-title">Download the Excel workbook</span>
               <span class="step-deck">
-                One click builds a themed Excel report and a print packet PDF
-                of the receipts for offices that keep paper.
+                One click builds a themed Excel report. Offices that keep
+                paper get a print packet PDF of the receipts with one more.
               </span>
             </span>
           </summary>

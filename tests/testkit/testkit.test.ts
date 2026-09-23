@@ -92,3 +92,22 @@ test("logo-only receipt: visual identity completes an unreadable vendor", () => 
   );
   assert.equal(sc.score, 1);
 });
+
+test("Chevron-app e-receipt (real OCR lines): the city and the card network never become the vendor", () => {
+  // Page 5 of the owner's Chevron PDF, line for line: the app prints the
+  // state in lowercase ("Anaheim, ca" used to win the vendor slot), the
+  // tender block names the card network, and the only brand is glued into
+  // the SITE ID. Standalone like the logo case; the fixed suite is untouched.
+  const lines = [
+    "Receipt — 2025-07-09", "3085 La Palma Ave", "H&S 2049, 00209813", "Anaheim, ca",
+    "07/09/2025 121166199", "09:00:21 AM", "XXXXXKXXXXXXX2007", "P97", "INVOICE 0000010980",
+    "AUTH 105525", "SITE ID: chevron0020-981", "3", "AmericanExpress Credit",
+    "SITE ID: chevron0020-981", "3", "AmericanExpress Credit", "PUMP# 7",
+    "UNLEAD REG 15.770G", "PRICE/GAL $4.699", "FUEL TOTAL $ 74.10", "Total = $ 74.10",
+    "CREDIT $ 74.10", "THANK YOU FOR BEING", "A REWARDS MEMBER", "Customer Copy",
+  ];
+  const ex = parseReceipt(linesToOcr(lines, 93));
+  const got = { vendor: ex.vendor.value, date: ex.date.value, amount: ex.amount.value, category: ex.category.value };
+  const sc = scoreExtraction({ vendor: "Chevron", date: "2025-07-09", amount: 74.1, category: "Fuel" }, got);
+  assert.equal(sc.score, 1, JSON.stringify(got));
+});

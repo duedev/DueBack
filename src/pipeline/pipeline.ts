@@ -7,14 +7,16 @@ import {
   matchKnownVendor,
   type Extraction,
 } from "./extract.ts";
-import { findSemanticDuplicate, type DupRecord } from "./dedup.ts";
+import { duplicateFlag, keptApart } from "./dedup.ts";
 import { getOcrEngine, type OcrEngine } from "./ocr.ts";
 import { runVisionAssist, shouldAssist, type VisionAssist } from "./vision/index.ts";
+import { assistMethodDetail, reusableOcr } from "./vision/provenance.ts";
 import { receiptFileName } from "../util/rename.ts";
 import { annotateReceipt, HIGHLIGHT_COLORS } from "./annotate.ts";
 import { logoIndexAvailable, cropHeaderBand, searchLogo, type LogoHit } from "./logo/index.ts";
 import { fuseVendorIdentity } from "./logo/fuse.ts";
 import { CONFIDENCE, OCR_RESCUE } from "../config/constants.ts";
+import { isAbortError, throwIfAborted } from "../util/abort.ts";
 import type { Receipt, Flag, OcrResult, ExtractionMethod, LogoMatch } from "../types.ts";
 
 // The worker's job, end to end (§8 "Process"): clean → hash (cache/dedup) →
@@ -54,10 +56,28 @@ export function completionWriteMode(
   return "full";
 }
 
+/** What a paused run hands its receipt back as. Only a run's own
+ *  "processing" stamp is undone — any other status is a human's (or a
+ *  sync mirror's) and stays. An approval that landed mid-flight un-strands
+ *  to "done", the completion write's rule. Pure; Node-tested. */
+export function pausedStatus(
+  latest: Pick<Receipt, "approved" | "status"> | undefined,
+): "queued" | "done" | null {
+  if (!latest || latest.status !== "processing") return null;
+  return latest.approved ? "done" : "queued";
+}
+
+/** `signal` is the queue's pause: the run checks it between stages and
+ *  unwinds with an AbortError (the receipt back to "queued" — see the
+ *  catch). Stages added before the AI assist should check it too; nothing
+ *  checks it once a metered assist call starts (that answer is billed). */
 export async function processReceipt(
   receiptId: string,
   engine: OcrEngine = getOcrEngine(),
+  signal?: AbortSignal,
 ): Promise<void> {
+  // Before the claim: nothing written yet, the queue just gives the job back.
+  throwIfAborted(signal);
   const receipt = await repo.getReceipt(receiptId);
   if (!receipt) return;
 
@@ -86,6 +106,11 @@ export async function processReceipt(
   try {
     // 1. Clean (auto-rotate, grayscale, auto-crop, downscale).
     const cleaned = await cleanImage(original);
+    // Pause checkpoints run from here to just before the AI assist, never
+    // past it: a run that reached a metered call finishes and lands rather
+    // than bill the same receipt twice on resume. This one sits before the
+    // blob write, so a pause stores nothing just to delete it.
+    throwIfAborted(signal);
     cleanedKey = await repo.putBlob(cleaned.blob, "cleaned");
 
     // 2. Hash the cleaned bytes → cache key + dedup key.
@@ -95,16 +120,17 @@ export async function processReceipt(
     const sameHash = (await repo.findByHash(imageHash)).filter(
       (r) => r.id !== receiptId,
     );
-    const cached = sameHash.find((r) => r.ocrText && r.ocrText.length > 0);
+    const cached = sameHash.map(reusableOcr).find((c) => c !== null) ?? null;
 
     let ocr: OcrResult;
-    if (cached?.ocrText) {
+    if (cached) {
       ocr = {
-        text: cached.ocrText,
-        confidence: cached.confidence * 100,
+        text: cached.text,
+        confidence: cached.confidence,
         // Reuse the cached geometry too — without it, a re-uploaded duplicate
-        // can never locate corrections or heal its highlights.
-        lines: cached.ocrLines ?? [],
+        // can never locate corrections or heal its highlights. An AI row's
+        // own answer and confidence are never lent (vision/provenance.ts).
+        lines: cached.lines,
         words: [],
       };
     } else {
@@ -114,11 +140,13 @@ export async function processReceipt(
         cleaned.ocrBlob,
         cleaned.ocrWidth,
         cleaned.ocrHeight,
+        signal,
       );
     }
 
     // 4. Rules extraction (free, deterministic, on-device).
     let ex: Extraction = parseReceipt(ocr);
+    throwIfAborted(signal);
 
     // 4a. Weak-read rescue: when the grayscale pass reads poorly (or the
     //     rules can't find an amount), retry on an adaptively binarized copy
@@ -127,13 +155,15 @@ export async function processReceipt(
     //     strictly retry-only — never the first pass. Best-effort: any
     //     failure keeps the original read.
     if (
-      !cached?.ocrText &&
+      !cached &&
       OCR_RESCUE.binarize &&
       (ocr.confidence < OCR_RESCUE.minConfidence || ex.amount.value <= 0)
     ) {
       try {
         const bin = await binarizeBlob(cleaned.ocrBlob);
-        const ocr2 = await engine.recognize(bin.blob, bin.width, bin.height);
+        // A pause here is swallowed by the catch below; the checkpoint
+        // after the block unwinds it.
+        const ocr2 = await engine.recognize(bin.blob, bin.width, bin.height, signal);
         const ex2 = parseReceipt(ocr2);
         // Swap only when the retry is strictly safer: it found an amount the
         // first pass missed, or BOTH passes agree on the amount (then it's a
@@ -153,10 +183,10 @@ export async function processReceipt(
         /* rescue is pure upside — never fail the receipt over it */
       }
     }
+    throwIfAborted(signal);
     let methodUsed: ExtractionMethod = "rules";
     let methodDetail: string | undefined;
     let cost = 0;
-    let ocrTextOut = ocr.text;
     // Pruned per-line geometry is persisted so a later human correction can
     // be located on the image, re-highlighted, and logged for training.
     const ocrLines = ocr.lines.map((l) => ({
@@ -198,72 +228,64 @@ export async function processReceipt(
     } catch {
       /* logo layer is pure upside — never fail the receipt over it */
     }
+    throwIfAborted(signal);
 
-    // 4c. Optional paid accuracy dial (§5/§9): for a low-confidence receipt, and
-    //     only when the user has opted in + supplied a key, get a vision-model
-    //     second opinion. It returns the same Extraction shape, so everything
+    // 4c. Optional AI accuracy dial (§5/§9): for a low-confidence receipt, and
+    //     only when the user has opted in and configured a backend (local,
+    //     self-hosted or cloud), get a vision-model second opinion — one-shot,
+    //     or an agent that can also search this OCR read. It returns the same
+    //     Extraction shape — boxes anchored on these OCR lines — so everything
     //     below is identical. Any failure silently keeps the free result.
     let assist: VisionAssist | null = null;
     if (shouldAssist(ex)) {
-      // Never spend a paid call on a result that could not land: a receipt
+      // Never spend an AI call on a result that could not land: a receipt
       // deleted or human-touched mid-flight completes as skip/technical
       // (below), so the assist's answer would be discarded — and billed.
       const pre = await repo.getReceipt(receiptId);
       if (completionWriteMode(pre, claimed.updatedAt, touchedBeforeClaim(receipt)) === "full") {
-        assist = await runVisionAssist(cleaned.blob, ex);
+        // The LAST pause checkpoint — after the gate's read, right before
+        // anything can be billed. Past it, only a free (local/self-hosted)
+        // call listens to the signal; a metered one finishes and lands.
+        throwIfAborted(signal);
+        assist = await runVisionAssist(cleaned.blob, ex, ocr.lines, { signal });
       }
     }
     if (assist) {
       ex = assist.extraction;
       methodUsed = "paid";
-      methodDetail = `${assist.provider} · ${assist.model}`;
+      methodDetail = assistMethodDetail(assist.provenance);
       cost = assist.costUsd;
-      if (assist.rawText) ocrTextOut = assist.rawText;
+      // The model's answer lives in `assist.rawAnswer`; ocrText stays the
+      // OCR read — the hash cache and the tuning bundle depend on it (it
+      // used to become the model's JSON, which the cache re-parsed as if
+      // it were printed on the receipt).
     }
 
     // 5. Duplicate detection within the same batch. First an exact image-hash
     //    match (byte-identical re-upload); failing that, a semantic match on
     //    vendor + date + amount (the same receipt photographed twice).
     const flags: Flag[] = [...ex.flags];
-    let duplicateOf: string | null = null;
-    const dupInBatch = sameHash.find((r) => r.batchId === receipt.batchId);
-    if (dupInBatch) {
-      duplicateOf = dupInBatch.fileName;
-      flags.unshift({
-        code: "duplicate",
-        severity: "warn",
-        message: `Looks identical to "${dupInBatch.fileName}".`,
-      });
-    } else {
-      const siblings = await repo.listReceipts(receipt.batchId);
-      const others: DupRecord[] = siblings
-        .filter((r) => r.id !== receiptId)
-        .map((r) => ({
-          id: r.id,
-          label: r.fileName,
-          vendor: r.vendor.value,
-          date: r.date.value,
-          amount: r.amount.value,
-        }));
-      const semDup = findSemanticDuplicate(
-        {
-          id: receiptId,
-          label: receipt.fileName,
-          vendor: ex.vendor.value,
-          date: ex.date.value,
-          amount: ex.amount.value,
-        },
-        others,
-      );
-      if (semDup) {
-        duplicateOf = semDup.label;
-        flags.unshift({
-          code: "duplicate",
-          severity: "warn",
-          message: `Same vendor, date and amount as "${semDup.label}" — possible duplicate.`,
-        });
-      }
-    }
+    // Last tier: the same amount plus a shared approval/invoice/reference
+    // code (a card slip and its invoice, whose vendor and date reads
+    // differ). The flag names its twin by id (Flag.ref) so review can show
+    // both side by side — dedup.duplicateFlag.
+    const read = {
+      id: receiptId,
+      vendor: ex.vendor.value,
+      date: ex.date.value,
+      amount: ex.amount.value,
+      lines: ocrLines,
+      // A couple a human kept apart ("Keep both") is never paired again.
+      notDuplicateOf: receipt.notDuplicateOf,
+    };
+    const hashTwin = sameHash.find((r) => r.batchId === receipt.batchId && !keptApart(read, r));
+    const duplicateOf = duplicateFlag(
+      read,
+      hashTwin,
+      // The batch is only needed when no byte-identical twin answered.
+      hashTwin ? [] : await repo.listReceipts(receipt.batchId),
+    );
+    if (duplicateOf) flags.unshift(duplicateOf);
 
     const needsReview =
       forcesManualReview(flags) ||
@@ -321,7 +343,7 @@ export async function processReceipt(
         imageHash,
         imageWidth: cleaned.width,
         imageHeight: cleaned.height,
-        ocrText: ocrTextOut,
+        ocrText: ocr.text,
         ocrLines,
         // A mid-flight save doesn't set status, which would strand the receipt
         // in "processing" — hand it to review. An approval's "done" stays, and
@@ -349,6 +371,10 @@ export async function processReceipt(
         logoMatch,
         methodUsed,
         methodDetail,
+        // Full patch only: when a human touched the receipt mid-flight the
+        // AI values are discarded, and so is their provenance. Undefined on
+        // a rules read clears a stale record, like methodDetail.
+        assist: assist?.provenance,
         cost,
         reviewRequired: needsReview,
         status: needsReview ? "needs_review" : "done",
@@ -367,10 +393,15 @@ export async function processReceipt(
       mode = completionWriteMode(latest, claimed.updatedAt, true); // someone wrote
     }
   } catch (err) {
-    // Same human-outranks-machine rule on the failure path: never stamp
-    // "failed" (and its flag overwrite) over a receipt approved mid-flight.
     const latest = await repo.getReceipt(receiptId);
-    if (!latest?.approved && latest?.status !== "done") {
+    if (signal?.aborted && isAbortError(err)) {
+      // Paused mid-read: not a failure — hand it back as queued (the queue
+      // returns the claim, attempt included). A real error while paused
+      // still takes the fail path below: both conditions are required.
+      await requeue(receiptId, latest);
+    } else if (!latest?.approved && latest?.status !== "done") {
+      // Same human-outranks-machine rule on the failure path: never stamp
+      // "failed" (and its flag overwrite) over a receipt approved mid-flight.
       await fail(receiptId, friendlyError(err, latest), latest?.updatedAt);
     }
     for (const key of [cleanedKey, annotatedKey]) {
@@ -411,6 +442,21 @@ export function friendlyError(
     return "This image couldn't be decoded — it may be corrupt or an unsupported format.";
   }
   return raw;
+}
+
+/** Undo a paused run's "processing" stamp — a compare-and-swap on the
+ *  re-read `updatedAt`, like the completion write, so a save that slips in
+ *  is re-read rather than overwritten. There is no unconditional last
+ *  write: a row left "processing" is harmless (its job is unclaimed, and
+ *  the next claim re-stamps it). */
+async function requeue(receiptId: string, latest: Receipt | undefined): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const status = pausedStatus(latest);
+    if (!status || !latest) return;
+    const written = await repo.updateReceipt(receiptId, { status }, { updatedAt: latest.updatedAt });
+    if (written !== null) return;
+    latest = await repo.getReceipt(receiptId);
+  }
 }
 
 async function fail(

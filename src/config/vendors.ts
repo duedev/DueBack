@@ -512,6 +512,64 @@ export function maskBrandExclusions(low: string): string {
  *  same-length spaces before both passes. */
 const WALLET_TENDER_RE = /\b(?:google|amazon|apple|samsung|android)\s*pay\b/gi;
 
+// ── Payment networks & processors ───────────────────────────────────────────
+/** Card networks, debit networks, processors/acquirers, terminal/POS makers
+ *  and wallets. Every slip prints one in its tender block ("AmericanExpress
+ *  Credit", "Powered by Toast", the Chevron app's "P97") — none of them sold
+ *  the goods, so a vendor that IS one (the AI assist answered "AMERICAN
+ *  EXPRESS" for a Banning, CA fill-up) is never accepted. Matched as the
+ *  WHOLE name (squashed; tender words and a masked card number allowed after
+ *  it, a card issuer before a network), never as a substring: "Clover Food
+ *  Lab", "Heartland Co-op" and "Discovery Toys" are real merchants. Principle
+ *  for additions: the company moves money for merchants and never sells to
+ *  the public under that name — so never a bare BANK name (a bank can be a
+ *  real payee). tests/vendorDb.test.ts pins that no brand collides. */
+const PAYMENT_NAMES = [
+  // Card networks, with the abbreviations slips print.
+  "american express", "amex", "am express", "amer express", "visa", "mastercard",
+  "mastercrd", "discover", "diners club", "diners", "jcb", "unionpay", "china unionpay",
+  // Debit networks, and the bare tender words a model may hand back.
+  "maestro", "interac", "ebt", "us debit", "debit", "credit",
+  // Processors, acquirers and payment platforms.
+  "square", "stripe", "paypal", "venmo", "cash app", "zelle", "clover", "toast",
+  "heartland", "heartland payment systems", "worldpay", "vantiv", "elavon",
+  "chase paymentech", "paymentech", "first data", "fiserv", "tsys",
+  "total system services", "global payments", "shift4", "adyen", "moneris", "braintree",
+  // Terminals, POS and fuel-app platforms.
+  "verifone", "ingenico", "ncr", "ncr voyix", "p97",
+  // Wallets.
+  "apple pay", "google pay", "samsung pay", "android pay", "amazon pay",
+];
+/** Issuers printed in front of a network ("CHASE VISA", "Capital One
+ *  Mastercard") — only ever as a prefix: "Chase" alone may be a payee. */
+const CARD_ISSUERS = [
+  "chase", "citi", "capital one", "wells fargo", "bank of america", "us bank",
+  "synchrony", "barclays",
+];
+const squashName = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+// "Powered by Toast", "AmericanExpress Credit", "VISA CARD", "Chase Visa",
+// "MASTERCRD XXXX1234" (a masked card number squashes to "xxxx1234").
+const PAYMENT_NAME_RE = new RegExp(
+  `^(?:poweredby|processedby|via)?(?:${CARD_ISSUERS.map(squashName).join("|")})?` +
+    `(?:${PAYMENT_NAMES.map(squashName).join("|")})` +
+    `(?:credit|debit|card|sale|purchase|contactless|approved|inc|llc|corp)*x*\\d{0,6}$`,
+);
+
+/** True when a vendor name is a card network / payment processor / wallet —
+ *  never the merchant (Node-tested). */
+export function isPaymentBrandName(name: string): boolean {
+  const s = squashName(name);
+  return s.length > 0 && PAYMENT_NAME_RE.test(s);
+}
+
+/** Processor descriptor prefixes ("SQ *JOES COFFEE", "TST* CORNER BISTRO",
+ *  "PAYPAL *ACME"): the part before the star names who moved the money; the
+ *  merchant is the rest. */
+const PROCESSOR_PREFIX_RE = /^\s*(?:sq|tst|sp|pp|paypal|square|toast|clover|clv)\s*\*\s*(?=[a-z0-9])/i;
+export function stripProcessorPrefix(name: string): string {
+  return name.replace(PROCESSOR_PREFIX_RE, "");
+}
+
 export interface VendorMatch {
   name: string;
   category: Category;

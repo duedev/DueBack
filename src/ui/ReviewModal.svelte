@@ -1,13 +1,23 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { app } from "./state.svelte.ts";
   import { repo } from "../store/repo.ts";
   import { CATEGORIES } from "../config/categories.ts";
-  import { parseAmount, safeAmount } from "../util/money.ts";
-  import { isValidIso } from "../util/format.ts";
+  import { parseAmount, safeAmount, formatMoney } from "../util/money.ts";
+  import { isValidIso, formatDate } from "../util/format.ts";
   import { receiptFileName } from "../util/rename.ts";
   import { annotateReceipt, HIGHLIGHT_COLORS } from "../pipeline/annotate.ts";
   import { buildCorrectionRecords, appendCorrections } from "../train/corrections.ts";
   import { locateValue, readValueInBox } from "../pipeline/extract.ts";
+  import {
+    duplicatePairs,
+    duplicateReason,
+    flagsWithoutDuplicate,
+    planDuplicateDelete,
+    resolveDuplicateFlag,
+    retargetDuplicateFlags,
+    type DuplicateDeletePlan,
+  } from "../pipeline/dedup.ts";
   import type { Receipt, BBox, Category, OcrLine, Field, Flag } from "../types.ts";
 
   // The review sweep: board → modal → keyboard Approve & Next. On-image markers
@@ -20,6 +30,16 @@
   /** Still being read (the modal opens any card): approving now would stamp
    *  the empty form as the human's answer, so Approve waits. */
   const busy = $derived(current?.status === "queued" || current?.status === "processing");
+  /** Same rule as Card's pausedHere: this device paused reading, the receipt
+   *  is in its work-list, and nothing is mid-read on it (a metered AI call
+   *  already under way still finishes and keeps "Still reading…"). */
+  const pausedRead = $derived(
+    busy &&
+      app.paused &&
+      !!current &&
+      app.localJobIds.has(current.id) &&
+      (current.status === "queued" || app.runningJobs === 0),
+  );
 
   // Editable copies (re-seeded whenever the open receipt changes). The amount
   // and tax fields are number inputs — Svelte rebinds them as numbers after a
@@ -77,10 +97,15 @@
     amount = r.amount.value ? String(r.amount.value) : "";
     category = r.category.value;
     seeded = { vendor, date, amount, category };
-    imgLoaded = false;
-    imageUrl = null;
     const id = r.id;
     const key = r.cleanedKey ?? r.fileKey;
+    // Same receipt, same image (a flags-only write such as "Keep both", a
+    // synced row): keep the loaded image and its markers — resetting blanked
+    // it to a skeleton for a frame on every such write. Only once an image
+    // is showing: a lookup that found no blob retries on the next write.
+    if (sameReceipt && key === seededImageKey && untrack(() => imageUrl)) return;
+    imgLoaded = false;
+    imageUrl = null;
     seededImageKey = key;
     void app.blobUrl(key).then((u) => {
       // Rapid prev/next: the LAST promise to resolve would win otherwise —
@@ -209,16 +234,26 @@
    *  diffs against the receipt as STORED (not the snapshot taken before the
    *  previous save landed), so the second call finds nothing new to log. */
   let inflight: Promise<void> = Promise.resolve();
-  function applyPatch(receipt: Receipt, patch: Partial<Receipt>): Promise<void> {
-    const next = inflight.then(() => applyPatchNow(receipt, patch));
+  /** Queue `fn` behind every earlier save — review's other writes (the
+   *  duplicate warnings' Keep both / Dismiss) ride the same chain. */
+  function serialized(fn: () => Promise<void>): Promise<void> {
+    const next = inflight.then(fn);
     inflight = next.catch(() => {});
     return next;
+  }
+  function applyPatch(receipt: Receipt, patch: Partial<Receipt>): Promise<void> {
+    return serialized(() => applyPatchNow(receipt, patch));
   }
 
   async function applyPatchNow(receipt: Receipt, patch: Partial<Receipt>): Promise<void> {
     const r = ((await repo.getReceipt(receipt.id)) ?? $state.snapshot(receipt)) as Receipt;
     const lines = (r.ocrLines ?? []) as OcrLine[];
     const records = buildCorrectionRecords(r, patch, lines);
+    // The flag pruning a save computed (flagsAfterEdit) came from the BOARD
+    // copy, up to one refresh stale: a Keep both / Dismiss that landed just
+    // ahead of it would come back. Re-derive it from the stored row. An
+    // approval's flags are a decision, not a pruning — they stand.
+    if (patch.flags && !patch.approved) patch.flags = flagsAfterEdit(r, patch) ?? r.flags;
 
     // Re-locate ALL highlighted fields on every save — not just the ones
     // changed in THIS patch — so a receipt corrected earlier (or before
@@ -363,7 +398,9 @@
   async function retryRead(): Promise<void> {
     const r = current;
     if (!r) return;
-    if (await app.retryReceipt(r.id)) app.toast("Reading again…", "info");
+    if (await app.retryReceipt(r.id)) {
+      app.toast(app.paused ? "Queued to read again — resume reading to start." : "Reading again…", "info");
+    }
   }
 
   function onKey(e: KeyboardEvent): void {
@@ -429,6 +466,242 @@
     return { update: draw };
   }
 
+  // ---- Suspected duplicate, side by side ----------------------------------
+  // A `duplicate` flag names its twin (Flag.ref; older flags resolve from the
+  // file name they quote). Review puts the twin's image, key fields and
+  // zoomed field slices beside this receipt's — from EITHER side of the pair:
+  // the pipeline flags only the copy read second.
+  const dupPairs = $derived(current ? duplicatePairs(current, list) : []);
+  const dup = $derived(dupPairs[0] ?? null);
+  const dupWhy = $derived(current && dup ? duplicateReason(current, dup.peer) : "");
+  // Primitives, so the effects below re-run only when the pair or the twin's
+  // image changes — `dup` is a fresh object on every board refresh.
+  const pairKey = $derived(current && dup ? `${current.id}|${dup.peer.id}` : "");
+  const peerImageKey = $derived(
+    dup ? (dup.peer.annotatedKey ?? dup.peer.cleanedKey ?? dup.peer.fileKey) : undefined,
+  );
+  let peerUrl = $state<string | null>(null);
+  let peerImgEl = $state<HTMLImageElement | null>(null);
+  let peerLoaded = $state(false);
+  $effect(() => {
+    const key = peerImageKey;
+    peerUrl = null;
+    peerLoaded = false;
+    if (!key) return;
+    let live = true;
+    void app.blobUrl(key).then((u) => {
+      if (live) peerUrl = u;
+    });
+    return () => {
+      live = false;
+    };
+  });
+  // Zoom: a stored full-page app receipt renders its text a few px tall in a
+  // compare column. Each new pair starts unzoomed.
+  let zoomSelf = $state(false);
+  let zoomPeer = $state(false);
+  $effect(() => {
+    void pairKey;
+    zoomSelf = false;
+    zoomPeer = false;
+  });
+  /** The twin's vendor/date/total slices (its boxes, its image). */
+  const peerSlices = $derived.by(() => {
+    const p = dup?.peer;
+    const out: { cls: string; label: string; bbox: BBox }[] = [];
+    if (!p) return out;
+    const add = (bbox: BBox | undefined, cls: string, label: string) => {
+      if (bbox && bbox.w > 0 && bbox.h > 0) out.push({ cls, label, bbox });
+    };
+    add(p.vendor.bbox, "s-vendor", "Vendor");
+    add(p.date.bbox, "s-date", "Date");
+    add(p.amount.bbox, "s-amount", "Total");
+    return out;
+  });
+  /** The upload's own name — renamed twins share their fileName. */
+  const shownName = (r: Receipt): string => r.originalFileName ?? r.fileName;
+
+  /** Svelte action: a zoomed crop of the TWIN's image around a bbox — the
+   *  sibling of `callout`, which is bound to this receipt's image. */
+  type SliceParams = { img: HTMLImageElement | null; loaded: boolean; bbox: BBox };
+  function slice(canvas: HTMLCanvasElement, params: SliceParams): { update: (p: SliceParams) => void } {
+    const draw = ({ img, loaded, bbox: b }: SliceParams) => {
+      if (!img || !loaded || b.w <= 0 || b.h <= 0) return;
+      const iw = img.naturalWidth;
+      const ih = img.naturalHeight;
+      if (!iw || !ih) return;
+      const padX = b.w * 0.12;
+      const padY = b.h * 0.5;
+      const sx = Math.max(0, (b.x - padX) * iw);
+      const sy = Math.max(0, (b.y - padY) * ih);
+      const sw = Math.min(iw - sx, (b.w + padX * 2) * iw);
+      const sh = Math.min(ih - sy, (b.h + padY * 2) * ih);
+      if (sw <= 0 || sh <= 0) return;
+      const scale = Math.min(230 / sw, 60 / sh, 4);
+      canvas.width = Math.max(1, Math.round(sw * scale));
+      canvas.height = Math.max(1, Math.round(sh * scale));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    };
+    draw(params);
+    return { update: draw };
+  }
+
+  let approveBtn = $state<HTMLButtonElement | null>(null);
+  /** The compare panel unmounts once its pair is settled, and focus on one of
+   *  its buttons would fall to <body>, outside the Tab trap. Park it on
+   *  Approve (the natural next step) first — or on the dialog while Approve
+   *  is disabled. */
+  function parkFocus(): void {
+    (approveBtn && !approveBtn.disabled ? approveBtn : dialogEl)?.focus();
+  }
+
+  /** Clear receipt `id`'s duplicate warning about `otherId`, plus any whose
+   *  twin is gone (`otherId` null clears only those). Serialized behind
+   *  pending saves and computed from the STORED flags — a save queued just
+   *  ahead may have pruned others, and the board's copy would resurrect
+   *  them — and written as a CAS on updatedAt, so a sync/pipeline write in
+   *  between is re-read, not clobbered. Only REMOVES flags (like
+   *  flagsAfterEdit): status and approval stay, Approve is still explicit. */
+  function dropDuplicateFlag(id: string, otherId: string | null): Promise<void> {
+    return serialized(async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const stored = await repo.getReceipt(id);
+        if (!stored) return;
+        const flags = flagsWithoutDuplicate(stored, otherId, list);
+        if (flags.length === stored.flags.length) return;
+        if ((await repo.updateReceipt(id, { flags }, { updatedAt: stored.updatedAt })) !== null) return;
+      }
+    });
+  }
+
+  /** Re-point receipt `id`'s duplicate warnings about the deleted `fromId`
+   *  at `keeper` (dedup.retargetDuplicateFlags). `before` is the board as it
+   *  stood before the delete, so a flag stored before `ref` still resolves
+   *  to the copy it was about. Serialized and CAS-guarded like
+   *  dropDuplicateFlag; never adds a warning and never drops a live one. */
+  function retargetDuplicateFlag(
+    id: string,
+    fromId: string,
+    keeper: Receipt,
+    before: readonly Receipt[],
+  ): Promise<void> {
+    return serialized(async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const stored = await repo.getReceipt(id);
+        if (!stored) return;
+        const flags = retargetDuplicateFlags(stored, fromId, keeper, before);
+        if (flags.length === stored.flags.length && flags.every((f, i) => f === stored.flags[i])) return;
+        if ((await repo.updateReceipt(id, { flags }, { updatedAt: stored.updatedAt })) !== null) return;
+      }
+    });
+  }
+
+  /** After deleting `x`: settle the copies it was paired with (a plan from
+   *  dedup.planDuplicateDelete, computed before the delete). The keeper's
+   *  warning about x goes — its card would otherwise keep a warn banner
+   *  about a receipt that no longer exists — or moves onward when x was
+   *  itself a copy of another survivor; every other survivor's warning is
+   *  re-pointed at the keeper. Settling only the first pair left a third
+   *  copy pointing at nothing ("no longer on this board") while its real
+   *  twin sat beside it in the TOTAL. */
+  async function settleDeleted(
+    x: Receipt,
+    plan: DuplicateDeletePlan<Receipt> | null,
+    before: readonly Receipt[],
+  ): Promise<void> {
+    if (!plan) return;
+    const { keeper, onward, others } = plan;
+    await (onward
+      ? retargetDuplicateFlag(keeper.id, x.id, onward, before)
+      : dropDuplicateFlag(keeper.id, x.id));
+    for (const s of others) await retargetDuplicateFlag(s.id, x.id, keeper, before);
+  }
+
+  /** "Keep both" on receipt `id` about `otherId`: drop its warnings about
+   *  the twin AND record the verdict (`notDuplicateOf`), in ONE serialized,
+   *  CAS-guarded write — but only on a row that is written anyway (it held a
+   *  warning), unless `force`: rows sync whole, last-writer-wins, so touching
+   *  a row that held none would let this device's stale copy of it beat
+   *  another device's edit. Clearing the flags alone left no trace, so the
+   *  next read or "Re-check this batch" paired the two again (`keptApart`
+   *  reads either side's record). Resolves whether it wrote. */
+  function keepApart(id: string, otherId: string, force = false): Promise<boolean> {
+    let wrote = false;
+    return serialized(async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const stored = await repo.getReceipt(id);
+        if (!stored) return;
+        const flags = flagsWithoutDuplicate(stored, otherId, list);
+        const dropping = flags.length !== stored.flags.length;
+        const recorded = stored.notDuplicateOf?.includes(otherId) ?? false;
+        if ((!dropping && !force) || (!dropping && recorded)) return;
+        const patch: Partial<Receipt> = {
+          ...(dropping ? { flags } : {}),
+          ...(recorded ? {} : { notDuplicateOf: [...(stored.notDuplicateOf ?? []), otherId] }),
+        };
+        if ((await repo.updateReceipt(id, patch, { updatedAt: stored.updatedAt })) !== null) {
+          wrote = true;
+          return;
+        }
+      }
+    }).then(() => wrote);
+  }
+
+  async function keepBoth(): Promise<void> {
+    const d = dup;
+    const r = current;
+    if (!d || !r) return;
+    parkFocus();
+    // Either copy may hold a warning about the other (or both do): clear
+    // and record on each row that holds one. When neither stored row still
+    // does (a stale board), the open receipt records the verdict alone — one
+    // side is enough for `keptApart`.
+    const here = await keepApart(r.id, d.peer.id);
+    const there = await keepApart(d.peer.id, r.id);
+    if (!here && !there) await keepApart(r.id, d.peer.id, true);
+    app.toast("Kept both — the duplicate warning is cleared.", "ok");
+  }
+  /** Delete the open receipt. While it is part of a suspected pair (or
+   *  cluster), the copies left behind settle around the oldest of them. */
+  async function deleteOpen(): Promise<void> {
+    const r = current;
+    const before = list;
+    const plan = r ? planDuplicateDelete(r, before) : null;
+    await deleteCurrent();
+    if (r) await settleDeleted(r, plan, before);
+  }
+  async function deleteThis(): Promise<void> {
+    // The button unmounts with this receipt: hold focus on the dialog.
+    dialogEl?.focus();
+    await deleteOpen();
+  }
+  async function deletePeer(): Promise<void> {
+    const d = dup;
+    const r = current;
+    if (!d || !r) return;
+    // The human keeps the open receipt; plan before the board drops the twin.
+    const before = list;
+    const plan = planDuplicateDelete(d.peer, before, r);
+    parkFocus();
+    peerUrl = null; // its object URL is revoked with the delete
+    await app.deleteReceipt(d.peer.id);
+    await settleDeleted(d.peer, plan, before);
+  }
+  function openPeer(): void {
+    if (dup) app.reviewId = dup.peer.id;
+  }
+  /** A duplicate warning whose twin no longer resolves (deleted, or an old
+   *  flag nothing matches): nothing to compare, so let it go. */
+  async function dismissStaleDuplicate(): Promise<void> {
+    const r = current;
+    if (!r) return;
+    parkFocus();
+    await dropDuplicateFlag(r.id, null);
+  }
+
   // Each flag renders beside the field it questions, so the reason and the
   // fix share one glance (and one scroll position on a phone). Codes with no
   // home field stay in the general list under the form.
@@ -439,6 +712,7 @@
     no_date: "date",
     future_date: "date",
     stale_date: "date",
+    date_suspect: "date",
     no_amount: "amount",
     total_mismatch: "amount",
     total_suspect: "amount",
@@ -448,8 +722,14 @@
   function flagsFor(field: "vendor" | "date" | "amount" | "category") {
     return (current?.flags ?? []).filter((f) => FLAG_FIELD[f.code] === field);
   }
+  // A duplicate warning whose twin resolves lives in the compare bar; one
+  // whose twin is gone stays here, with a Dismiss.
   const generalFlags = $derived(
-    (current?.flags ?? []).filter((f) => !FLAG_FIELD[f.code]),
+    (current?.flags ?? []).filter(
+      (f) =>
+        !FLAG_FIELD[f.code] &&
+        !(f.code === "duplicate" && current && resolveDuplicateFlag(current, f, list)),
+    ),
   );
 
   // ---- Manual box drawing -------------------------------------------------
@@ -509,7 +789,7 @@
     // The box also ANSWERS: read the stored OCR geometry inside it and
     // autofill the field, so drawing on the right line fixes the value too.
     const lines = ($state.snapshot(current.ocrLines ?? []) as OcrLine[]) ?? [];
-    const read = readValueInBox(lines, field, box);
+    const read = readValueInBox(lines, field, box, field === "vendor" ? vendor : undefined);
     if (read !== null && read !== "") {
       if (field === "vendor") vendor = String(read);
       else if (field === "date") date = String(read);
@@ -558,6 +838,7 @@
   >
     <div
       class="modal card"
+      class:wide={!!dup}
       role="dialog"
       aria-modal="true"
       aria-label="Review receipt"
@@ -575,7 +856,7 @@
         <button class="btn btn-ghost btn-sm" onclick={close}>Close ✕</button>
       </header>
 
-      <div class="m-body">
+      <div class="m-body" class:comparing={!!dup}>
         <!-- Always mounted: a live region inserted with its text already in
              place is not reliably announced (VoiceOver on iOS especially). -->
         <div class="sr-only" role="status">
@@ -583,7 +864,52 @@
             ? `Draw mode on: drag a box around the ${drawField === "amount" ? "total" : drawField}. Escape cancels.`
             : ""}
         </div>
-        <div class="m-image">
+        {#snippet cmpHead(r: Receipt, title: string)}
+          <div class="cmp-head">
+            <span class="cmp-title">{title}</span>
+            <p class="cmp-facts">
+              <strong>{r.vendor.value || "Unknown vendor"}</strong>
+              · {r.date.value ? formatDate(r.date.value) : "no date"}
+              · <strong>{r.amount.value > 0 ? formatMoney(r.amount.value) : "no amount"}</strong>
+              {#if r.approved}<span class="chip chip-ok">approved</span>{/if}
+            </p>
+            <p class="cmp-file muted" title={r.fileName}>{shownName(r)}</p>
+          </div>
+        {/snippet}
+        {#if dup}
+          <div class="dup-bar" role="group" aria-label="Possible duplicate">
+            <span aria-hidden="true">⚠️</span>
+            <p>
+              <strong>Possible duplicate.</strong>
+              {dupWhy} Compare them, then keep both or delete one.
+              {#if dupPairs.length > 1}Another possible duplicate follows.{/if}
+            </p>
+            <button
+              type="button"
+              class="btn btn-sm"
+              onclick={() => void keepBoth()}
+              title="Not a duplicate: clear the warning on both"
+            >Keep both</button>
+          </div>
+        {/if}
+        <div class="m-image" class:zoomed={!!dup && zoomSelf}>
+          {#if dup}
+            <div class="cmp-top">
+              {@render cmpHead(current, "This receipt")}
+              <div class="cmp-actions">
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  aria-pressed={zoomSelf}
+                  aria-label="Zoom this receipt"
+                  onclick={() => (zoomSelf = !zoomSelf)}
+                >Zoom</button>
+                <button type="button" class="btn btn-sm btn-danger" onclick={() => void deleteThis()}>
+                  Delete this one
+                </button>
+              </div>
+            </div>
+          {/if}
           {#if imageUrl}
             <!-- svelte-ignore a11y_no_static_element_interactions -- the
                  pointer handlers only serve the draw-a-box mode; keyboard
@@ -631,6 +957,55 @@
             <div class="imgwrap skeleton" style="min-height:300px"></div>
           {/if}
         </div>
+
+        {#if dup}
+          <section
+            class="m-peer"
+            class:zoomed={zoomPeer}
+            aria-label="Possible duplicate: {shownName(dup.peer)}"
+          >
+            <div class="cmp-top">
+              {@render cmpHead(dup.peer, "Possible duplicate")}
+              <div class="cmp-actions">
+                <button type="button" class="btn btn-sm" onclick={openPeer}>Open it</button>
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  aria-pressed={zoomPeer}
+                  aria-label="Zoom the possible duplicate"
+                  onclick={() => (zoomPeer = !zoomPeer)}
+                >Zoom</button>
+                <button type="button" class="btn btn-sm btn-danger" onclick={() => void deletePeer()}>
+                  Delete it
+                </button>
+              </div>
+            </div>
+            <!-- Its field slices, drawn from its own image: the values the
+                 facts line states, as printed on the receipt. -->
+            {#if peerLoaded && peerSlices.length}
+              <div class="cmp-slices" aria-hidden="true">
+                {#each peerSlices as s (s.label)}
+                  <div class="cmp-slice {s.cls}">
+                    <span>{s.label}</span>
+                    <canvas class="callout" use:slice={{ img: peerImgEl, loaded: peerLoaded, bbox: s.bbox }}></canvas>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+            {#if peerUrl}
+              <div class="imgwrap">
+                <img
+                  bind:this={peerImgEl}
+                  src={peerUrl}
+                  alt="Possible duplicate: {shownName(dup.peer)}"
+                  onload={() => (peerLoaded = true)}
+                />
+              </div>
+            {:else}
+              <div class="imgwrap skeleton" style="min-height:300px"></div>
+            {/if}
+          </section>
+        {/if}
 
         <div class="m-form">
           {#snippet fieldFlags(field: "vendor" | "date" | "amount" | "category")}
@@ -725,9 +1100,17 @@
           {#if generalFlags.length}
             <div class="flags">
               {#each generalFlags as f (f.code + f.message)}
-                <div class="flag {f.severity}">
+                {@const stale = f.code === "duplicate" /* only an UNRESOLVABLE one gets here */}
+                <div class="flag {f.severity}" class:stale>
                   <span>{f.severity === "error" ? "⛔" : f.severity === "warn" ? "⚠️" : "ℹ️"}</span>
-                  <span>{f.message}</span>
+                  <span>{f.message}{stale ? " That receipt is no longer on this board." : ""}</span>
+                  {#if stale}
+                    <div class="flag-actions">
+                      <button type="button" class="btn btn-ghost btn-sm" onclick={() => void dismissStaleDuplicate()}>
+                        Dismiss
+                      </button>
+                    </div>
+                  {/if}
                 </div>
               {/each}
             </div>
@@ -756,14 +1139,15 @@
       <footer class="m-foot">
         <button class="btn btn-sm" onclick={() => go(-1)} disabled={index <= 0}>← Prev</button>
         <button class="btn btn-sm" onclick={() => go(1)} disabled={index >= list.length - 1}>Next →</button>
-        <button class="btn btn-sm btn-danger" onclick={deleteCurrent}>Delete</button>
+        <button class="btn btn-sm btn-danger" onclick={() => void deleteOpen()}>Delete</button>
         <span class="spacer"></span>
         {#if busy}
-          <span class="muted small">Still reading…</span>
+          <span class="muted small">{pausedRead ? "Paused — resume reading from the top bar" : "Still reading…"}</span>
         {/if}
         <span class="kbd">Enter</span>
         <button
           class="btn btn-primary"
+          bind:this={approveBtn}
           onclick={approveAndNext}
           disabled={busy}
           title={busy ? "Wait for the read to finish, or enter the values yourself once it has" : undefined}
@@ -1004,6 +1388,151 @@
   .provenance {
     font-size: 0.8rem;
     margin: 0;
+    /* "Read by OpenRouter · openrouter/free → vendor/model:free · one-shot …"
+       has long unbreakable ids; never widen the modal at 390px. */
+    overflow-wrap: anywhere;
+  }
+
+  /* Suspected duplicate, side by side: this receipt | its twin | the form.
+     Mid widths keep both images side by side with the form below; phones
+     stack everything. The modal widens only while comparing. */
+  .modal.wide {
+    width: min(1320px, 100%);
+  }
+  .m-body.comparing {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(280px, 0.85fr);
+    /* A zoomed column is a scroll container (automatic min height 0), and
+       .m-body is itself a scroll area with no free space to hand out: under
+       `auto` rows, a row holding only zoomed columns (a phone's stack, or
+       both zoomed at mid widths) collapsed to 0 px and took its own Zoom
+       toggle with it. max-content sizes every row to its content, which
+       the zoomed column's max-height clamps. */
+    grid-auto-rows: max-content;
+  }
+  @media (max-width: 1100px) {
+    .m-body.comparing {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+    .m-body.comparing .m-form {
+      grid-column: 1 / -1;
+    }
+  }
+  @media (max-width: 640px) {
+    .m-body.comparing {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  .dup-bar {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.8rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: var(--radius-s);
+    background: var(--gold-soft);
+    color: var(--gold-text); /* the AA small-copy partner, like .flag.warn */
+    font-size: 0.9rem;
+  }
+  .dup-bar p {
+    margin: 0;
+    flex: 1 1 16rem;
+    min-width: 0;
+  }
+  .cmp-head {
+    display: grid;
+    gap: 0.2rem;
+    margin-bottom: 0.45rem;
+    min-width: 0;
+  }
+  /* No new h2/h3: theme.css styles bare headings in Lora with margins. */
+  .cmp-title {
+    font: 700 0.66rem/1 var(--font-ui);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .cmp-facts {
+    margin: 0;
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
+  }
+  .cmp-file {
+    margin: 0;
+    font-size: 0.8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cmp-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.5rem;
+  }
+  .cmp-actions .btn[aria-pressed="true"] {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .cmp-slices {
+    display: grid;
+    gap: 0.35rem;
+    margin-bottom: 0.5rem;
+  }
+  .cmp-slice {
+    display: grid;
+    gap: 0.15rem;
+    justify-items: start;
+  }
+  .cmp-slice span {
+    font: 700 0.62rem/1 var(--font-ui);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  /* Semantic field colors, as on the markers: vendor blue, date purple,
+     amount green. */
+  .s-vendor canvas {
+    border-left: 3px solid var(--cat-3);
+  }
+  .s-date canvas {
+    border-left: 3px solid var(--cat-4);
+  }
+  .s-amount canvas {
+    border-left: 3px solid var(--ok);
+  }
+  /* Zoom: the column scrolls and the image renders 250% wide (markers and
+     draw-a-box ride along — they are percentages of the image). The header
+     stays pinned so Zoom and the actions stay in reach. */
+  .m-image.zoomed,
+  .m-peer.zoomed {
+    overflow: auto;
+    max-height: 70dvh;
+  }
+  .zoomed .imgwrap {
+    width: 250%;
+  }
+  .zoomed .cmp-top {
+    position: sticky;
+    top: 0;
+    left: 0;
+    z-index: 2;
+    background: var(--bg-raised);
+  }
+  /* A duplicate warning whose twin is gone: the message (an unbreakable file
+     name, often) wraps, and Dismiss takes a line of its own — at 390px the
+     row otherwise pushed the body sideways. */
+  .flag.stale {
+    flex-wrap: wrap;
+  }
+  .flag.stale > span:nth-child(2) {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .flag-actions {
+    flex-basis: 100%;
   }
 
   /* Phone fit, any orientation: the dialog must never push its own header,

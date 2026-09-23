@@ -8,6 +8,12 @@ import {
   borderColor,
   darkBorderInsets,
   paperRegionBox,
+  inkContentBox,
+  padBox,
+  toSourceBox,
+  isFullPageAspect,
+  ANALYSIS_MAX_EDGE,
+  type PaperBox,
 } from "../src/pipeline/binarize.ts";
 
 // Synthetic-image helpers ----------------------------------------------------
@@ -273,4 +279,212 @@ test("paperRegionBox returns null for all-paper and all-dark frames", () => {
   const d = rgba(100, 100, 30);
   fillRect(d, 100, 48, 48, 5, 5, [240, 240, 240]);
   assert.equal(paperRegionBox(d, 100, 100), null);
+});
+
+// inkContentBox — the crop for (nearly) all-paper frames ---------------------
+
+// A US Letter page at the analysis size (ANALYSIS_MAX_EDGE on the long edge).
+const PH = ANALYSIS_MAX_EDGE;
+const PW = Math.round((PH * 8.5) / 11); // 371
+
+function page(v = 255, w = PW, h = PH): Float32Array {
+  return new Float32Array(w * h).fill(v);
+}
+
+function paint(g: Float32Array, w: number, x0: number, y0: number, rw: number, rh: number, v: number): void {
+  for (let y = y0; y < y0 + rh; y++) for (let x = x0; x < x0 + rw; x++) g[y * w + x] = v;
+}
+
+/** One printed line: 3-px-tall word blobs with 3-px gaps from x0 to x1. */
+function wordLine(g: Float32Array, w: number, x0: number, x1: number, y: number, v = 90): void {
+  for (let x = x0, k = 0; x < x1; k++) {
+    const len = Math.min(x1 - x, 6 + ((k * 7) % 11));
+    paint(g, w, x, y, len, 3, v);
+    x += len + 3;
+  }
+}
+
+/** Lines every 6 px from y0 to y1 (px), spanning x0..x1. */
+function column(g: Float32Array, w: number, x0: number, x1: number, y0: number, y1: number, v = 90): void {
+  for (let y = y0; y + 3 <= y1; y += 6) wordLine(g, w, x0, x1, y, v);
+}
+
+const nx = (px: number): number => Math.round(PW * px);
+const ny = (py: number): number => Math.round(PH * py);
+
+/** A Chevron-app e-receipt: a narrow text column top-left on a white page
+ *  (the owner's pages print at x 0.065–0.46, y 0.03–0.81; this one is
+ *  narrower still). */
+function chevronPage(): Float32Array {
+  const g = page();
+  column(g, PW, nx(0.065), nx(0.28), ny(0.02), ny(0.63));
+  return g;
+}
+
+const edges = (b: PaperBox) => ({
+  x1: b.x / PW,
+  y1: b.y / PH,
+  x2: (b.x + b.w) / PW,
+  y2: (b.y + b.h) / PH,
+});
+
+test("inkContentBox trims a digital Letter page to its narrow text column", () => {
+  const box = inkContentBox(chevronPage(), PW, PH);
+  assert.ok(box, "a crop was found");
+  const e = edges(box!);
+  assert.ok(e.x1 <= 0.065 && e.y1 <= 0.02 && e.x2 >= 0.28 && e.y2 >= 0.63, `covers the column ${JSON.stringify(e)}`);
+  assert.ok(e.x2 >= 0.3, `keeps a margin (${e.x2})`);
+  assert.ok(e.x2 <= 0.36 && e.y2 <= 0.7, `trims the blank page ${JSON.stringify(e)}`);
+});
+
+test("inkContentBox ignores dust specks and edge-hugging scanner shadows", () => {
+  const clean = inkContentBox(chevronPage(), PW, PH);
+  const g = chevronPage();
+  paint(g, PW, nx(0.9), ny(0.95), 1, 1, 60); // single-pixel speck
+  paint(g, PW, nx(0.7), ny(0.85), 1, 2, 60); // 1×2 speck
+  paint(g, PW, PW - 3, 0, 3, PH, 120); // lid shadow down the right edge…
+  paint(g, PW, 0, PH - 2, PW, 2, 110); // …meeting one along the bottom (an L)
+  assert.deepEqual(inkContentBox(g, PW, PH), clean);
+});
+
+test("inkContentBox keeps faint gray logos and thin rules as content", () => {
+  const g = chevronPage();
+  paint(g, PW, nx(0.35), ny(0.05), nx(0.1), ny(0.05), 228); // pale logo right of the column
+  paint(g, PW, nx(0.065), ny(0.7), nx(0.2), 1, 150); // 1-px rule under it
+  const e = edges(inkContentBox(g, PW, PH)!);
+  assert.ok(e.x2 >= 0.45, `logo kept (${e.x2})`);
+  assert.ok(e.y2 >= 0.7, `rule kept (${e.y2})`);
+});
+
+test("inkContentBox keeps light-gray fine print on a white page (the lenient cut)", () => {
+  // An area-averaging downscale lightens a thin #CCC footer ("Customer
+  // Copy") to ~241 at the analysis size; on page-white paper that is ink.
+  const g = chevronPage();
+  wordLine(g, PW, nx(0.1), nx(0.25), ny(0.76), 241);
+  const e = edges(inkContentBox(g, PW, PH)!);
+  assert.ok(e.y2 >= 0.77, `footer inside the box (${e.y2})`);
+});
+
+test("inkContentBox keeps a top-edge text line of separate words", () => {
+  const g = page();
+  column(g, PW, nx(0.065), nx(0.28), 0, ny(0.5));
+  const box = inkContentBox(g, PW, PH)!;
+  assert.equal(box.y, 0);
+  assert.ok(edges(box).x2 >= 0.28);
+});
+
+test("inkContentBox keeps the lettering of a full-bleed dark header bar", () => {
+  const g = page();
+  paint(g, PW, 0, 0, PW, 24, 30); // dark banner across the top…
+  for (let x = 20; x < PW - 20; x += 14) paint(g, PW, x, 6, 8, 12, 250); // …with white lettering
+  column(g, PW, nx(0.065), nx(0.28), 30, ny(0.6));
+  const box = inkContentBox(g, PW, PH);
+  // The walk may shave the banner's plain rows, never its lettering.
+  assert.ok(box === null || (box.y <= 6 && box.y + box.h >= 18), JSON.stringify(box));
+});
+
+test("inkContentBox keeps a long receipt's full length while trimming its sides", () => {
+  const g = page();
+  column(g, PW, nx(0.32), nx(0.57), 10, PH - 12);
+  const box = inkContentBox(g, PW, PH)!;
+  assert.ok(box, "cropped sideways");
+  const e = edges(box);
+  assert.ok(e.x1 > 0.2 && e.x2 < 0.7, `sides trimmed ${JSON.stringify(e)}`);
+  assert.ok(box.y <= 10 && box.y + box.h >= PH - 12, `no line lost ${JSON.stringify(box)}`);
+});
+
+test("inkContentBox says null when there is nothing worth trimming", () => {
+  // Print filling the frame (a receipt scan, the e2e fuel receipt).
+  const full = page();
+  column(full, PW, nx(0.03), nx(0.97), ny(0.02), ny(0.97));
+  assert.equal(inkContentBox(full, PW, PH), null);
+  assert.equal(inkContentBox(page(), PW, PH), null, "blank page");
+  assert.equal(inkContentBox(page(40), PW, PH), null, "dark frame (a photo)");
+  // Heavy texture: 40% of the pixels well below a 235 paper.
+  const tex = page(235);
+  for (let p = 0; p < tex.length; p++) if (p % 5 < 2) tex[p] = 170;
+  assert.equal(inkContentBox(tex, PW, PH), null, "texture");
+});
+
+test("inkContentBox needs page-white paper (minPaper)", () => {
+  // A receipt photographed on a light table: paper ~220, not a page.
+  const g = page(220);
+  column(g, PW, nx(0.3), nx(0.5), ny(0.1), ny(0.6), 60);
+  assert.equal(inkContentBox(g, PW, PH), null, "default 235 floor");
+  assert.ok(inkContentBox(g, PW, PH, { minPaper: 160 }), "an explicit lower floor crops");
+});
+
+test("inkContentBox honours the caller's dark scan-border insets", () => {
+  // The darkBorderInsets fixture: a sawtooth strip on the top 6 rows over
+  // 40% of the width. Each row is only 40% dark, so the ink crop's own
+  // full-edge walk keeps it — imagePrep's inset has to be passed in.
+  const g = page(240);
+  paint(g, PW, Math.round(PW * 0.6), 0, PW - Math.round(PW * 0.6), 6, 10);
+  column(g, PW, nx(0.1), nx(0.35), ny(0.05), ny(0.6));
+  const inset = darkBorderInsets(g, PW, PH);
+  assert.equal(inset.top, 6);
+  const box = inkContentBox(g, PW, PH, { exclude: inset })!;
+  assert.ok(box, "cropped to the column");
+  assert.ok(box.y >= 6, `strip rows excluded (y ${box.y})`);
+  assert.ok(box.x + box.w < 0.6 * PW, `strip columns excluded (right ${box.x + box.w})`);
+  // Without the exclusion the strip comes back in (why imagePrep passes it).
+  const bare = inkContentBox(g, PW, PH);
+  assert.ok(bare === null || bare.y < 6, JSON.stringify(bare));
+});
+
+test("inkContentBox is idempotent on its own crop", () => {
+  const g = chevronPage();
+  const b = inkContentBox(g, PW, PH)!;
+  const cropped = new Float32Array(b.w * b.h);
+  for (let y = 0; y < b.h; y++) {
+    for (let x = 0; x < b.w; x++) cropped[y * b.w + x] = g[(b.y + y) * PW + (b.x + x)]!;
+  }
+  assert.equal(inkContentBox(cropped, b.w, b.h), null);
+});
+
+test("padBox clamps BOTH ends of the frame", () => {
+  const flush = padBox({ x: 50, y: 60, w: 50, h: 40 }, 0.03, 100, 100);
+  assert.equal(flush.x, 48.5);
+  assert.ok(Math.abs(flush.y - 58.8) < 1e-9);
+  assert.ok(flush.x + flush.w <= 100 && flush.y + flush.h <= 100, JSON.stringify(flush));
+  // Clamping the near side must not widen the far one.
+  const corner = padBox({ x: 1, y: 1, w: 20, h: 20 }, 0.1, 100, 100);
+  assert.equal(corner.x, 0);
+  assert.equal(corner.x + corner.w, 23);
+});
+
+test("toSourceBox never runs a crop past the source frame", () => {
+  // 999 px at scale 0.48 rounds UP to a 480-px analysis copy: its full
+  // width maps back to 1000 px — one past the image, which drawImage used
+  // to leave transparent and the JPEG stored as a black column.
+  const s = 0.48;
+  const full = toSourceBox({ x: 0, y: 0, w: 480, h: 480 }, s, 999, 999);
+  assert.deepEqual(full, { x: 0, y: 0, w: 999, h: 999 });
+  // A slab flush with the right/bottom edge, padded the way imagePrep pads.
+  const slab = toSourceBox(padBox({ x: 300, y: 400, w: 180, h: 80 }, 0.03, 480, 480), s, 999, 999);
+  assert.ok(slab.x + slab.w <= 999 && slab.y + slab.h <= 999, JSON.stringify(slab));
+  // Degenerate boxes still yield a drawable 1-px rect inside the frame.
+  const edge = toSourceBox({ x: 479.9, y: 0, w: 5, h: 5 }, s, 999, 999);
+  assert.ok(edge.x <= 998 && edge.w >= 1 && edge.x + edge.w <= 999, JSON.stringify(edge));
+});
+
+test("isFullPageAspect recognizes whole Letter/A4/Legal pages only", () => {
+  for (const [w, h] of [
+    [1237, 1600], // Letter as stored (pdf.ts renders 2010×2600)
+    [760, 983], // the workbook's copy
+    [1131, 1600], // A4
+    [972, 1600], // Legal
+    [1600, 1237], // landscape
+  ] as const) {
+    assert.ok(isFullPageAspect(w, h), `${w}×${h}`);
+  }
+  for (const [w, h] of [
+    [1200, 1600], // a 3:4 phone photo
+    [1000, 1600], // 0.625: a short slab-cropped receipt near Legal
+    [1180, 1600], // 0.7375: near A4
+    [570, 1600], // a cropped receipt
+    [0, 0],
+  ] as const) {
+    assert.ok(!isFullPageAspect(w, h), `${w}×${h}`);
+  }
 });

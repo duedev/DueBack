@@ -242,3 +242,33 @@ test("every generic alias exists in the merged table", () => {
   const all = new Set(ALL_VENDORS.flatMap((v) => v.aliases));
   for (const a of GENERIC_ALIASES) assert.ok(all.has(a), a);
 });
+
+import { isPaymentBrandName, stripProcessorPrefix } from "../src/config/vendors.ts";
+
+test("card networks/processors are recognized as whole names, never as substrings", () => {
+  for (const p of [
+    "AmericanExpress Credit", "AM Express", "AMEX", "VISA", "Visa Credit", "MASTERCRD", "MASTERCRD XXXX1234",
+    "DISCOVER ****1234", "Discover Credit", "Diners Club", "JCB", "UnionPay", "Maestro", "Interac", "EBT",
+    "US DEBIT", "DEBIT", "Chase Visa", "Capital One Visa", "Citi Mastercard", "Square", "Powered by Toast",
+    "Clover", "Heartland Payment Systems", "Chase Paymentech", "First Data", "Fiserv", "TSYS",
+    "Global Payments", "Verifone", "Ingenico", "NCR", "P97", "Apple Pay",
+  ]) {
+    assert.ok(isPaymentBrandName(p), p);
+  }
+  // Real merchants that share a word — and bare bank names, which can be payees.
+  for (const m of [
+    "Clover Food Lab", "Heartland Co-op", "Discovery Toys", "Toast Kitchen", "Visalia Tire",
+    "Square One Pizza", "Panda Express", "American Airlines", "Discount Tire", "Amex Tile",
+    "Chase", "Capital One", "Capital Grille", "Credit Union Cafe", "",
+  ]) {
+    assert.equal(isPaymentBrandName(m), false, m);
+  }
+});
+
+test("a processor's descriptor prefix is stripped; a merchant named like one is not", () => {
+  assert.equal(stripProcessorPrefix("SQ *JOES COFFEE"), "JOES COFFEE");
+  assert.equal(stripProcessorPrefix("TST* Corner Bistro"), "Corner Bistro");
+  assert.equal(stripProcessorPrefix("PAYPAL *ACME"), "ACME");
+  assert.equal(stripProcessorPrefix("SQUARE ONE"), "SQUARE ONE");
+  assert.equal(stripProcessorPrefix("Toast Kitchen"), "Toast Kitchen");
+});

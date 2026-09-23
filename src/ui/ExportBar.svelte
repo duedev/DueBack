@@ -1,7 +1,17 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { app } from "./state.svelte.ts";
   import { repo } from "../store/repo.ts";
   import { displayCategory, exportableReceipts, reportOrder } from "../export/order.ts";
+  import {
+    duplicatesSentence,
+    LEGACY_BUNDLE_ZIP_KEY,
+    LEGACY_PRINT_PACKET_KEY,
+    PACKET_ZIP_KEY,
+    reportZipName,
+    resolvePacketZip,
+    unresolvedDuplicates,
+  } from "../export/delivery.ts";
   import { employeeFilePart } from "../util/rename.ts";
   import { formatMoney, safeAmount } from "../util/money.ts";
   import { perDiemAmount, safePerDiemDays } from "../util/perdiem.ts";
@@ -24,7 +34,9 @@
   import { ensureConnected, uploadReport } from "../onedrive/index.ts";
   import type { PerDiem, PhoneService } from "../types.ts";
 
-  // The output is the point: batch meta + one-click themed workbook / CSV.
+  // The output is the point: batch meta + one click, one file — the themed
+  // workbook (or one ZIP with the print packet); the packet also has its
+  // own button (export/delivery.ts has the why).
 
   let employee = $state("");
   let jobName = $state("");
@@ -181,21 +193,23 @@
   //      stay wired for when it returns, with a saveZipPref like the rest) --
   const includeZip = false;
 
-  // ---- Bundle: zip whatever Generate produces into ONE download ------------
-  const BUNDLE_KEY = "report.bundleZip";
-  let bundleZip = $state(false);
-  void repo.getSetting<boolean>(BUNDLE_KEY).then((v) => (bundleZip = v === true));
-  function saveBundlePref(): void {
-    void repo.setSetting(BUNDLE_KEY, bundleZip);
+  // ---- Print packet: its own button; opt in to zip it with the workbook ---
+  // One click, one download: a second file from the same click trips the
+  // browser's "download multiple files" prompt (export/delivery.ts). The
+  // retired "Print packet" + "Bundle into one ZIP" pair migrates once.
+  let packetZip = $state(false);
+  void Promise.all([
+    repo.getSetting<boolean>(PACKET_ZIP_KEY),
+    repo.getSetting<boolean>(LEGACY_PRINT_PACKET_KEY),
+    repo.getSetting<boolean>(LEGACY_BUNDLE_ZIP_KEY),
+  ]).then(([zip, printPacket, bundleZip]) => {
+    packetZip = resolvePacketZip({ packetZip: zip, printPacket, bundleZip });
+  });
+  function savePacketZipPref(): void {
+    void repo.setSetting(PACKET_ZIP_KEY, packetZip);
   }
-
-  // ---- Print packet (on by default: offices staple paper copies) -----------
-  const PRINT_KEY = "report.printPacket";
-  let includePrint = $state(true);
-  void repo.getSetting<boolean>(PRINT_KEY).then((v) => (includePrint = v !== false));
-  function savePrintPref(): void {
-    void repo.setSetting(PRINT_KEY, includePrint);
-  }
+  /** Download packet is building — Generate waits for it and vice versa. */
+  let packeting = $state(false);
 
   /** Letter-size PDF of the receipt images — what actually goes to the
    *  office printer. Receipts whose vendor/date/total boxes are all known
@@ -224,7 +238,7 @@
             skipped++;
             continue;
           }
-          const strip = receiptStrip([r.vendor.bbox, r.date.bbox, r.amount.bbox]);
+          const strip = receiptStrip([r.vendor.bbox, r.date.bbox, r.amount.bbox], { lines: r.ocrLines });
           const t = strip
             ? await stripThumbnail(blob, strip.y0, strip.y1, 1400, 0.8)
             : await thumbnail(blob, 1400, 0.8);
@@ -331,42 +345,47 @@
   }
 
   async function doGenerate(): Promise<void> {
-    if (!app.batch || building) return;
+    // Never while Download packet builds: two downloads landing from two
+    // quick clicks make the second one "automatic" to the browser.
+    if (!app.batch || building || packeting) return;
     building = true;
     try {
       const result = await buildReport();
+      // ONE download per click: the workbook alone, or — opted in — one ZIP
+      // holding the workbook and the print packet. No packet (no readable
+      // images, or it failed) → the workbook alone, never a one-file ZIP.
       let packet: Blob | null = null;
-      if (includePrint) {
+      if (packetZip) {
         try {
           packet = await buildPrintPacket();
         } catch {
           app.toast("Couldn't build the print packet; the workbook is fine.", "warn");
         }
       }
-      const { printPdfFileName } = await import("../export/printPdf.ts");
-      if (bundleZip) {
-        // One archive holding everything Generate produced.
+      if (packet) {
         const { buildZip } = await import("../export/zip.ts");
-        const entries = [
-          { name: result.fileName, data: new Uint8Array(await result.blob.arrayBuffer()) },
-        ];
-        if (packet) {
-          entries.push({
-            name: printPdfFileName(employee),
-            data: new Uint8Array(await packet.arrayBuffer()),
-          });
-        }
-        const zip = await buildZip(entries);
-        const who = employeeFilePart(employee);
-        const now = new Date();
-        const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
-        download(zip, `Report_${who}_${stamp}.zip`);
+        const { printPdfFileName } = await import("../export/printPdf.ts");
+        const zip = await buildZip([
+          // Both are already compressed (an xlsx IS a zip; the PDF carries
+          // JPEGs) — storing them skips a deflate pass that saves nothing.
+          { name: result.fileName, data: new Uint8Array(await result.blob.arrayBuffer()), compress: false },
+          { name: printPdfFileName(employee), data: new Uint8Array(await packet.arrayBuffer()), compress: false },
+        ]);
+        download(zip, reportZipName(employee));
       } else {
         download(result.blob, result.fileName);
-        if (packet) download(packet, printPdfFileName(employee));
       }
+      // Hidden (includeZip is false). If it returns it must ride in the ZIP
+      // above: a second download from this click trips the browser prompt.
       if (includeZip) await exportImagesZip();
-      app.toast(`Workbook ready: ${result.count} receipts.`, "ok");
+      app.toast(
+        packet
+          ? `Workbook ready: ${result.count} receipts (zipped with the print packet).`
+          : !packetZip && exportable.length > 0
+            ? `Workbook ready: ${result.count} receipts. The print packet is one more click: Download packet.`
+            : `Workbook ready: ${result.count} receipts.`,
+        "ok",
+      );
     } catch (err) {
       app.toast(
         `Export failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -377,9 +396,15 @@
     }
   }
 
-  // A workbook without a name on it is usually an oversight: ask once before
-  // building when any header field is blank, with a way to proceed anyway.
-  let blankConfirmOpen = $state(false);
+  // A workbook without a name on it is usually an oversight, and so is a
+  // possible duplicate still counted in the TOTAL (a flagged $80.29 repeat
+  // shipped in a real report): ask once before building, with a way to fix
+  // it and a way to proceed anyway. Save to OneDrive ships the same
+  // workbook — same header, same TOTAL — so it asks the same question
+  // through the same dialog, told which action it guards (it used to
+  // upload without asking).
+  let confirmOpen = $state(false);
+  let confirmFor = $state<"generate" | "onedrive">("generate");
   const blankFields = $derived(
     [
       !employee.trim() && "Employee",
@@ -387,21 +412,52 @@
       !jobNumber.trim() && "Job number",
     ].filter((f): f is string => typeof f === "string"),
   );
+  const duplicates = $derived(unresolvedDuplicates(app.receipts));
+  // The dialog keeps its "Missing report details" name whenever details
+  // are blank (the e2e keys on it); duplicates alone get their own.
+  const confirmTitle = $derived(
+    blankFields.length > 0 ? "Missing report details" : "Possible duplicates in this report",
+  );
 
   function generate(): void {
-    if (blankFields.length > 0) blankConfirmOpen = true;
-    else void doGenerate();
+    if (blankFields.length > 0 || duplicates.length > 0) {
+      confirmFor = "generate";
+      confirmOpen = true;
+    } else void doGenerate();
   }
 
-  function confirmBlank(proceed: boolean): void {
-    blankConfirmOpen = false;
-    if (proceed) void doGenerate();
+  function oneDriveClick(): void {
+    if (blankFields.length > 0 || duplicates.length > 0) {
+      confirmFor = "onedrive";
+      confirmOpen = true;
+    } else void saveToOneDrive();
+  }
+
+  /** The confirm's answer. Proceeding runs the guarded action synchronously
+   *  inside this click: OneDrive's sign-in popup opens before the first
+   *  await in ensureConnected, so it stays within the user gesture. */
+  function answerConfirm(proceed: boolean): void {
+    confirmOpen = false;
+    if (!proceed) return;
+    void (confirmFor === "onedrive" ? saveToOneDrive() : doGenerate());
+  }
+
+  /** Close the confirm and open the first flagged duplicate for review. */
+  async function reviewDuplicate(): Promise<void> {
+    const first = duplicates[0];
+    confirmOpen = false;
+    if (!first) return;
+    // Let the confirm unmount first — its cleanup hands focus back to the
+    // button that opened it — so the review modal remembers that button as
+    // the place to return focus to, instead of the closing dialog.
+    await tick();
+    app.reviewId = first.id;
   }
 
   // Focus management for the confirm (role=dialog + aria-modal promise it):
-  // focus moves into the dialog on open, Escape cancels, Tab cycles its two
+  // focus moves into the dialog on open, Escape cancels, Tab cycles its
   // buttons instead of walking the page behind the scrim, and focus returns
-  // to the Generate button on close.
+  // to the button that opened it (Generate or Save to OneDrive) on close.
   let confirmEl = $state<HTMLElement | null>(null);
   $effect(() => {
     const el = confirmEl;
@@ -413,7 +469,7 @@
   function onConfirmKey(e: KeyboardEvent): void {
     if (e.key === "Escape") {
       e.preventDefault();
-      confirmBlank(false);
+      answerConfirm(false);
       return;
     }
     if (e.key !== "Tab" || !confirmEl) return;
@@ -444,23 +500,21 @@
       await ensureConnected();
       const result = await buildReport();
       const saved = await uploadReport(result.fileName, result.blob);
-      // The print packet goes up beside the workbook (two browsable files,
-      // never a ZIP) — the download path ships both, so the cloud path
-      // should not silently leave the paper half behind. Seconds after
+      // The print packet ALWAYS goes up beside the workbook, as two
+      // browsable files (never a ZIP). Uploads aren't browser downloads, so
+      // the one-download-per-click rule doesn't apply here. Seconds after
       // ensureConnected, so the second upload reuses the stored token and
       // can never need a popup outside the click.
       let packetNote = "";
-      if (includePrint) {
-        try {
-          const packet = await buildPrintPacket();
-          if (packet) {
-            const { printPdfFileName } = await import("../export/printPdf.ts");
-            await uploadReport(printPdfFileName(employee), packet);
-            packetNote = " (+ print packet)";
-          }
-        } catch {
-          app.toast("Workbook saved; the print packet couldn't be built or uploaded.", "warn");
+      try {
+        const packet = await buildPrintPacket();
+        if (packet) {
+          const { printPdfFileName } = await import("../export/printPdf.ts");
+          await uploadReport(printPdfFileName(employee), packet);
+          packetNote = " (+ print packet)";
         }
+      } catch {
+        app.toast("Workbook saved; the print packet couldn't be built or uploaded.", "warn");
       }
       app.toast(`Saved to OneDrive: ${saved.path}${packetNote}`, "ok");
     } catch (err) {
@@ -498,6 +552,26 @@
       app.toast(err instanceof Error ? err.message : "Couldn't build the preview.", "err");
     } finally {
       previewing = false;
+    }
+  }
+
+  // ---- Print packet download: its own click, so its own download ----------
+  async function downloadPacket(): Promise<void> {
+    if (packeting || building || exportable.length === 0) return;
+    packeting = true;
+    try {
+      await saveMeta();
+      const packet = await buildPrintPacket();
+      if (!packet) {
+        app.toast("No receipt images to print yet.", "warn");
+        return;
+      }
+      const { printPdfFileName } = await import("../export/printPdf.ts");
+      download(packet, printPdfFileName(employee));
+    } catch (err) {
+      app.toast(err instanceof Error ? err.message : "Couldn't build the print packet.", "err");
+    } finally {
+      packeting = false;
     }
   }
 
@@ -679,16 +753,15 @@
       </span>
     </div>
 
-    <div class="opt" class:open={includePrint}>
+    <div class="opt" class:open={packetZip}>
       <label class="check">
-        <input type="checkbox" bind:checked={includePrint} onchange={savePrintPref} />
-        <span>Print packet (PDF)</span>
+        <input type="checkbox" bind:checked={packetZip} onchange={savePacketZipPref} />
+        <span>Include the print packet (one ZIP)</span>
       </label>
       <span class="muted small">
-        Downloads with the workbook: receipts cropped to their key lines and
-        packed onto letter pages, labeled per receipt, sized for legible
-        printing. Your browser may ask once to allow the second download — or
-        pick Bundle below for a single file.
+        Generate downloads a single ZIP: the workbook plus the print packet
+        PDF (receipts cropped to their key lines, packed onto letter pages).
+        Off, the workbook downloads alone and Download packet gets the PDF.
       </span>
     </div>
 
@@ -704,16 +777,6 @@
       </span>
     </div>
     -->
-
-    <div class="opt" class:open={bundleZip}>
-      <label class="check">
-        <input type="checkbox" bind:checked={bundleZip} onchange={saveBundlePref} />
-        <span>Bundle into one ZIP</span>
-      </label>
-      <span class="muted small">
-        One download instead of several: everything above zipped together.
-      </span>
-    </div>
     </fieldset>
   </div>
 
@@ -743,51 +806,75 @@
     >
       {previewing ? "Building…" : "Preview packet"}
     </button>
+    <button
+      class="btn btn-ghost"
+      onclick={() => void downloadPacket()}
+      disabled={packeting || building || exportable.length === 0}
+      title="Download the print packet PDF: receipts cropped to their key lines, packed onto letter pages"
+    >
+      {packeting ? "Building…" : "Download packet"}
+    </button>
     {#if oneDriveOn}
       <button
         class="btn btn-ghost"
-        onclick={() => void saveToOneDrive()}
+        onclick={oneDriveClick}
         disabled={odSaving || building || nothingToExport}
-        title="Upload the workbook to OneDrive → Apps/DueBack"
+        title="Upload the workbook and its print packet to OneDrive → Apps/DueBack"
       >
         {odSaving ? "Saving…" : "Save to OneDrive"}
       </button>
     {/if}
     <button
       class="btn btn-primary btn-lg"
-      class:breathe={flagged.length === 0 && !nothingToExport && !building}
+      class:breathe={flagged.length === 0 && !nothingToExport && !building && !packeting}
       onclick={generate}
-      disabled={building || odSaving || nothingToExport}
-      title="Build the themed Excel workbook and download it"
+      disabled={building || packeting || odSaving || nothingToExport}
+      title={packetZip
+        ? "Build the workbook and print packet and download them as one ZIP"
+        : "Build the themed Excel workbook and download it"}
     >
       {building ? "Building…" : "Generate workbook"}
     </button>
   </div>
 
-  {#if blankConfirmOpen}
+  {#if confirmOpen}
     <div
       class="confirm-scrim"
       role="presentation"
       onclick={(e) => {
-        if (e.target === e.currentTarget) confirmBlank(false);
+        if (e.target === e.currentTarget) answerConfirm(false);
       }}
     >
       <div
         class="confirm card"
         role="dialog"
         aria-modal="true"
-        aria-label="Missing report details"
+        aria-label={confirmTitle}
         tabindex="-1"
         bind:this={confirmEl}
         onkeydown={onConfirmKey}
       >
-        <h2>Some report details are blank</h2>
-        <p class="muted">
-          {blankFields.join(", ")} will show empty in the workbook header.
-        </p>
+        <h2>{blankFields.length > 0 ? "Some report details are blank" : confirmTitle}</h2>
+        {#if blankFields.length > 0}
+          <p class="muted">
+            {blankFields.join(", ")} will show empty in the workbook header.
+          </p>
+        {/if}
+        {#if duplicates.length > 0}
+          <p class="muted">{duplicatesSentence(duplicates)}</p>
+        {/if}
         <div class="confirm-actions">
-          <button class="btn" onclick={() => confirmBlank(false)}>Go back and fill in</button>
-          <button class="btn btn-primary" onclick={() => confirmBlank(true)}>Generate anyway</button>
+          {#if blankFields.length > 0}
+            <button class="btn" onclick={() => answerConfirm(false)}>Go back and fill in</button>
+          {/if}
+          {#if duplicates.length > 0}
+            <button class="btn" onclick={() => void reviewDuplicate()}>
+              {duplicates.length === 1 ? "Review duplicate" : "Review duplicates"}
+            </button>
+          {/if}
+          <button class="btn btn-primary" onclick={() => answerConfirm(true)}>
+            {confirmFor === "onedrive" ? "Save anyway" : "Generate anyway"}
+          </button>
         </div>
       </div>
     </div>

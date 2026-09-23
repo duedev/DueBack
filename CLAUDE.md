@@ -27,27 +27,28 @@ vite-plugin-pwa. Fonts self-hosted (@fontsource Inter + **Lora** for display; Lo
 
 | Path | What lives here |
 |---|---|
-| `src/types.ts` | Domain model: Receipt/Batch/Job/Field/Flag/LogoMatch/StoredBrand |
-| `src/pipeline/pipeline.ts` | Per-receipt flow: clean → hash/cache → OCR (+binarized weak-read rescue) → rules → **logo fusion** → vision assist → highlighter bake (`annotate.ts` → `annotatedKey`) → Python-convention rename (`util/rename.ts`) → dedup → status |
-| `src/pipeline/imagePrep.ts` | canvas prep: EXIF rotate → (opt) perspective → projection-profile deskew → grayscale → autocrop (paper-slab first via `paperRegionBox`, edge-energy fallback) → two renders (transient hi-res `ocrBlob` for OCR + stored 1600px blob); `binarizeBlob` for the weak-read rescue |
+| `src/types.ts` | Domain model: Receipt/Batch/Job/Field/Flag/LogoMatch/StoredBrand/AssistProvenance (`Receipt.assist`; `Flag.ref` = a duplicate flag's twin receipt id — both ride the sync payload, no migration) |
+| `src/pipeline/pipeline.ts` | Per-receipt flow: clean → hash/cache (`vision/provenance.ts reusableOcr` — an AI row lends its OCR LINES, never its ocrText) → OCR (+binarized weak-read rescue) → rules → **logo fusion** → vision assist (answer vetted, anchored + corroborated on the OCR lines, `Receipt.assist` provenance) → highlighter bake (`annotate.ts` → `annotatedKey`) → Python-convention rename (`util/rename.ts`) → dedup (`dedup.duplicateFlag`: hash twin → brand-identity vendor + date + amount → same cents + a shared approval/invoice/reference code; `Flag.ref` names the twin) → status; `processReceipt(id, engine, signal)` checks the reading-pause signal between stages (last checkpoint: immediately before `runVisionAssist`) |
+| `src/pipeline/imagePrep.ts` | canvas prep: EXIF rotate → (opt) perspective → projection-profile deskew → grayscale → autocrop (paper slab via `paperRegionBox` → for a page-white, (almost) all-paper frame the ink crop `inkContentBox` (clamped to the dark-border insets via `exclude`) → edge-energy fallback; every crop maps back through `padBox` + `toSourceBox`, clamped at BOTH ends) → two renders (transient hi-res `ocrBlob` for OCR + stored 1600px blob); `binarizeBlob` for the weak-read rescue |
 | `src/pipeline/pdf.ts` | Multi-page PDF intake: `expandPdf` renders pages to JPEG (long edge ≈ `ocrMaxEdge`) so `addFiles` makes one receipt per page, capped by the remaining batch capacity (+ `LIMITS.maxPdfPages` backstop) so an unbounded PDF can't rasterize past the cap; one corrupt page is skipped and reported (`failedPages`) instead of discarding the pages that rendered; password-protected PDFs are refused at intake with a toast (`isPasswordProtectedPdf`) rather than queued to fail; `pdfPageNames` names them (`… (page 2 of 8)` in `originalFileName`) |
 | `src/pipeline/unzip.ts` | ZIP intake: dependency-free central-directory reader (`readZip`, platform `DecompressionStream`) + archive-junk filter and entry naming; inflation is STREAMED with a running byte count that aborts past `maxEntryBytes` (the forgeable directory size is only a fast path) plus a per-archive `maxTotalBytes`; `addFiles` unpacks an archive into one receipt per usable file, nested folders and all |
-| `src/pipeline/binarize.ts` | pure image math (no DOM, Node-tested): luminance, Bradley adaptive threshold, projection-profile skew estimation, `paperRegionBox` (Otsu + saturation gate + largest connected component — the tight-crop pass that ignores food/clutter next to the receipt) |
+| `src/pipeline/binarize.ts` | pure image math (no DOM, Node-tested): luminance, Bradley adaptive threshold, projection-profile skew estimation, `paperRegionBox` (Otsu + saturation gate + largest connected component — the tight-crop pass that ignores food/clutter next to the receipt), `inkContentBox` (the ink crop for digital pages and white-margin scans — see the Gotcha), `padBox`/`toSourceBox` (crop math clamped at both ends), `isFullPageAspect` (Letter/A4/Legal within 0.003 — the export trim's gate), `ANALYSIS_MAX_EDGE` (480, shared with the export trim) |
 | `src/pipeline/perspective.ts` | opt-in OpenCV.js quad detect + warp (`VITE_PERSPECTIVE=1`, vendored lib) |
 | `src/pipeline/ocr.ts` | `OcrEngine` seam; Tesseract default; `VITE_OCR_ENGINE=paddle` → `engines/paddle/*` (ONNX det+rec+CTC) |
-| `src/config/vendors.ts` | Brand matcher: curated table + `src/data/vendorDb.extra.json` (generated, 329 brands; curated wins on name AND alias claims at merge); passes: exact → glyph-normalized (`normalizeGlyphs`) → header-line edit-distance sweep (`fuzzyMatchVendorLines`, merchant-shaped lines only, adopts at `FUZZY_HINT_RATIO`, `FUZZY_STOPWORDS` = known real-word colliders) → bounded fuzzy (`fuzzyMatchVendor`); slogans as long aliases. Wallet tender phrases ("GOOGLE PAY") and `BRAND_EXCLUSIONS` ("subway fare") are masked before every pass; `GENERIC_ALIASES` (shell, hilton, google…) only count on trustworthy header lines via `extract.matchKnownVendor` |
-| `src/pipeline/extract.ts` | Rules: grand-total tiers + reconcile (`NON_GRAND_RE` also drops pre-discount "MERCHANDISE TOTAL / TOTAL BEFORE COUPONS" lines; the lenient bare-integer read applies only to label+value-shaped lines, `isLabelValueLine`), **pump-math reconcile** (corroboration-gated; payment-line anchors correct, non-payment anchors keep), footing math with tip guard (never ADOPTS subtotal + tax when the tax exceeds `TAX_MAX_RATIO` of the subtotal — keeps the printed total, `total_suspect`), US-first dates (stamp-glyph repair; a clock time can't donate its hour as a year; ctime order recovers the trailing year; date labels are ranked invoice/order/transaction date > bare Date > unlabeled > due/expiry/ship date), tax (`TAX_ID_RE`/`TAX_RATE_RE` reject registration/rate lines; a printed TOTAL TAX wins, component STATE/COUNTY/CITY lines sum only when total − subtotal corroborates; a tax larger than the printed subtotal — or at/above the settled total when no subtotal is printed — is dropped as a garble), vendor line heuristic (greeting/address/city-in-address-block/date-or-timestamp/tender/staff/footer/loyalty/pump-data rejects; trailing `#NNN` store numbers stripped) + `matchKnownVendor` (generic aliases scoped to header lines) + fuzzy hook, refund/return sign detection (magnitude kept, `total_suspect` gates), confidence, flags, `forcesManualReview()` (**`total_suspect`**/`vendor_unclear` warns force review — `total_mismatch` stays advisory), `locateValue()` (post-hoc field location for corrections; word-bounded vendor probe, shares `lenientTotalLine` with findAmount) |
-| `src/train/corrections.ts` | The improvement loop: review edits diffed into `CorrectionRecord`s (with located bbox + OCR line), appended to kv `training.log` (cap 2000); Settings → Improvement log downloads/clears it. `bundle.ts` builds the tuning ZIP (corrections + extraction.json + CSV + original/annotated images), shared by Settings and the landing contact form |
+| `src/config/vendors.ts` | Brand matcher: curated table + `src/data/vendorDb.extra.json` (generated, 329 brands; curated wins on name AND alias claims at merge); passes: exact → glyph-normalized (`normalizeGlyphs`) → header-line edit-distance sweep (`fuzzyMatchVendorLines`, merchant-shaped lines only, adopts at `FUZZY_HINT_RATIO`, `FUZZY_STOPWORDS` = known real-word colliders) → bounded fuzzy (`fuzzyMatchVendor`); slogans as long aliases. Wallet tender phrases ("GOOGLE PAY") and `BRAND_EXCLUSIONS` ("subway fare") are masked before every pass; `GENERIC_ALIASES` (shell, hilton, google…) only count on trustworthy header lines via `extract.matchKnownVendor`; `isPaymentBrandName` (`PAYMENT_NAMES`: card/debit networks, processors, terminals (P97), wallets — matched as the WHOLE squashed name, an issuer prefix ('Chase Visa'), tender words and a masked card number ('MASTERCRD XXXX1234') allowed, never a bare bank; 'Clover Food Lab'/'Panda Express' are merchants; `tests/vendorDb.test.ts` pins that no brand name or alias is one) and `stripProcessorPrefix` ('SQ *'/'TST*'/'PAYPAL *' descriptors) |
+| `src/pipeline/extract.ts` + `src/pipeline/rules/` | `extract.ts` is the orchestrator (`parseReceipt`, confidence, `forcesManualReview`) and the ONLY public import path; the rules live in `rules/` by concern — `money` (money tokens/hits), `labels` (the shared total/subtotal/tax/tender/date/tip/discount/refund regexes + `lenientTotalLine`/`isLabelValueLine`), `amount`, `tax`, `date`, `vendor`, `fuel` (pump + kWh), `footing` (footing math + reconcile), `locate` (`locateValue`/`readValueInBox`), `text` (label fold + bbox helpers). Rules: grand-total tiers + reconcile (`NON_GRAND_RE` also drops pre-discount "MERCHANDISE TOTAL / TOTAL BEFORE COUPONS" lines; the lenient bare-integer read applies only to label+value-shaped lines, `isLabelValueLine`), **pump-math reconcile** (corroboration-gated; payment-line anchors correct, non-payment anchors keep), footing math with tip guard (never ADOPTS subtotal + tax when the tax exceeds `TAX_MAX_RATIO` of the subtotal — keeps the printed total, `total_suspect`), US-first dates (stamp-glyph repair; a clock time can't donate its hour as a year; ctime order recovers the trailing year; date labels are ranked invoice/order/transaction date > bare Date > unlabeled > due/expiry/ship date; a return-policy block — the "POLICY … EXPIRES ON" header (OCR garbles included), the row under it and the id/days/date rows after it — and any "expires on" line rank with the deadlines; `findDateEvidence` reports the pick's rank and its line's OCR confidence), tax (`TAX_ID_RE`/`TAX_RATE_RE` reject registration/rate lines; a printed TOTAL TAX wins, component STATE/COUNTY/CITY lines sum only when total − subtotal corroborates; a tax larger than the printed subtotal — or at/above the settled total when no subtotal is printed — is dropped as a garble), vendor line heuristic (greeting/address/city-in-address-block/date-or-timestamp/tender/staff/footer/loyalty/pump-data rejects; trailing `#NNN` store numbers stripped) + `matchKnownVendor` (generic aliases scoped to header lines) + fuzzy hook, refund/return sign detection (magnitude kept, `total_suspect` gates), confidence, flags, `forcesManualReview()` (**`total_suspect`**/`vendor_unclear` warns force review — `total_mismatch` stays advisory), `locateValue()` (post-hoc field location for corrections; word-bounded vendor probe, shares `lenientTotalLine` with findAmount). City/state rejects are case-blind for the comma'd and ZIP forms ('Anaheim, ca', 'Cabazon, Ca'), except the title-case ', Co'/', Co.' company suffix ('Johnson Lumber, Co.'); the bare 'City ST' form takes all-caps or all-lower only (title case is a company suffix). Card-network/processor lines and SITE/STORE/STATION ID lines (`ID_LINE_RE`) never win the vendor. With NO known brand AND no merchant-shaped line, a distinctive (exact, ≥4 letters, non-generic) alias glued into a LABELED site ID names the vendor (`siteIdBrand`: 'SITE ID: chevron0020-981' → Chevron, boxed on the token) — never over a printed operator ('G&M OIL #185'). `dateFlags(date, now?)`: a date more than `FLAGS.suspectAfterDays` (730) days old is a review-forcing `date_suspect` warn INSTEAD of stale_date, on both tiers. `readValueInBox(lines, kind, box, current?)`; `locateValue`'s vendor branch is `rules/vendor.ts locateVendorOnLines` |
+| `src/train/corrections.ts` | The improvement loop: review edits diffed into `CorrectionRecord`s (with located bbox + OCR line), appended to kv `training.log` (cap 2000; an AI read's records carry `rules`, the rules tier's value for that field); Settings → Improvement log shows its count and clears it — the log is exported ONLY inside the tuning bundle (`corrections.json`; the separate log-only download was redundant and is gone), and the bundle button also works on an empty board while the log has records; the bundle is compact by default (see the tuning-bundle Gotcha). `bundle.ts` builds the tuning ZIP (corrections + extraction.json via `extractionEntry` — + `cost` and the `assist` provenance; legacy AI rows get a parsed `assist.legacy` record and ocrText rebuilt from their lines — + CSV + original/annotated images), shared by Settings and the landing contact form |
 | `src/pipeline/logo/` | Visual logo layer: `embedder.ts` (CLIP seam, lazy, test-fakeable), `index.ts` (bundled `logoIndex.json` + user brands, cosine NN, header-band crop, `addBrandFromImage`), `fuse.ts` (Layer-3 fusion; `LOGO_ACCEPT`) — inert (no model download) while the index is empty |
-| `src/pipeline/vision/` | Opt-in AI assist (OpenRouter/Gemini/Anthropic), spend cap, build-time free key; signed-in users route via `supabase/aiProxy.ts` → `ai-extract` Edge Function |
-| `src/store/` | `db.ts` (IndexedDB v1: batches/receipts/jobs/blobs/brands/kv; the open forgets itself on `terminated`/`blocking`/rejection so the next call reopens, and `upgrade` is STEPPED — `if (oldVersion < N)` per version, never an unconditional createObjectStore), `repo.ts` (the one read/write + notify seam; `updateReceipt` is a single-transaction read-modify-write with an optional `expect.updatedAt` compare-and-swap that returns null on a miss; deletes record kv pending-delete entries for sync; `wipeLocalData` clears the stores WITHOUT tombstones), `sync.ts` (Supabase mirror: LWW on `updatedAt` BOTH ways — pull via `syncMerge.remoteAction`, push via migration 0004's `lww_guard` trigger; deletes propagate as `deleted_at` tombstones consumed from kv `sync.pendingDeletes` and pushed before upserts and before the first pull; realtime on receipts+batches+brand_logos, a rejoin after a gap triggers a catch-up pull; uploaded-blob memory is per-account kv `sync.uploadedBlobs.<uid>`; the pull is PAGED (`fetchAll`, 1000 rows/page over id order, advancing by the rows returned and stopping only on an EMPTY page — PostgREST's cap silently truncated bigger workspaces, and a deployment whose `max-rows` is below the page size returns short pages that are not the end); a pull also back-fills missing images for rows that were already up to date (an earlier failed download otherwise left the card blank until the row changed); `start()` FAILS CLOSED when kv `sync.ownerUserId` names a different account and local data exists (`syncMerge.ownerDecision` — a shared laptop where A signed out and B signed in used to push A's receipts into B's workspace), `sync.foreignOwner` + `FOREIGN_OWNER_MESSAGE` surface it (Workspace chip → Settings, which offers "Remove this device's local copy" = `state.resetLocalCopy` → `repo.wipeLocalData`), and the owner mark is written after the first successful push; a push carries only rows stamped since the last successful one (`changedSince`, kv `sync.lastPushAt.<uid>`, inclusive so a same-millisecond edit is never skipped — every debounce tick used to upsert the whole store with full payloads), while blob uploads still walk every receipt through the `uploaded` set; blobs upload BEFORE row upserts so the other device's realtime apply finds them; a tombstone only removes storage objects when it LANDED (`tombstoneLanded` on the update's returned row — the `lww_guard` may keep a revived row); UI announcements (`announce()`) never echo into a push; `start()` is single-flight per user and returns whether it freshly started, which is the only time batch adoption runs), `syncMerge.ts` (pure Node-tested sync decisions: LWW/tombstone action, pending-delete log, batch adoption, paging, tombstone landing, owner decision), `jobs.ts` (saved job name⇄number pairs in kv `jobs.saved`, local-only; pure list helpers are Node-tested) |
+| `src/pipeline/vision/` | Opt-in AI assist as two independent choices (`config.ts`, localStorage `ro.vision.config.v2`, a v1 record migrates on read): BACKEND `local` (Ollama/LM Studio/other OpenAI-compatible on localhost) · `selfhosted` (your OpenAI-compatible server, optional bearer) · `cloud` (OpenRouter/Gemini/Anthropic, spend cap, build-time free key; signed-in users route via `supabase/aiProxy.ts` → `ai-extract`), and STRATEGY `oneshot` · `agentic`. `endpoint.ts` resolves the config to ONE `Endpoint` (dialect, URL, key, metered, timeout); `clients/` = one adapter per wire dialect (`openai.ts` serves OpenRouter + every local/self-hosted server, `anthropic.ts`, `gemini.ts`) behind a neutral `ChatClient` (pure body/parse halves, Node-tested); `strategies/` = `oneshot.ts`, `agentic.ts` (bounded tool loop) and `tools.ts` (the agent's PURE tools over the on-device read: `find_on_receipt`, `check_math`, `lookup_vendor`, `submit_receipt`); `index.ts` orchestrates (`planAssist` is shared by the pipeline and Settings' Test connection). `schema.ts visionToExtraction(raw, { draft, lines })` — `VisionContext` is the one place to add evidence, never a positional param — vets the model's vendor (`vetVisionVendor`) BEFORE anchoring: a card network/processor or the receipt's city (address shape, or an echo of a printed city line; never the bare 'WORD ST' shape, so 'ACME CO' passes, nor a ', CO' tail alone in any case — that needs a ZIP or an echo of a 'CO' line that is a real address) is replaced by the OCR brand in the top 8 lines or the site ID (silent, with its OCR box), else a brand printed further down (flagged), else a ≥0.8 rules header (flagged), else BLANK — `vendor_unclear` quotes the model and forces review; model dates get the rules' `dateFlags`; the agent's `lookup_vendor` answers `payment_network: true`. `provenance.ts` (pure, Node-tested): `anchorAssistBoxes` gives an AI read honest boxes (keeps a usable box a field already carries; a blank value gets none; amount/date reuse the rules draft's box for the SAME value, else `locateValue`; vendor: full string on a line → the draft box for the same text/brand only when a line under it prints it → `locateValue` → the draft box when its line shares a distinctive ≥4-letter word; otherwise no box, never a guess), `corroborate` (values never change; messages name which reader found what, never what the receipt "prints": `total_suspect` when the AI total is printed nowhere and differs from a CONFIDENT rules total the rules don't themselves question; `date_suspect` when the AI date is printed nowhere and differs from a CLEAN rules date — or is its exact day/month swap — see the Gotcha), `settleAssistExtraction` (both best-effort, flags first), `assistProvenance`/`assistMethodDetail` (provider · model (→ the served model the server reported: OpenAI `model`, Anthropic `model`, Gemini `modelVersion`) · one-shot / agentic, N calls (requested vs effective) · via your account, plus `host` this-device/private-network/internet and `keySource` own/builtin/account/none — never the URL or key) |
+| `src/pipeline/recheck.ts` | "Re-check this batch" (Settings → This batch, `ui/settings/BatchSection.svelte` → `state.recheckBatch`, lazy 4 KB chunk): heals rows stored before two read-time fixes from STORED data only — no OCR, no AI call. Pure `planBatchRecheck(rows)` → `{ boxes, duplicates }` (Node-tested on the owner's rows, `tests/fixtures/ownerLegacyAi.ts` + `ownerDuplicates.ts`); `recheckPatch` is the only write shape; `runBatchRecheck(batchId, io)` applies ONE `updatedAt` CAS write per receipt through injected storage; `recheckSummary` is the toast (a lost race says "re-check again", a missing image — `unfixable` — never does) |
+| `src/store/` | `db.ts` (IndexedDB v1: batches/receipts/jobs/blobs/brands/kv; the open forgets itself on `terminated`/`blocking`/rejection so the next call reopens, and `upgrade` is STEPPED — `if (oldVersion < N)` per version, never an unconditional createObjectStore), `repo.ts` (the one read/write + notify seam; `updateReceipt` is a single-transaction read-modify-write with an optional `expect.updatedAt` compare-and-swap that returns null on a miss; deletes record kv pending-delete entries for sync; `wipeLocalData` clears the stores WITHOUT tombstones), `sync.ts` (Supabase mirror: LWW on `updatedAt` BOTH ways — pull via `syncMerge.remoteAction`, push via migration 0004's `lww_guard` trigger; deletes propagate as `deleted_at` tombstones consumed from kv `sync.pendingDeletes` and pushed before upserts and before the first pull; realtime on receipts+batches+brand_logos, a rejoin after a gap triggers a catch-up pull; uploaded-blob memory is per-account kv `sync.uploadedBlobs.<uid>`; the pull is PAGED (`fetchAll`, 1000 rows/page over id order, advancing by the rows returned and stopping only on an EMPTY page — PostgREST's cap silently truncated bigger workspaces, and a deployment whose `max-rows` is below the page size returns short pages that are not the end); a pull also back-fills missing images for rows that were already up to date (an earlier failed download otherwise left the card blank until the row changed); `start()` FAILS CLOSED when kv `sync.ownerUserId` names a different account and local data exists (`syncMerge.ownerDecision` — a shared laptop where A signed out and B signed in used to push A's receipts into B's workspace), `sync.foreignOwner` + `FOREIGN_OWNER_MESSAGE` surface it (Workspace chip → Settings, which offers "Remove this device's local copy" = `state.resetLocalCopy` → `repo.wipeLocalData`), and the owner mark is written after the first successful push; a push carries only rows stamped since the last successful one (`changedSince`, kv `sync.lastPushAt.<uid>`, inclusive so a same-millisecond edit is never skipped — every debounce tick used to upsert the whole store with full payloads), while blob uploads still walk every receipt through the `uploaded` set; blobs upload BEFORE row upserts so the other device's realtime apply finds them; a tombstone only removes storage objects when it LANDED (`tombstoneLanded` on the update's returned row — the `lww_guard` may keep a revived row); UI announcements (`announce()`) never echo into a push; `start()` is single-flight per user and returns whether it freshly started, which is the only time batch adoption runs), `syncMerge.ts` (pure Node-tested sync decisions: LWW/tombstone action, pending-delete log, batch adoption, paging, tombstone landing, owner decision), `repo.jobRows` (the jobs table's pure row rules — claim order, heartbeat touch, release, unclaim — shared by the repo and tests/queue.test.ts; `unclaimJob` = the pause's give-back), `jobs.ts` (saved job name⇄number pairs in kv `jobs.saved`, local-only; pure list helpers are Node-tested) |
 | `src/supabase/` | `client.ts` (null unless `VITE_SUPABASE_URL/ANON_KEY`), `auth.ts`, `aiProxy.ts` |
 | `src/onedrive/` | Optional "Save to OneDrive" (no SDK, hidden unless `VITE_ONEDRIVE_CLIENT_ID`; ONEDRIVE_SETUP.md): `core.ts` (pure, Node-tested: PKCE, auth URL, token mapping, Graph upload w/ injectable fetch), `store.ts` (env + localStorage tokens), `popup.ts` (OAuth-popup relay, called by `main.ts` before mount), `index.ts` (connect popup / refresh / `uploadReport` → `Apps/DueBack`; the report bar uploads the workbook AND the print packet as two files). Errors are typed: `TokenEndpointError` (a refusal — the grant is dead, tokens cleared, popup next) vs plain errors for transport/5xx/429 (tokens KEPT, message shown — a network blip used to force re-consent), `GraphError.status` for Graph; a 401 on upload refreshes silently and, failing that, clears the tokens and asks for a second click (the popup must open inside a gesture) |
-| `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark — dark is a warm ladder anchored on `#12100e`, the PWA chrome color), `state.svelte.ts` (the one reactive bridge; `applyTheme` also syncs the theme-color meta pair), `App/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle`, `BrandLogo.svelte` (the receipt+return-arrow mark — same glyph as `public/icons/favicon.svg`, keep in sync; used by both headers and the footer); `Landing.svelte` is the marketing orchestrator over `landing/` (Hero/How/Logo/Workbook/Contact partials + `landing.css` shared vocabulary) — ONE scrolling page with a sticky anchor nav (scroll-spy highlights the section in view), a nerd-only Roadmap section, and a Nerd-mode toggle (`landing/prefs.svelte.ts`, kv-free localStorage) revealing `.db-nerd` engineering notes |
-| `src/export/` | `order.ts` (THE report order — `exportableReceipts`/`byReportOrder` (date, then createdAt, then id: a total order), `reportOrder` (category sections), `displayCategory` — shared by the workbook, the CSV and the ExportBar's print packet; ExcelJS-free so the bar can sort without the lazy export chunk), `zip.ts` (dependency-free ZIP for the images download), `printPdf.ts` (dependency-free print packet: receipts 2-up on Letter with the employee header, Node-tested; text is Latin-1 for WinAnsi Helvetica — `pdfText` NFC-normalizes and keeps 0xA0–0xFF, content streams are latin1-encoded, never TextEncoder; captions carry a `label` ("Fuel #2") that is never truncated; ExportBar downloads it WITH the workbook — kv `report.printPacket`, default ON), `anchor.ts` (px→EMU drawing anchors — the one place image geometry is computed), `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells link to per-receipt anchors on the category image sheets as `HYPERLINK("#'Sheet'!A4", n)` FORMULAS with a numeric result — ExcelJS can only write a hyperlink-typed cell as text, which tripped Excel's "number stored as text" triangle on every receipt row; tests/e2e detect either shape via `linkTarget`; Insights' Top Vendors COUNTIF/SUMIF over the per-category receipt RANGES, never `$C:$C` (the employee cell and section headers live in C); anchors precomputed via `blockRows` — keep in sync with the image-block layout; no flat "All Receipts" sheet — the Summary IS the receipt table; **single source of truth**: category-sheet amounts are the stored values, Summary amount cells reference them, Insights KPIs/tables are COUNT/MAX/SUMIF formulas over Summary — edit one amount and everything re-foots; optional allowance lines — per diem (`Batch.perDiem`, `util/perdiem.ts`) and phone service (`Batch.phoneService`, `util/phone.ts`) — sit between the sections and the TOTAL; Insights = executive dashboard of KPI tiles + 5 charts, **`WorkbookOptions.insights` defaults off at the API; the ExportBar toggle defaults ON (kv `report.insights`)**), `charts.ts` (Chart.js→PNG; native xlsx charts are NOT possible with ExcelJS — the PNGs are the deliberate trade; the share doughnut draws `insights.shareSlices` — top 7 + one "All other" remainder so the percentages foot to 100%), `insights.ts`, `csv.ts` (`toCsvBytes` = BOM + UTF-8 for the tuning bundle; `csvField` prefixes `'` to cells starting `= + - @` so an OCR'd vendor can't execute on import), `images.ts` |
+| `src/ui/` | Svelte 5: `theme.css` (tokens, light/dark — dark is a warm ladder anchored on `#12100e`, the PWA chrome color), `state.svelte.ts` (the one reactive bridge; `applyTheme` also syncs the theme-color meta pair), `App/Workspace/Card/Dropzone/ReviewModal/ExportBar/Settings/Toasts/ThemeToggle`, `SettingsButton.svelte` (the gear BOTH headers share — `Settings.svelte` is mounted ONCE, in App.svelte outside the surface swap; tests/app_shell.test.ts pins the single mount), `Settings.svelte` is the dialog shell (focus trap + the shared section styles as `.p-body :global(...)`) over `settings/*Section.svelte` (one per section; they mount with the dialog, so each open reads fresh state), `Segmented.svelte` (the one segmented toggle — Workspace's Grid/Kanban and the AI backend/strategy pickers), `BrandLogo.svelte` (the receipt+return-arrow mark — same glyph as `public/icons/favicon.svg`, keep in sync; used by both headers and the footer); `Landing.svelte` is the marketing orchestrator over `landing/` (Hero/How/Logo/Workbook/Contact partials + `landing.css` shared vocabulary) — ONE scrolling page with a sticky anchor nav (scroll-spy highlights the section in view), a nerd-only Roadmap section, and a Nerd-mode toggle (`landing/prefs.svelte.ts`, kv-free localStorage) revealing `.db-nerd` engineering notes |
+| `src/export/` | `order.ts` (THE report order — `exportableReceipts`/`byReportOrder` (date, then createdAt, then id: a total order), `reportOrder` (category sections), `displayCategory` — shared by the workbook, the CSV and the ExportBar's print packet; ExcelJS-free so the bar can sort without the lazy export chunk), `delivery.ts` (pure, ExcelJS-free: the one-download-per-click rule, `resolvePacketZip` — migrates the retired `report.printPacket` + `report.bundleZip` pair, only both-on meant a ZIP — `reportZipName`, and `unresolvedDuplicates`/`duplicatesSentence` for Generate's confirm), `zip.ts` (dependency-free ZIP for the images download), `printPdf.ts` (dependency-free print packet: receipts 2-up on Letter with the employee header, Node-tested; text is Latin-1 for WinAnsi Helvetica — `pdfText` NFC-normalizes and keeps 0xA0–0xFF, content streams are latin1-encoded, never TextEncoder; captions carry a `label` ("Fuel #2") that is never truncated; the report bar's own **Download packet** button gets it, or it rides in ONE ZIP with the workbook under kv `report.packetZip` (default off — `delivery.ts`); `receiptStrip(boxes, { lines })` — amount box LAST: the top edge comes from the amount and the fields above it, the bottom runs through the tender/total lines printed under the amount (stored `ocrLines`, `TENDER_LINE_RE`, chained within 8 line heights; a fixed 0.03 pad without lines); captions drop `.jpg` and cut the name by measured Helvetica AFM widths (`textWidth`/`fitText`), never the label), `anchor.ts` (px→EMU drawing anchors — the one place image geometry is computed), `workbook.ts` (xlsx in the ORIGINAL app's layout: Summary form w/ per-category tables whose `#` cells link to each receipt's block on its category image sheet as `HYPERLINK("#'Sheet'!A3:F21", n)` FORMULAS with a numeric result — a RANGE from the receipt's header band, capped at `LINK_VIEW_PX` (360px) so it always fits the window (short blocks run through the data row) — ExcelJS can only write a hyperlink-typed cell as text, which tripped Excel's "number stored as text" triangle on every receipt row; tests/e2e detect either shape via `linkTarget`; Insights' Top Vendors COUNTIF/SUMIF over the per-category receipt RANGES, never `$C:$C` (the employee cell and section headers live in C); link ranges + amount refs precomputed via `blockSpan` (→ {top, data, linkEnd, next}, built on imageRows/blockRows; the block's HEADER/GAP/DATA/SPACER_ROW_PT heights are named constants shared with buildImageSheet) — keep in sync with the image-block layout; no flat "All Receipts" sheet — the Summary IS the receipt table; **single source of truth**: category-sheet amounts are the stored values, Summary amount cells reference them, Insights KPIs/tables are COUNT/MAX/SUMIF formulas over Summary — edit one amount and everything re-foots; optional allowance lines — per diem (`Batch.perDiem`, `util/perdiem.ts`) and phone service (`Batch.phoneService`, `util/phone.ts`) — sit between the sections and the TOTAL; Insights = executive dashboard of KPI tiles + 5 charts, **`WorkbookOptions.insights` defaults off at the API; the ExportBar toggle defaults ON (kv `report.insights`)**), `charts.ts` (Chart.js→PNG; native xlsx charts are NOT possible with ExcelJS — the PNGs are the deliberate trade; the share doughnut draws `insights.shareSlices` — top 7 + one "All other" remainder so the percentages foot to 100%), `insights.ts`, `csv.ts` (`toCsvBytes` = BOM + UTF-8 for the tuning bundle; `csvField` prefixes `'` to cells starting `= + - @` so an OCR'd vendor can't execute on import), `images.ts` (`thumbnail`/`stripThumbnail` take a trailing `trim = true`: a stored image of whole-page aspect with page-white paper exports trimmed to its ink — the legacy path for digital pages stored whole before the ink crop; `bandRect` narrows the packet's field band to that rect; the tuning bundle only ever calls `thumbnail` UNtrimmed — compact mode — so its boxes stay aligned) |
 | `supabase/` | `migrations/0001_core.sql` (tables+RLS+storage+realtime), `0002_pgvector.sql` (optional), `0003_ai_limits.sql` (`ai_usage` per-user daily AI counts, service-role only), `0004_sync_integrity.sql` (`deleted_at` tombstones, `lww_guard` trigger, composite `(user_id, id)` PKs, realtime for batches/brand_logos), `functions/ai-extract` (POLICED key-holding proxy: model allowlist `AI_ALLOWED_MODELS`, max_tokens cap, per-user daily limit `AI_DAILY_LIMIT`; pure policy in `policy.ts`, Node-tested), `functions/logo-search` |
 | `scripts/` | `vendor-tesseract.mjs` (prebuild), `vendor-paddle.mjs` (opt-in), `export_vendor_db.py` (regenerates vendorDb.extra.json from `../Reimbursements/vendor_db.py`), `gen-icons.mjs`, `gen-og.mjs` (the 1200×630 share image `public/og.png` behind `og:image`/`twitter:image` — absolute URLs in index.html, excluded from the PWA precache) |
-| `tests/` | node:test via tsx; `testkit/` = the fixed 9-challenge accuracy gate (+ logo case); `e2e.mjs` + `screenshots.mjs` (Playwright vs `vite preview`) |
+| `tests/` | node:test via tsx; `testkit/` = the fixed 9-challenge accuracy gate (+ logo case, + the real Chevron-app SITE ID case); `fixtures/ownerDuplicates.ts` = the owner's real OCR lines (card digits masked) for the dedup tests; `e2e.mjs` + `screenshots.mjs` (Playwright vs `vite preview`) |
 
 ## Commands
 
@@ -79,7 +80,7 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   Settings opens at phone width. Wide content that should scroll gets its
   own `overflow-x: auto` container.
 - **Money parsing is US-first and deliberately strict** (`util/money.ts` +
-  `MONEY_SRC` in `extract.ts`): a single dot with 3 decimals is a *decimal*
+  `MONEY_SRC` in `rules/money.ts`): a single dot with 3 decimals is a *decimal*
   ("$3.499/gal", "11.204 GAL"), never thousands grouping — the permissive form
   read gallons as $11,204 and promoted it to the total. Dot-grouping only
   counts as money with a comma-cents tail. Within a total tier the **largest**
@@ -165,7 +166,7 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   every later box-shadow rule (`.btn-primary`, `.card`, `.btn:hover`, the
   breathing next-action keyframes) silently cancelled it and keyboard focus
   on a card or primary button was invisible. Controls inside
-  `overflow:hidden` containers (Workspace `.seg-btn`, FAQ/How `summary`, the
+  `overflow:hidden` containers (`Segmented.svelte`'s `.seg-btn`, FAQ/How `summary`, the
   landing nav tabs) set `outline: none` and draw INSET box-shadow rings
   locally because the outside ring clips. Light `--ink-faint` is `#6b665f`
   (AA on all three surfaces — the old value was 3.7–4.3:1), form-control
@@ -200,7 +201,7 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   ci.yml) along with a production build; deploy is gated on CI passing on
   main (`workflow_run`, manual `workflow_dispatch` still allowed) and runs
   `npm test` again before building. The e2e fails on any uncaught page
-  error or console error (it used to only log them). The testkit requires
+  error or console error (it used to only log them). `npm test` runs `node --check` on `tests/e2e.mjs` and `tests/screenshots.mjs` (`tests/e2e_syntax.test.ts`): two parallel-built steps once redeclared the same consts and the gate didn't parse behind a green unit run. Dated fixtures vs the age check: unit tests that assert nothing forces review pin the clock (`t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 8, 23) })`); the e2e fixtures are dated 2026, so from mid-2028 every e2e receipt reads `needs_review` instead of `done` — the checks still pass but the done path goes unexercised. The testkit requires
   the AMOUNT right on every challenge and no challenge below 0.9 — the old
   averaged gate let one receipt ship a 100× total.
 - **Digit-ENDING brand aliases ("76", "super 8") are excluded from the glyph
@@ -212,6 +213,17 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   digit folds turn "super 8" into "superb", one deletion from the SUPER grade
   line on every independent pump receipt. `tests/vendorDb.test.ts` pins that
   "76" stays the only digit-only alias.
+- **Card networks and cities are rejected on evidence, not word shape.**
+  `isPaymentBrandName` needs the WHOLE name to be a payment company — a
+  substring list would drop "Clover Food Lab" and "Heartland Co-op".
+  `vendorNameProblem` calls a model's answer a city only when it has the
+  comma/ZIP address shape itself, or equals the city (or city + state) of
+  an address line the receipt prints; the bare "WORD ST" shape is only a
+  rules line-skip, never grounds to blank an answer ("ACME CO", "PHO CA").
+  A new payment name must never collide with a brand (vendorDb test). The
+  owner's batch shipped "Anaheim, ca" (rules: lowercase state, the only
+  brand evidence a `SITE ID: chevron0020-981` token) and "AMERICAN EXPRESS"
+  (the AI read the tender line).
 - The logo layer never downloads the CLIP model while the index is empty
   (`logoIndexAvailable()` gate). Tests inject a fake via `setEmbedderFactory`.
 - Export modules (ExcelJS/Chart.js) are **lazy-imported** in `ExportBar` — keep
@@ -243,7 +255,7 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   verifies; "subway fare" is masked before the brand passes so the transit
   keyword can fire.
 - **`total_mismatch` is advisory; `total_suspect` gates.** Only the dedicated
-  `total_suspect` warn (and `vendor_unclear`) force `needs_review` — reconcile's
+  `total_suspect` warn, `date_suspect` and `vendor_unclear` force `needs_review` — reconcile's
   advisories fire on ordinary tip/savings/balance receipts and must not. Tip
   awareness must stay symmetric between `applyFootingMath` and parseReceipt's
   far-above-subtotal gate (2× subtotal ceiling with a TIP line, 1.5× without).
@@ -253,7 +265,13 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   the subtotal (tax silently dropped), a subtotal + tax sum whose tax exceeds
   `TAX_MAX_RATIO` of the subtotal, and a refund/return total (negative sign
   on its own line, a refund/return label on it, or a "REFUND TO …" echo —
-  bare "RETURN POLICY" text never flags).
+  bare "RETURN POLICY" text never flags). `date_suspect` has two sources: a
+  date more than two years old (`dateFlags`, both tiers — it replaces
+  stale_date; the owner's AI read invented 2012 for a stained year), and an
+  AI date the OCR can't find that differs from a clean rules date or swaps its day and month (`provenance.corroborate`);
+  `settleAssistExtraction` keeps only the corroboration flag when both fire.
+  ReviewModal maps it to the date field (`FLAG_FIELD`), so a date edit
+  prunes it.
 - **Receipts persist pruned `ocrLines`** (text+bbox, no words) so a review
   correction can be re-located (`locateValue`), re-highlighted (ReviewModal
   `applyPatch` re-bakes the annotated copy), and logged for training.
@@ -266,7 +284,13 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   funny" report), and there is NO hero sub-paragraph (the Why section
   carries the pitch); the primary CTA sits RIGHT of the secondary; the nav
   has NO "Open the app" (the hero's back-to-receipts button is the
-  returning-user path, e2e-pinned); the page flows hero → why → How (the
+  returning-user path, e2e-pinned); its actions are Nerd mode, the Settings
+  gear and the theme toggle — the gear hides under `app.storageError` (a
+  storage-blocked embed lands here and Settings can save nothing), and
+  while Settings is open the page-wide drop stands down (no veil, no
+  ingest; a drop on a file input — Brands' logo picker — reaches the input,
+  anywhere else is still prevented so the tab doesn't navigate to the
+  file; e2e 8b pins it); the page flows hero → why → How (the
   three steps with the time-race card as a sticky rail, feature-trio copy
   folded into step bodies) → Logo → Workbook → CTA → FAQ → roadmap →
   Contact; How steps open on mouse hover (`onpointerenter`, click still toggles;
@@ -308,12 +332,28 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   bar breathes a ring around ONE next-action button (Review flagged, else
   Generate workbook); the pulse keyframes rest at 0% so reduced-motion
   freezes to a plain button. Generating with a blank employee/job name/job
-  number raises a confirm dialog first ("Generate anyway" proceeds —
-  e2e-pinned). A failed receipt can be read again: "Retry reading" in the
+  number — OR with an unresolved possible duplicate in the total
+  (`delivery.unresolvedDuplicates`: exportable, unapproved,
+  `duplicate`-flagged; a flagged $80.29 repeat once shipped in a real TOTAL)
+  — raises one confirm dialog first, named "Missing report details" when
+  details are blank and "Possible duplicates in this report" when only
+  duplicates trigger it; it lists the duplicates with their amounts, and
+  "Review duplicate" opens the first in the review modal's side-by-side
+  compare. "Generate anyway" proceeds (both paths e2e-pinned). Save to OneDrive ships the same workbook and TOTAL, so it asks the same question: the one confirm carries a target (ExportBar `confirmFor`: "generate" | "onedrive"), its proceed button reads "Save anyway" for OneDrive, and `answerConfirm` starts the upload with no await first so ensureConnected's sign-in popup still opens inside that click (tests/delivery.test.ts pins the routing statically — the button is hidden without VITE_ONEDRIVE_CLIENT_ID). A failed receipt can be read again: "Retry reading" in the
   ReviewModal (the card is itself a button, so no nested button there) and
-  "↻ Retry all" in the Failed lane head → `state.retryReceipt` re-queues
-  through the same path as intake (never an approved receipt; edited
-  fields stay the human's via `touchedBeforeClaim`), and `friendlyError`
+  "↻ Retry all" in the Failed lane head → `state.retryReceipt` →
+  `repo.requeueFailed`, ONE receipts+jobs transaction (`jobRows.requeued`):
+  a no-op unless the receipt is still failed and unapproved; a job it
+  still has only gets `attempts` reset (lock and `createdAt` untouched)
+  and one is inserted only when none exists — a receipt that failed while
+  paused used to get a second job and resume read it twice at once; a run
+  ends by RETIRING its job (`repo.retireJob`: a row a Retry re-armed —
+  attempts 0, every claim leaves ≥ 1 — whose receipt is back to "queued"
+  and unapproved is kept, unlocked, decided in one receipts+jobs
+  transaction; a blind delete stranded a Retry that landed as the last
+  attempt wound down, and keeping every attempts-0 row re-read a receipt the
+  run had just finished). Edited
+  fields stay the human's via `touchedBeforeClaim`, and `friendlyError`
   maps a text-reader load failure (worker/wasm/traineddata fetch) to copy
   that points at it. The workspace sync chip shows error/syncing/synced
   (it used to say "synced" whatever the engine's state); the error chip
@@ -325,8 +365,8 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
 - **Dark scan borders** (CamScanner sawtooth strips) are trimmed by
   `darkBorderInsets` (binarize.ts, Node-tested) before the edge-energy crop —
   pre-scanned uploads otherwise look "uncropped" (nothing else to trim).
-  The insets clamp ONLY the edge-energy fallback: the paper-slab crop is
-  used unclamped, because the slab mask already excludes near-black strips
+  The insets clamp the ink crop (as `inkContentBox`'s `exclude`) and the
+  edge-energy fallback; only the paper-slab crop is used unclamped, because the slab mask already excludes near-black strips
   and its bbox only reaches into the inset band when that band holds
   paper — a long receipt on a dark car seat with its end inside the outer
   8% lost its TOTAL line (or vendor header) to the clamp. `rotateFrame`
@@ -334,6 +374,36 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   size was a ~200 MB canvas beside the bitmap on iOS); `cleanImage`
   releases the decoded bitmap in a `finally` on every path and returns no
   object URL (`CleanedImage.url` is gone).
+- **Digital pages crop to their ink, not their paper.** A Chevron-app
+  e-receipt is a narrow column on a blank Letter page: `paperRegionBox`
+  returns null above 90% paper and the edge-energy guards refuse boxes
+  under 45% of the frame, so the whole 8.5×11 sheet used to be stored and
+  exported. `inkContentBox` runs only when the slab crop didn't. Paper level
+  is the median luminance; below `minPaper` (235 at intake) the frame is a
+  photo, not a page → null (a receipt shot on a light table keeps the
+  edge-energy path). Ink is anything darker than paper − max(8, 3.5%) on
+  near-white frames (≥ 245), else paper − max(16, 7%) — inclusive on
+  purpose (faint logos and thin #CCC fine print lightened by the downscale
+  count; texture only grows the box). Dust (< ~4 px at the 480-px analysis
+  scale) and full-edge dark lines (≥ 90% dark, ≤ 3% deep) are dropped, and
+  imagePrep's dark-border insets are passed as `exclude` (a sawtooth strip
+  is only 30–90% dark per line; without them the ink box re-included it).
+  Margin: 5% of the content's long side; null unless the padded box is
+  ≤ 70% of the frame (idempotent). The e2e fuel/diner/skew/Tesla receipts
+  and real scans never crop; coffee.png and both stack.pdf pages do (e2e
+  7c-bis). A page holding two receipts crops to both; a browser-printed
+  page with URL/page-number furniture doesn't crop. Receipts stored before
+  this keep full pages on cards and in review; the EXPORT trims them
+  (`export/images.ts`, gated on `isFullPageAspect` within 0.003 AND paper
+  ≥ 245, so a slab-cropped photo near Legal/A4 is never newly cropped).
+  Never "Retry reading" a touched receipt to re-crop it: the technical-mode
+  write lands new-frame OCR boxes beside the human's old-frame field
+  boxes. Every crop maps back to the source through `padBox` +
+  `toSourceBox`, clamped at BOTH ends — the old inline `toCrop` clamped
+  only the near end, so a slab flush with the right/bottom edge left a
+  transparent sliver the JPEG stored as black columns. Trimmed Chevron
+  strips print near natural size (one per column): the owner's 37
+  e-receipts went from 6 illegible packet pages to 19 readable ones.
 - **Intake is one transaction and one queue.** `repo.addReceipt` writes the
   original blob, the row and its job together (a quota error mid-way left
   an orphaned blob or a "Queued" card with no job); `deleteReceipt` removes
@@ -355,6 +425,24 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   principle: a hit below `FUZZY_HINT_RATIO` is dropped entirely (never a
   category hint), and when the brand needed real edits a generic keyword on
   the receipt beats the brand's category ("PUBLIC PARKING" is not Publix).
+  The AI tier obeys the same rule: its values stand (the human decides),
+  but the OCR can contradict them — and only EVIDENCE counts, because the
+  receipt went to the AI precisely because the rules read was weak (on the
+  owner's 30 AI reads, every flag against a 0.50–0.55 rules total was a
+  correct AI answer against an OCR garble). An AI total `locateValue` can't
+  find is a `total_suspect` warn only against a confident rules total
+  (≥ `CORROBORATE_MIN_RULES_CONFIDENCE` 0.75) that the rules don't
+  themselves question: no total_suspect, no WARN total_mismatch, and not
+  footing's window recovery (an unverified pick stamped a synthetic 0.9,
+  marked by `WINDOW_RECOVERY_NOTE`) — the info total_mismatch of an
+  arithmetic-VERIFIED correction (the printed sum, pump math) vouches for
+  the total instead, as extract.ts already reads it. An AI date the OCR can't find is
+  a `date_suspect` warn only against a clean rules date: ≥ 0.8, NOT a
+  last-resort pick (rank 3: a return-policy expiry or due date — an
+  unambiguous one keeps 0.8), on a line OCR read at ≥
+  `CORROBORATE_MIN_DATE_LINE_CONFIDENCE` 50 — or, at any confidence, when
+  the AI date is the rules date's exact day/month swap
+  (`vision/provenance.ts corroborate`, `rules/date.ts findDateEvidence`).
 - **Sheet geometry has exactly two conversions, both in `export/anchor.ts`:**
   a stored column width → px is ECMA-376 §18.3.1.13
   (`trunc(((256·w + trunc(128/7))/256)·7)`, so 55 → **385** px and the default
@@ -364,11 +452,22 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   (Excel's dialog: "14.25 (19 pixels)"); `IMG_ROW_PT` is 14.25 for exactly
   that reason — an unaligned row height drifts ~1.75% over a 40-row receipt.
 - **`imageRows()` is the one definition of a receipt's carrier rows.** The
-  Summary's `#` hyperlink anchors, its amount references (`'Sheet'!F…`) and
+  Summary's `#` hyperlink ranges, its amount references (`'Sheet'!F…`) and
   the image sheet each need the same row count; it used to live as three
   copies of `ceil(h*0.75/IMG_ROW_PT)`. Node tests can't catch a desync through
   `buildWorkbook` (no canvas → no images → always the 1-row branch), so
   `tests/workbook.test.ts` asserts the block contract on the helpers directly.
+  `blockSpan(top, img)` builds on it: the Summary's link range
+  (`A{top}:F{linkEnd}`) and amount ref (`F{data}`) come from one call. The
+  link is a RANGE that FITS the window on purpose: Excel scrolls a link
+  target only just into view, so a single cell reached going DOWN sat on the
+  window's bottom edge with the image off-screen (the "hit or miss" report),
+  and for a range taller than the window Excel only guarantees the top-left
+  cell — so the range is capped at `LINK_VIEW_PX` (360px, the pane under
+  the frozen header on a 1366×768 laptop): tall blocks link the band + the
+  top of the image and leave the data row out (which also keeps a stray
+  Delete after the jump off the referenced amount). One constant: raise it
+  if Excel is shown to top-align tall ranges.
 - **Image anchors are native EMU (`export/anchor.ts`), never a fractional
   `{col}`.** ExcelJS converts a fractional column with `colWidth = width ×
   10000` EMU (lib/doc/anchor.js) while a rendered column is its real px ×
@@ -394,7 +493,8 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   a very long receipt just gets more rows.
 - **Contact form (Landing #contact)** opens a prefilled mailto: draft to
   contact@duanehamilton.net; mailto can't attach files, so the "attach tuning
-  bundle" checkbox downloads the ZIP and the draft asks the sender to attach it.
+  bundle" checkbox downloads the ZIP — always the COMPACT bundle, since it
+  rides an email — and the draft asks the sender to attach it, naming its size.
 - **Workbook columns autofit** (`autofitColumns` in workbook.ts — ExcelJS has
   none): merged band cells are skipped. Insights keeps FIXED widths — the
   two-up chart grid anchors images at column offsets 0/6, so autofitting there
@@ -444,7 +544,7 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   "charging session" are Fuel keywords for logo-only charging receipts. The
   session's energy figure is *larger* than the dollar total (42.31 kWh →
   $15.23) and parses as strict money, so `findAmount` drops the kWh QUANTITY
-  from `allMax` (`ENERGY_QTY_SRC` in extract.ts) — otherwise reconcile's
+  from `allMax` (`ENERGY_QTY_SRC` in rules/fuel.ts) — otherwise reconcile's
   "larger amount above the total" warn forced every charging receipt into
   review. Only the quantity is dropped, never the line: "38.42 kWh $12.60"
   must still donate its charge when there is no TOTAL label.
@@ -452,18 +552,34 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   receipt per page — the pipeline's `decode()` first-page path only remains
   for PDF blobs stored by older versions. A scanner PDF used to become a
   single receipt of page 1, silently dropping the rest.
-- **Generate downloads the workbook + print packet PDF** (kv
-  `report.printPacket`, default ON); kv `report.bundleZip` zips them into
-  ONE download instead. The images-ZIP option is HIDDEN for now (card
+- **One click, one download.** Generate downloads the workbook alone; the
+  print packet has its own **Download packet** button (next to Preview
+  packet). Browsers allow one download per user gesture: a second file from
+  the same click trips Chrome/Edge's "download multiple files" prompt (a
+  Block there silently drops every later packet) or Firefox's download-spam
+  block — and the limiter counts interactions, not time. kv
+  `report.packetZip` (default off; "Include the print packet (one ZIP)")
+  makes Generate ONE `Report_<Employee>_<date>.zip` holding both (stored,
+  `compress:false`; no packet → the workbook alone, never a one-file ZIP);
+  `export/delivery.ts resolvePacketZip` migrates the retired
+  `report.printPacket` + `report.bundleZip` pair. Generate and Download
+  packet disable each other while building (doGenerate also guards on
+  `packeting`). OneDrive always uploads both files (uploads aren't
+  downloads). README step 3 and ONEDRIVE_SETUP §3 say the same; the e2e pins
+  exactly one download per click (workbook, packet, opt-in ZIP). The images-ZIP option is HIDDEN for now (card
   commented out in ExportBar, `includeZip` forced false; wiring + kv
   `report.imagesZip` remain). The CSV button is gone entirely
   (`export/csv.ts` survives only for the tuning bundle). "Preview packet"
   opens the PDF in a new tab — the window MUST open synchronously in the
   click (popup blockers), then navigate to the blob URL. The options row is
   TWO labeled fieldsets: allowances that add to the total (per diem, phone)
-  vs what the download contains (insights, print packet, bundle). The packet (`export/printPdf.ts`, Node-tested) crops each
+  vs what the download contains (insights, the print-packet ZIP). The packet (`export/printPdf.ts`, Node-tested) crops each
   receipt to its vendor→total strip when all three boxes are known
-  (`receiptStrip`; hand-drawn boxes count) and column-flow-packs the strips
+  (`receiptStrip`; hand-drawn boxes count — the strip's top comes from the
+  amount and the fields above it, its bottom follows the tender/total lines
+  under the amount through the stored `ocrLines`; ExportBar passes
+  `{ lines: r.ocrLines }` and the amount box goes LAST; `stripThumbnail`
+  narrows a legacy whole-page image to its ink column) and column-flow-packs the strips
   (`layoutPrintPages`) so several fit a Letter page; each image carries its
   own `label`/file-name/amount/job caption (the job is the batch's today,
   stamped per image so a per-receipt job needs no layout change) and the
@@ -490,7 +606,17 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   read as a human touch. The form re-seeds when the SAME receipt's
   `updatedAt` moves while the form is untouched (it finished processing or
   synced while its card was open); typed edits always win. The box also autofills its field via `extract.readValueInBox`
-  (stored `ocrLines` inside the box; Node-tested). The completed review
+  (stored `ocrLines` inside the box; Node-tested). The vendor box reads what
+  is PRINTED (`rules/vendor.ts vendorFromBox(inBox, current)`): a box over
+  the value already in the field returns null (kept, nothing renamed, no
+  correction logged — this is how outlines get added to AI reads); else a
+  line `looksLikeVendorLine` accepts, read at ≥ `BOX_VENDOR_MIN_CONFIDENCE`
+  (60 on the engines' 0..100 line scale), wins AS PRINTED ("MOBIL MART",
+  "Chevron Stations Inc"; a brand-naming line outranks a plain one, then
+  most letters) — only a glyph/fuzzy read ("M0BIL") becomes the canonical
+  brand; else the brand the box prints (scan, site ID, fuzzy sweep); else
+  null. A garbled logo read ("——— WEFT SOLE" at 9%) used to replace a correct
+  "Costco Wholesale". The completed review
   sweep fires `ui/confetti.ts` (multi-volley canvas burst, reduced-motion
   no-op). Grid view groups by category with show/hide chips (localStorage
   `board.hiddenCats`); the chip row renders whenever a PRESENT category is
@@ -499,8 +625,8 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   nothing to click. Workspace reads/writes its `board.*` preferences through
   guarded helpers (localStorage throws in the Carrd embed). Settings re-reads
   the AI-assist config on every open (sign-in flips it on, assisted receipts
-  bump `spent`) and its "Test connection" takes the same server-proxy path a
-  real receipt takes. Card `aria-label`s carry the review reason, date and
+  bump `spent`) and its "Test connection" takes the same `planAssist` path a
+  real receipt takes (server proxy included). Card `aria-label`s carry the review reason, date and
   logo state; the header progress count is a `role="status"` live region.
 - **The Insights sheet defaults ON in the UI, OFF at the API.** The report-bar
   toggle defaults to checked (kv `report.insights`; only an explicit false
@@ -561,8 +687,16 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   (serialized Tesseract, binarize rescue, first-use model downloads), so
   without the heartbeat completing siblings re-claimed in-flight jobs and
   double-processed (and double-billed the paid vision assist). The pool
-  re-wakes itself every 30 s while jobs remain but none is claimable, so a
+  re-wakes itself every 30 s while jobs remain but none is claimable (never
+  while paused — `pause()` clears a pending re-wake), so a
   reload mid-batch no longer strands the in-flight receipts at "Reading…".
+  The heartbeat is cleared the moment a run settles, BEFORE the job is
+  completed, released or unclaimed, and `touchJob` never re-locks an
+  unlocked row (`jobRows.touched`) — a tick during the hand-back used to hide
+  the job for the 90 s stale window. `releaseJob` builds on the STORED row
+  (`jobRows.released`), so a retried job keeps its `createdAt` claim order.
+  `app.pendingJobs` is recounted on every `refresh()`, and the queue
+  announces `{ remaining, running }` at the end of every fill.
   Tesseract start-up failures are surfaced through `createWorker`'s
   `errorHandler` — its own promise never settles when the language data
   or the initialize step fails (only the 'load' action rejects), which
@@ -587,19 +721,211 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   added. A failed receipt's card shows `friendlyError()`'s message (HEIC in
   a non-Safari browser, corrupt/password PDF, undecodable image) rather
   than the decoder's internals.
-- **Every vision provider fetch carries a 90 s `AbortSignal`**
-  (`visionSignal()` in `providers/shared.ts`) — a stalled model call parked
-  the receipt in "processing" for good because the heartbeat kept its lock
-  alive. `parseVisionJson` strips `<think>` blocks and walks balanced
+- **Every AI call carries a deadline and an answer budget** (and, for an
+  unmetered endpoint only, the reading pause as its 4th argument) (`visionFetch` in
+  `vision/clients/shared.ts`; the endpoint's `timeoutMs`/`maxTokens`: 90 s and
+  1024 tokens on metered cloud, 300 s and 4096 local/self-hosted — they're
+  free, and "thinking" models spend 1024 reasoning before any JSON) — a
+  stalled model call parked the receipt in "processing" for good because the
+  heartbeat kept its lock alive. Every dialect maps its stop reason to
+  `ChatReply.truncated`, and an unusable reply's error quotes how it began
+  and says when the limit cut it off (`unusableReply`) — "no parseable
+  JSON" alone sent people to the server's logs. `parseVisionJson` strips `<think>` blocks and walks balanced
   objects, so prose or a stray brace before the JSON no longer sinks it.
+- **AI backend × strategy rules.** The `ai-extract` proxy relays exactly one
+  image extraction (`messagesProblem` refuses a tool loop), so a PROXIED
+  endpoint always runs one-shot (`effectiveStrategy`; Settings says so and
+  Test connection reports the downgrade). Only a metered (cloud) endpoint
+  checks the spend cap — local/self-hosted cost $0 and must not be blocked
+  by cloud spend; the agent re-checks the cap before EVERY follow-up call
+  and reports each call's cost as it lands (`onCost`), so a run that fails
+  after billing still shows in "Spent so far" (one-shot too). The agent
+  loop is bounded (`MAX_AGENT_CALLS` = 5, the last call may only
+  `submit_receipt`), its tools are pure functions over the on-device read
+  (never network, never side effects), an unknown tool is an error RESULT
+  the model can recover from, and a model that ignores tools but answers
+  receipt-shaped JSON still counts. Adapters echo the provider's own
+  assistant message back when the dialect matches (`ChatTurn.raw` —
+  Gemini's thought signatures die otherwise) but REBUILD it for the OpenAI
+  dialect (strict servers refuse response-only fields). The OpenAI adapter
+  retries once without `response_format` when a server 400s on it. Replies
+  carry the server's separate reasoning channel (`reasoning_content` /
+  `reasoning` / Gemini thought parts) as `ChatReply.reasoning`; it is read
+  as the answer ONLY when the visible answer is empty and it holds a
+  receipt-shaped object (`schema.answerFromReasoning`) — LM Studio + a
+  thinking model under json_schema output returns `content: ""` with the
+  whole JSON filed as reasoning (test-pinned with that verbatim response). Local
+  servers must allow this page's origin (Ollama: `OLLAMA_ORIGINS`; LM
+  Studio: Enable CORS). A receipt read by ANY backend is stored as
+  `methodUsed: "paid"` (the persisted name — no migration) with the
+  backend/model/strategy in `methodDetail`; first sign-in auto-enables the
+  assist only when the backend is cloud.
+- **An AI read never overwrites `ocrText`, and its answer is anchored on
+  the OCR's map.** A vision model returns values only; `runVisionAssist`
+  vets them (`visionToExtraction`), then anchors and corroborates them on
+  the SAME `ocr.lines` the rules draft read (`settleAssistExtraction`). The
+  rules extraction used to be swapped out wholesale, so 27 of the owner's 30
+  AI reads had no outline and no annotated copy. Ordering contract: any
+  post-processing of AI values happens BEFORE `settleAssistExtraction`; a
+  box already on a field is kept (only code that took the value from the
+  OCR sets one) — a later rewrite in pipeline.ts would leave a box on a
+  value no longer displayed. `ocrText` is always the OCR read: it used to
+  become the model's raw JSON, and the image-hash cache then re-parsed that
+  JSON as printed text (the model's vendor looked like OCR evidence and
+  confidence jumped past the review line). `reusableOcr` never lends a
+  `methodUsed === "paid"` row's ocrText (an old-build tab can still write
+  JSON there) — it rebuilds the text from `ocrLines` at their mean
+  confidence, and lends nothing without lines. The answer lives in
+  `Receipt.assist.rawAnswer` (tail-capped at `ASSIST_RAW_MAX` on a code-point boundary and `wellFormed` — a lone UTF-16 surrogate or a NUL in the sync payload makes Postgres jsonb refuse the WHOLE receipts upsert, on every push after; agentic `clip()` and the model's vendor (cut at 80 code points) never keep half an emoji either) beside the
+  rules read it replaced (`assist.rules`, copied into each
+  `CorrectionRecord.rules`). The endpoint URL, API key and the proxy's
+  session token are deliberately NOT recorded (internal host names would
+  sync and ship in mailed tuning bundles); `host`/`keySource` say where and
+  whose instead, and a test pins that neither leaks. Rows stored before
+  this (`isLegacyAiRead`: `methodUsed === "paid"` without `assist`) still
+  hold the answer in `ocrText`; `extractionEntry` moves it to
+  `assist.rawAnswer`, parses the old `methodDetail` and rebuilds ocrText
+  from the lines (Settings → Re-check this batch gives these rows their outlines and annotated copy, values and ocrText untouched). `methodDetail` always names the strategy ("· one-shot");
+  it is built only by `assistMethodDetail`. `assist` rides the FULL
+  completion patch only, never `technical`.
+- **Pause halts reading; it never fails a receipt or uses up an attempt.**
+  The workspace header's pause/play toggle (shown whenever the board has
+  receipts, or while paused) follows the ThemeToggle idiom: fixed name
+  "Pause reading", state on `aria-pressed`, the action in the icon and
+  title. `queue.pause()`/`resume()` hold the state in memory; kv
+  `queue.paused` restores it in `boot` BEFORE the leftover-work wake;
+  BroadcastChannel `dueback-queue` carries it to other tabs (they share the
+  jobs table). Per device and never synced: another signed-in device still
+  shows "Reading elsewhere…" for receipts paused here. `pause()` stops
+  claiming, aborts ONE AbortController shared by every run in flight, clears
+  the 30 s re-wake and calls `OcrEngine.interrupt()` (Tesseract forgets the
+  worker, then terminates it; a start-up in flight is left to finish;
+  Paddle has no interrupt and stays loaded). Every OCR wait is
+  `abortable()` because tesseract.js `terminate()` never settles the jobs it
+  kills. `processReceipt` checks the signal before the claim, after clean
+  (before the cleaned blob is stored), inside both OCR reads, around the
+  rescue, after the logo layer, and LAST immediately before
+  `runVisionAssist`. Past that only a FREE AI call listens: `visionFetch`
+  combines the pause with the deadline only when `!ep.metered`
+  (local/self-hosted, up to 300 s) and `runVisionAssist` RETHROWS that
+  AbortError (swallowing it would complete the receipt rules-only); a
+  metered call never listens — it lands its billed answer, and the chip
+  reads "Pausing…" until `runningJobs` is 0. A paused run unwinds as an
+  AbortError: `pausedStatus` puts "processing" back to "queued" (approved
+  mid-flight → "done") by compare-and-swap, this run's cleaned blob is
+  deleted, and the queue calls `repo.unclaimJob` (lock AND attempt
+  returned, `createdAt` kept). A real error while paused still fails and
+  retries. The pool never starts a second run of a receipt already being read in this tab (`ProcessingQueue.inFlight`); a different row for it is a duplicate and is dropped. Every OCR image is read to bytes BEFORE tesseract.js sees it: its `recognize()` awaits a FileReader and then posts through an async `send()` nobody awaits, so a pause terminating the worker in that window left an unhandled `null.postMessage` rejection (a flaky e2e page error) — handed a Uint8Array, the hop is microtasks only (tests/ocr_pause.test.ts pins the order). While paused, drops and retries queue but don't start (the
+  toasts say so), queued cards and the review modal read "Paused", and the
+  reload bar waits only on `runningJobs`. Pinned by tests/queue.test.ts
+  (fake deps over the real `jobRows`), abort.test.ts, vision_pause.test.ts
+  (metered vs free), pipeline_guard `pausedStatus` and e2e 7c.
 - **Semantic dedup needs BOTH a vendor and a date besides the amount**
   (`dedup.semanticKey`) — two unreadable receipts sharing an amount flagged
   each other, and a vendor-only key matched every same-price fill-up on a
-  trip. `unzip.archiveEntryName` drops `.`/`..`/drive prefixes from
+  trip. The vendor half is an IDENTITY, not a spelling
+  (`dedup.vendorIdentity`: the brand matcher's canonical name, else the name
+  folded — `foldToAscii`, apostrophes, punctuation, `#NNN`, Inc/LLC — and
+  memoized): the Chevron app e-receipt ("Chevron") and the paper slip of the
+  same fill-up ("Chevron Station Inc.") missed each other. ONE tier drops
+  the vendor/date requirement: the same amount to the cent AND a shared
+  labeled transaction code (`dedup.transactionCodes`: AUTH/AUTHORIZATION,
+  APPR/APPROVAL, REF/REFERENCE, INVOICE, INV#/TRAN# + a ≥5-char token with a
+  digit and ≥4 characters after its leading zeros — "REF#: 00000003" is a
+  terminal counter; NEVER read from a SITE/STORE/TERM/TID/MID/MERCHANT line,
+  whose ids recur on every receipt from that place). It exists for a card
+  slip + invoice of one purchase whose vendor AND date reads differ (the
+  owner's PIP PRINTING "APPR CODE: 05439D" vs the PrintMyStuff invoice's
+  "ref #05439D", both $28.50) and is safe because an approval code or
+  invoice number doesn't recur on a different purchase of the same amount.
+  Codes match EXACTLY, except an approval code against the OTHER receipt's
+  reference/invoice number, which also matches through OCR glyph folds +
+  one edit (the invoice's OCR reads "054300"); same-kind codes never
+  fuzzy-match (invoice/reference numbers are sequential). Order: hash twin
+  → identity + date + amount → code (`dedup.duplicateFlag`); on the owner's
+  67-receipt batch it flags exactly the three real pairs. The flag names
+  its twin by id (`Flag.ref`) and quotes the twin's
+  `originalFileName ?? fileName` — renamed names COLLIDE (both 02-11 copies
+  are `fuel_02-11-26_chevron.jpg`), so a name is never the lookup key.
+  Review pairs from EITHER side (`dedup.duplicatePairs` — only the copy
+  read second holds the flag). Flags stored before `ref` resolve by same
+  hash → quoted name AND vendor/date/amount → any vendor/date/amount match
+  → the quoted name only when exactly ONE sibling carries it (names collide
+  between NON-duplicates too), never the holder; a `ref` to a deleted
+  receipt resolves to nothing. Within the batch only, and dedup runs at
+  read time: an existing batch's missed pairs are flagged by Settings → Re-check this batch (`pipeline/recheck.ts`), no re-read.
+  `unzip.archiveEntryName` drops `.`/`..`/drive prefixes from
   the inner path because it is echoed into the tuning bundle's ZIP entry
   names (zip-slip for whoever extracts it), and `readZip` normalizes
   backslash separators (some Windows archivers) to "/" at the one decode
   site so the junk filter, extension check and card path see one shape.
+- **Suspected duplicates review side by side**: this receipt | its twin |
+  the form (two images + form under 1100px, stacked under 640px; the modal
+  widens to 1320px only while comparing). The twin panel (a region
+  "Possible duplicate: <name>") shows its facts, its annotated image, and
+  zoomed vendor/date/total slices drawn from ITS OWN image by the `slice`
+  action (beside `callout`, which stays bound to this receipt) — a stored
+  full-page app receipt is otherwise a few px of text. Both columns get a
+  Zoom toggle (`aria-pressed`): the COLUMN scrolls (max-height 70dvh) and
+  the whole `.imgwrap` goes 250% wide so markers and draw-a-box stay
+  aligned; `.m-body.comparing` sets `grid-auto-rows: max-content` — a
+  zoomed column is a scroll container (automatic min height 0), and under
+  `auto` rows a row of only zoomed columns collapsed to 0 px and hid its own
+  Zoom toggle (e2e + tests/theme.test.ts pin it). Keep both clears
+  the warning on BOTH rows (`dedup.flagsWithoutDuplicate`; removal only,
+  Approve stays explicit), computed from the STORED row, serialized behind
+  saves (`serialized()`, which `applyPatch` also uses) and CAS'd on
+  updatedAt. Deleting a copy from the modal settles EVERY copy it was
+  paired with (`dedup.planDuplicateDelete`, from the PRE-delete list): the
+  keeper (the open receipt for "Delete it", else the oldest survivor) loses
+  its warning about the deleted copy — or it moves ONWARD when the deleted
+  copy was itself flagged against another survivor — and every other
+  survivor's warning is re-pointed at the keeper
+  (`dedup.retargetDuplicateFlags`, message rebuilt from the pair's current
+  tier via `duplicateMessage`); a third copy used to point at a deleted
+  receipt while its real twin sat in the TOTAL — except onto a couple a
+  human kept apart: that warning leaves with the deleted copy. Keep both is
+  REMEMBERED: the write that drops a row's warning also records the verdict
+  on it (`Receipt.notDuplicateOf`); a row that held no warning is never
+  written (rows sync whole, last writer wins — this device's stale copy
+  would beat another device's edit), and when neither stored row still holds
+  one the open receipt records it alone. `dedup.keptApart` (either side's
+  record counts) keeps the couple out of every tier — at read time, in the
+  re-check, and in a delete's re-pointing. Focus parks on Approve (on the dialog after deleting
+  the current one) BEFORE the panel unmounts. A save's flag pruning is
+  re-derived from the STORED row inside `applyPatchNow`: the board copy can
+  be one refresh stale and would resurrect a warning Keep both just
+  cleared. A same-receipt re-seed with an unchanged image key keeps the
+  loaded image (only once an image is showing, so a missing blob retries).
+- **"Re-check this batch" repairs from stored data; it never re-reads.** AI
+  anchoring (`provenance.ts`) and dedup (`dedup.duplicateFlag`) run at read
+  time, so rows stored before a fix keep the old result, and "Retry
+  reading" is refused for touched receipts (and would re-crop).
+  `pipeline/recheck.ts` is the ONE place for stored-data repairs: plan from
+  `repo.listReceipts` rows (never the board's proxies); legacy AI reads
+  (`isLegacyAiRead`, settled, with `ocrLines` + `cleanedKey`, NOT approved)
+  get `anchorAssistBoxes` boxes on fields with no usable box that aren't
+  `edited`/`manualBox` (the draft comes from `reusableOcr`, never the
+  model's JSON), plus a re-baked annotated copy covering every mark (boxes
+  but no annotated copy → the bake alone); `duplicateFlag` runs per row in
+  `createdAt` order against the settled rows created before it, minus pairs
+  already known from either side (`resolveDuplicateFlag`) and kept-apart
+  couples (`keptApart`) — a row that is approved, unsettled or already holds
+  a duplicate flag never gains one, and when the later copy is approved the
+  earlier one isn't flagged in its place; a flagged "done" row goes to
+  needs_review like a fresh read. Values, ocrText, methodUsed, approval and
+  existing flags never change. The bake happens BEFORE the CAS write and is
+  deleted if the write loses (skipped, never retried blindly); a landed
+  write deletes the replaced annotated blob (no blob GC). Results count
+  RECEIPTS and sort failures by cause: `skipped` (lost the race — re-check
+  again), `failed` (storage threw — the only "try again"), `unfixable` (no
+  usable image on this device). Settings disables
+  the action while this device has jobs (unread rows would be skipped); the
+  button is `aria-disabled` while running (disabling the focused button
+  dropped focus out of the dialog's Tab trap). On the owner's 67-receipt
+  batch it outlines 26 of 30 legacy AI reads (61 boxes) and flags exactly
+  the two missed pairs; e2e 7g seeds a legacy AI row and a "Shell Oil #42"
+  copy through IndexedDB and deletes both afterwards.
 - **The DATE color is purple (`--cat-4`), not red**, everywhere a date is
   marked: ReviewModal markers/field tint, `annotate.ts HIGHLIGHT_COLORS`,
   the workbook's `FIELD_TINTS`, and the landing's `.hl-date`/`.rv-date`
@@ -609,7 +935,9 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   (`RECEIPT_BAND_FILL`), not a category pastel. `--cat-4-ink` is its AA-pinned ink partner
   (tests/theme.test.ts). ReviewModal renders each flag NEXT TO the field it
   questions (`FLAG_FIELD` map); only unmapped codes (duplicate,
-  low_confidence) stay in the general list.
+  low_confidence) stay in the general list — a duplicate warning whose twin
+  resolves moves into the compare view instead, and one whose twin is gone
+  stays with a Dismiss (the row wraps; 390px-safe).
 - **A new build never swaps under an open tab** — `vite.config.ts` registers
   the service worker with `registerType: "prompt"` (autoUpdate forced
   skipWaiting/clientsClaim, purged the old precache and 404'd the next lazy
@@ -634,7 +962,22 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   annotated copy always ships, `extraction.json` marks
   `originalOmitted`), flattens archive paths into one honest entry name
   (`originalEntryName`, Node-tested) and stores images with
-  `compress: false` (`ZipEntry.compress` — JPEG/PDF never shrink).
+  `compress: false` (`ZipEntry.compress` — JPEG/PDF never shrink). That is
+  the FULL mode. The tuning bundle is **compact by default** in Settings
+  ("Compact (smaller, for sharing)", ticked) and ALWAYS compact from the
+  contact form: the same three data files, NO originals (every row marked
+  `originalOmitted`), and each highlighted copy re-encoded through
+  `thumbnail(…, COMPACT_IMAGE_EDGE 1100, COMPACT_IMAGE_QUALITY 0.7, "edge",
+  trim = false)` — never trimmed (a uniform downscale keeps extraction.json's
+  normalized boxes on the same pixels; the export trim would shift them),
+  never bigger than the stored copy, and the stored bytes when the re-encode
+  fails. A real 67-receipt batch came out too big to upload or mail and the
+  owner deleted the images by hand; a modeled 50-receipt batch is ~65 MB
+  full vs ~5.5 MB compact (tests/bundle.test.ts). `buildTuningBundle(receipts,
+  { mode, deps })` takes its I/O (`getBlob`, `getCorrections`, `shrink`) as
+  injectable `BundleDeps`, so Node tests build real archives from fakes and
+  read them back with `readZip`; the API default stays `"full"`. The toast
+  and the contact draft state the ZIP's size (`formatBytes`).
 - **Forced colors and safe areas are handled centrally.** The focus ring is
   an outline (forced colors paints it; a later box-shadow can't cancel it);
   input focus and the four inset rings keep a TRANSPARENT outline, never
@@ -653,11 +996,16 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   BOTH ways, `--ink-faint` AA on all three paper tones, `--line-control`
   ≥ 3:1 and the forced-colors rule.
 - **All three dialogs manage focus** (ReviewModal, Settings, ExportBar's
-  blank-details confirm): container
+  Generate / Save-to-OneDrive confirm — blank details / unresolved duplicates; focus returns to whichever button opened it): container
   `tabindex="-1"` focused on open, a local Tab trap, Escape closes, focus
   restored on close;
   ReviewModal's window-level Enter shortcut ignores BUTTON/A/SUMMARY/SELECT
   targets so Enter activates the focused control instead of approving.
+  Settings is mounted ONCE, in App.svelte outside the landing ⇄ workspace
+  swap, and opened by `SettingsButton.svelte` from both headers: an open
+  dialog survives a swap, and if the opener was unmounted focus restore
+  falls back to the visible `[data-settings-btn]` gear. Never re-add
+  `<Settings />` to a surface (tests/app_shell.test.ts).
 - **`vendor-tesseract.mjs` FAILS the build** (exit 1) when language data can't
   be vendored, unless `VITE_TESSDATA_LOCAL=0` — there is no runtime CDN
   fallback (`langPath` is picked once at build time), so the old
@@ -674,10 +1022,15 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   remote URL or relay an arbitrary prompt; temperature/usage/response_format
   are bounded, not passed through; the declared content-length is checked
   before the body is buffered. The client omits its OpenRouter attribution
-  headers through the proxy (`openRouterHeaders`) and a test pins that
+  headers through the proxy (`openAiHeaders`) and a test pins that
   every proxied header is on `CORS_ALLOWED_REQUEST_HEADERS`.
-  Every provider call goes through `visionFetch` (90 s deadline, a
-  TimeoutError reads "<provider> timed out after 90 s"), and `ai-extract`
+  Every provider call goes through `visionFetch` (a TimeoutError reads
+  "<label> timed out after N s"; a network TypeError on a local server
+  reads as `unreachableHint` — fetch() hides WHICH wall stopped it (server
+  down, CORS, an extension's ERR_BLOCKED_BY_CLIENT — uBlock's "Block
+  Outsider Intrusion into LAN" list stops public sites calling 10.x/
+  192.168.x — local-network permission, mixed content), so the hint names
+  them all and points at the console), and `ai-extract`
   caps its upstream call at 85 s so the browser gets a clean JSON 504
   before its own deadline instead of a network error.
   Anthropic pricing (`priceFor`, Node-tested) resolves dated snapshot ids
@@ -686,7 +1039,18 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   `x-goog-api-key` header, never the URL. ZIP intake inflates only as
   many entries as the batch has room for (`maxEntries` = remaining
   capacity). CI has `permissions: contents: read`, per-PR cancellation and
-  job timeouts; Pages deploys are never cancelled mid-publish. The
+  job timeouts; Pages deploys are never cancelled mid-publish. PR previews
+  (`preview.yml`) go to Cloudflare Pages at a stable `pr-<N>` alias,
+  same-repo branches only; a `setup` job checks the `CF_PAGES_PROJECT` var
+  and both secrets and, when one is missing or on the wrong tab (a bare
+  "skipped" gave no reason), passes with a notice naming it while
+  build/deploy skip — never red; the build job (PR code, OpenRouter key) and the
+  deploy job (Cloudflare token, no checkout — it only uploads the artifact)
+  are separate so the token never shares a job with PR code; the project is
+  created on first use (`pages deploy` would prompt), and the URL comes from
+  wrangler's `WRANGLER_OUTPUT_FILE_PATH` JSON (a taken project name gets a
+  suffixed subdomain). Previews omit Supabase/OneDrive/analytics vars on
+  purpose; Pages caps files at 25 MiB (the ORT wasm is ~22.5). The
   precache skips non-Latin font subsets and the lazy transformers chunk
   (runtime-cached together with the ONNX wasm under "logo-model");
   `LEGACY_CATEGORIES`/`normalizeCategory` live in config/categories.ts
