@@ -78,6 +78,28 @@ export function parseVisionJson(text: string): Record<string, unknown> | null {
   return null;
 }
 
+/** A JSON object must at least look like a receipt before it is taken as the
+ *  answer from anywhere but the model's proper answer channel — a
+ *  tool-argument object echoed in prose, or a scratch object in reasoning,
+ *  must not end a run. */
+export function looksLikeReceipt(fields: Record<string, unknown>): boolean {
+  return "amount" in fields || "vendor" in fields;
+}
+
+/** Some servers file a thinking model's WHOLE output as reasoning when the
+ *  structured-output grammar keeps it from ever closing its thinking block
+ *  (LM Studio: `content: ""`, the JSON in `reasoning_content`). Only when the
+ *  visible answer is EMPTY is the reasoning read, and only a receipt-shaped
+ *  object from it counts — a real answer is never overridden. */
+export function answerFromReasoning(reply: {
+  text: string;
+  reasoning?: string;
+}): Record<string, unknown> | null {
+  if (reply.text.trim() || !reply.reasoning?.trim()) return null;
+  const fields = parseVisionJson(reply.reasoning);
+  return fields && looksLikeReceipt(fields) ? fields : null;
+}
+
 function coerceAmount(v: unknown): number {
   if (typeof v === "number" && Number.isFinite(v)) return safeAmount(v);
   if (typeof v === "string") return safeAmount(parseAmount(v) ?? 0);

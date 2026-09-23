@@ -28,6 +28,10 @@ interface OpenAiResponse {
     finish_reason?: string | null;
     message?: {
       content?: string | { type?: string; text?: string }[] | null;
+      /** LM Studio / DeepSeek-style servers. */
+      reasoning_content?: string | null;
+      /** vLLM / OpenRouter-style servers. */
+      reasoning?: string | null;
       tool_calls?: OpenAiToolCall[];
     };
   }[];
@@ -146,7 +150,19 @@ export function parseOpenAiReply(data: OpenAiResponse, ep: Endpoint): ChatReply 
     }))
     .filter((tc) => tc.name);
   const costUsd = ep.openRouter && typeof data.usage?.cost === "number" ? data.usage.cost : 0;
-  return { text, toolCalls, costUsd, truncated: data.choices?.[0]?.finish_reason === "length" };
+  const reasoning =
+    typeof msg?.reasoning_content === "string"
+      ? msg.reasoning_content
+      : typeof msg?.reasoning === "string"
+        ? msg.reasoning
+        : "";
+  return {
+    text,
+    toolCalls,
+    costUsd,
+    truncated: data.choices?.[0]?.finish_reason === "length",
+    ...(reasoning ? { reasoning } : {}),
+  };
 }
 
 export function createOpenAiClient(ep: Endpoint): ChatClient {

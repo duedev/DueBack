@@ -81,6 +81,10 @@ export interface ChatReply {
   /** The model stopped because it hit the token limit, not because it was
    *  done — a "thinking" model can spend the whole budget reasoning. */
   truncated?: boolean;
+  /** The model's separate reasoning channel, when the server splits one out
+   *  (reasoning_content / reasoning / Gemini thought parts). Not the answer —
+   *  see schema.answerFromReasoning for the one exception. */
+  reasoning?: string;
   raw?: { dialect: Dialect; message: unknown };
 }
 

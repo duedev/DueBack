@@ -613,7 +613,13 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   assistant message back when the dialect matches (`ChatTurn.raw` —
   Gemini's thought signatures die otherwise) but REBUILD it for the OpenAI
   dialect (strict servers refuse response-only fields). The OpenAI adapter
-  retries once without `response_format` when a server 400s on it. Local
+  retries once without `response_format` when a server 400s on it. Replies
+  carry the server's separate reasoning channel (`reasoning_content` /
+  `reasoning` / Gemini thought parts) as `ChatReply.reasoning`; it is read
+  as the answer ONLY when the visible answer is empty and it holds a
+  receipt-shaped object (`schema.answerFromReasoning`) — LM Studio + a
+  thinking model under json_schema output returns `content: ""` with the
+  whole JSON filed as reasoning (test-pinned with that verbatim response). Local
   servers must allow this page's origin (Ollama: `OLLAMA_ORIGINS`; LM
   Studio: Enable CORS). A receipt read by ANY backend is stored as
   `methodUsed: "paid"` (the persisted name — no migration) with the

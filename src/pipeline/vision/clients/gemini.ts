@@ -131,7 +131,12 @@ export function geminiBody(req: ChatRequest): Record<string, unknown> {
 export function parseGeminiReply(data: GeminiResponse): ChatReply {
   const content = data.candidates?.[0]?.content;
   const parts = content?.parts ?? [];
+  const reasoning = parts
+    .filter((p) => p.thought && typeof p.text === "string")
+    .map((p) => p.text)
+    .join("");
   return {
+    ...(reasoning ? { reasoning } : {}),
     text: parts
       .filter((p) => !p.thought && typeof p.text === "string")
       .map((p) => p.text)

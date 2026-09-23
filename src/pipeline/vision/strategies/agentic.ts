@@ -1,5 +1,5 @@
 import type { ChatClient, ChatReply, ChatTurn, VisionExtraction } from "../types.ts";
-import { SYSTEM_PROMPT, parseVisionJson } from "../schema.ts";
+import { SYSTEM_PROMPT, answerFromReasoning, looksLikeReceipt, parseVisionJson } from "../schema.ts";
 import {
   AGENT_TOOLS,
   SUBMIT_SPEC,
@@ -27,13 +27,6 @@ const AGENT_SYSTEM =
   SYSTEM_PROMPT +
   " You may call tools to verify your reading before answering. Finish by calling " +
   `${SUBMIT_TOOL} with the fields.`;
-
-/** A JSON answer given as text instead of a submit call must at least look
- *  like a receipt — a tool-argument object echoed in prose must not end the
- *  run. */
-function looksLikeReceipt(fields: Record<string, unknown>): boolean {
-  return "amount" in fields || "vendor" in fields;
-}
 
 const clip = (s: string, n = 300) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
@@ -77,7 +70,7 @@ export async function runAgentic(
     if (submit) return finish(submit.args, call);
 
     if (!reply.toolCalls.length) {
-      const fields = parseVisionJson(reply.text);
+      const fields = parseVisionJson(reply.text) ?? answerFromReasoning(reply);
       if (fields && looksLikeReceipt(fields)) return finish(fields, call);
       trace.push(`(no tool call) ${clip(reply.text)}`);
       turns.push({ role: "assistant", text: reply.text, toolCalls: [], raw: reply.raw });

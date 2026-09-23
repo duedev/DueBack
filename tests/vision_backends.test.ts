@@ -560,3 +560,59 @@ test("an agent run that never answers quotes its last reply", async () => {
     return true;
   });
 });
+
+// ── A thinking model that files its answer as reasoning ──────────────────────
+
+// Verbatim from LM Studio serving prism-ml/bonsai-27b to a one-shot Test
+// connection: structured output kept the whole answer inside the thinking
+// block, so `content` came back empty and the JSON landed in reasoning.
+const LM_STUDIO_REASONING_ONLY = {
+  choices: [
+    {
+      index: 0,
+      message: {
+        role: "assistant",
+        content: "",
+        reasoning_content:
+          '{"vendor": "TEST CAFE", "date": "2026-01-02", "amount": 4.2, "tax": 0, "category": "Meals"}',
+        tool_calls: [],
+      },
+      finish_reason: "stop",
+    },
+  ],
+};
+
+test("an answer filed entirely as reasoning is still read (LM Studio + a thinking model)", async () => {
+  const ep = resolveEndpoint(cfg({ backend: "selfhosted", selfhosted: { url: "http://x/v1", model: "m" } }), "");
+  const reply = parseOpenAiReply(LM_STUDIO_REASONING_ONLY, ep);
+  assert.equal(reply.text, "");
+  assert.match(reply.reasoning!, /TEST CAFE/);
+  const res = await runOneShot(scripted([reply]), IMAGE);
+  assert.deepEqual(res.fields, { vendor: "TEST CAFE", date: "2026-01-02", amount: 4.2, tax: 0, category: "Meals" });
+  assert.match(res.rawText, /TEST CAFE/, "the review panel keeps what the model wrote");
+  // vLLM / OpenRouter name the same channel `reasoning`.
+  assert.equal(parseOpenAiReply({ choices: [{ message: { content: "", reasoning: "r" } }] }, ep).reasoning, "r");
+  // Gemini's thought parts are its reasoning channel.
+  assert.equal(parseGeminiReply({ candidates: [{ content: { parts: [{ text: "hmm", thought: true }] } }] }).reasoning, "hmm");
+});
+
+test("reasoning never overrides a real answer, and only a receipt-shaped object counts", async () => {
+  // A visible (if unparseable) answer wins: the reasoning is not consulted.
+  await assert.rejects(
+    runOneShot(scripted([{ text: "I can't read this receipt.", reasoning: '{"vendor":"X","amount":1}' }]), IMAGE),
+    /It began: "I can't read this receipt\."/,
+  );
+  // Scratch JSON in reasoning that isn't a receipt is not an answer.
+  await assert.rejects(
+    runOneShot(scripted([{ text: "", reasoning: 'Plan: call {"step":1} first' }]), IMAGE),
+    /The reply was empty; the model wrote only reasoning: "Plan: call/,
+  );
+  // The agent loop takes the same fallback instead of burning its calls.
+  const res = await runAgentic(
+    scripted([{ text: "\n\n", reasoning: JSON.stringify(SUBMITTED) }]),
+    IMAGE,
+    { draft: null, lines: [] },
+  );
+  assert.deepEqual(res.fields, SUBMITTED);
+  assert.equal(res.calls, 1);
+});
