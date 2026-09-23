@@ -136,7 +136,7 @@ test("Anthropic pricing resolves dated snapshots and never prices an unknown mod
 });
 
 // ── Vendor vetting: the model's vendor must be the merchant ──────────────────
-import { forcesManualReview, parseReceipt } from "../src/pipeline/extract.ts";
+import { forcesManualReview, parseReceipt, vendorNameProblem } from "../src/pipeline/extract.ts";
 import { vetVisionVendor } from "../src/pipeline/vision/schema.ts";
 import type { OcrLine, OcrResult } from "../src/types.ts";
 
@@ -245,7 +245,10 @@ test("a card-network vendor from the model is blanked and forces review (real Ba
   assert.equal(visionToExtraction(answer("Chase Visa")).vendor.value, "");
 });
 
-test("a rejected model vendor falls back to the brand the OCR prints", () => {
+test("a rejected model vendor falls back to the brand the OCR prints", (t) => {
+  // The answer is dated 2026-03-13: pin the clock so the "more than two
+  // years old" date_suspect (dateFlags) can't force review as the calendar moves on.
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 8, 23) });
   // Header brand ("Chevron Station Inc." on line 5): adopted silently, boxed on its line.
   const ex = visionToExtraction(answer("AmericanExpress Credit"), { draft: null, lines: RIVERSIDE_APP });
   assert.equal(ex.vendor.value, "Chevron");
@@ -295,6 +298,49 @@ test("real merchants pass untouched: shared processor words, state-shaped tails;
   const anaheim = real([["Anaheim CA", 95, 0.1, 0.1, 0.4, 0.02]]);
   assert.deepEqual(vetVisionVendor("ANAHEIM CA", { lines: anaheim }).field, { value: "", confidence: 0 });
   assert.equal(vetVisionVendor("ANAHEIM CA").field.value, "ANAHEIM CA");
+});
+
+test("a \", CO\" company suffix from the model is kept in any case; a Colorado address still reads as the city", () => {
+  const lumber = real([
+    ["JOHNSON LUMBER, CO.", 92, 0.2, 0.05, 0.6, 0.04],
+    ["4410 VAN BUREN BLVD", 90, 0.2, 0.1, 0.6, 0.03],
+    ["RIVERSIDE, CA 92503", 90, 0.2, 0.14, 0.6, 0.03],
+    ["TOTAL 107.38", 90, 0.2, 0.5, 0.6, 0.03],
+  ]);
+  for (const name of ["Johnson Lumber, Co.", "JOHNSON LUMBER, CO.", "Johnson Lumber, Co", "johnson lumber, co."]) {
+    const ex = visionToExtraction(answer(name), { lines: lumber });
+    assert.equal(ex.vendor.value, name);
+    assert.ok(!ex.flags.some((f) => f.code === "vendor_unclear"), name);
+    assert.equal(vendorNameProblem(name), null, `${name}: the comma'd shape alone`);
+  }
+  // Nor does a printed header in the same shape make it an address echo.
+  const header = real([
+    ["FASTENAL CO", 92, 0.2, 0.05, 0.6, 0.04],
+    ["TOTAL 107.38", 90, 0.2, 0.5, 0.6, 0.03],
+  ]);
+  assert.equal(vendorNameProblem("FASTENAL CO", header), null);
+  assert.equal(vendorNameProblem("FASTENAL", header), null);
+  // A Colorado address still condemns: a ZIP on the name, or an echo of an
+  // address line the slip prints (ZIP on it, or inside an address block).
+  assert.equal(vendorNameProblem("DENVER, CO 80202"), "city");
+  const withZip = real([
+    ["KING SOOPERS", 92, 0.2, 0.05, 0.6, 0.04],
+    ["1155 E 9TH AVE", 90, 0.2, 0.1, 0.6, 0.03],
+    ["DENVER, CO 80218", 90, 0.2, 0.14, 0.6, 0.03],
+  ]);
+  const block = real([
+    ["KING SOOPERS", 92, 0.2, 0.05, 0.6, 0.04],
+    ["1155 E 9TH AVE", 90, 0.2, 0.1, 0.6, 0.03],
+    ["DENVER, CO", 90, 0.2, 0.14, 0.6, 0.03],
+    ["80218", 90, 0.2, 0.18, 0.6, 0.03],
+  ]);
+  for (const lines of [withZip, block]) {
+    for (const name of ["DENVER, CO", "Denver"]) assert.equal(vendorNameProblem(name, lines), "city", name);
+  }
+  // Every other state keeps the comma'd shape as proof on its own, any case.
+  for (const city of ["Cabazon, Ca", "Anaheim, ca", "Irvine, cA", "Banning, CA"]) {
+    assert.equal(vendorNameProblem(city), "city", city);
+  }
 });
 
 test("the model's date gets the rules' plausibility flags: over two years old is suspect, not stale", () => {

@@ -483,6 +483,18 @@ test("a model that answers in JSON text instead of a tool call still counts", as
   assert.equal(res.calls, 1);
 });
 
+test("the agent trace clips on a character boundary: an emoji at the cut never leaves half of itself", async () => {
+  // clip() keeps the first 300 UTF-16 units; "😊" sits on units 299–300. A
+  // lone high surrogate in rawText (→ assist.rawAnswer) is refused by
+  // Postgres jsonb and blocks the receipts sync push.
+  const chatter = "x".repeat(299) + "😊 still thinking";
+  const client = scripted([{ text: chatter }, { toolCalls: [{ id: "b", name: SUBMIT_TOOL, args: SUBMITTED }] }]);
+  const res = await runAgentic(client, IMAGE, { draft: null, lines: [] });
+  assert.deepEqual(res.fields, SUBMITTED);
+  assert.ok(res.rawText.includes(`(no tool call) ${"x".repeat(299)}…`), res.rawText.slice(0, 340));
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(res.rawText));
+});
+
 test("the last call may only submit; a run that never does fails", async () => {
   const chatter = Array.from({ length: MAX_AGENT_CALLS }, () => ({ text: "Let me think about it." }));
   const client = scripted(chatter);

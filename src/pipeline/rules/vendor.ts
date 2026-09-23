@@ -42,7 +42,11 @@ const US_STATES =
 const US_STATES_ANYCASE = US_STATES.split("|")
   .map((s) => [...s].map((c) => `[${c}${c.toLowerCase()}]`).join(""))
   .join("|");
-const CITY_STATE_RE = new RegExp(`,\\s*(?:${US_STATES_ANYCASE})\\.?\\s*$`);
+// One title-case tail is exempt: ", Co" / ", Co." is the company suffix
+// ("Johnson Lumber, Co."), not Colorado. "Cabazon, Ca" (a real Chevron-app
+// address line) and "DENVER, CO"/"denver, co" still reject; only "Denver, Co"
+// gives way, and a ZIP (STATE_ZIP_RE) still catches it.
+const CITY_STATE_RE = new RegExp(`,\\s*(?!Co\\.?\\s*$)(?:${US_STATES_ANYCASE})\\.?\\s*$`);
 const CITY_STATE_BARE_RE = new RegExp(
   `^\\s*[A-Z][A-Za-z.'-]+\\s+(?:${US_STATES}|${US_STATES.toLowerCase()})\\.?\\s*$`,
 );
@@ -312,6 +316,8 @@ export function siteIdBrand(lines: OcrLine[]): { match: VendorMatch; bbox: BBox 
  *  "BANNING , CA", "Anaheim Hills, CA", "Irvine, cA 92618", "ANAHEIM CA". */
 const CITY_LINE_RE = /^\s*([A-Za-z][A-Za-z .'-]*?)\s*,?\s+([A-Za-z]{2})\.?(?:\s+\d{5}(?:-\d{4})?)?\s*$/;
 const squashLetters = (s: string): string => s.toLowerCase().replace(/[^a-z]+/g, "");
+/** A name ending in ", CO" / ", co." — Colorado, or the company suffix. */
+const CO_TAIL_RE = /,\s*co\.?\s*$/i;
 
 /**
  * Why a vendor NAME from outside the line heuristic (the AI assist's answer)
@@ -322,7 +328,10 @@ const squashLetters = (s: string): string => s.toLowerCase().replace(/[^a-z]+/g,
  *     this receipt prints — a bare "BANNING" when "BANNING , CA" is printed.
  * Never the bare "WORD ST" form on its own: "ACME CO", "PHO CA" and "JACK
  * IN" are merchants, and blanking a correct answer is worse than the rules'
- * skipping one header line. Null when nothing is wrong with it.
+ * skipping one header line. Nor a ", CO" tail on its own, in any case
+ * ("JOHNSON LUMBER, CO."): that one needs a ZIP, or an echo of a "CO" line
+ * that is a real address (ZIP, or inside an address block) — a merchant
+ * header printed in the same shape is not. Null when nothing is wrong with it.
  */
 export function vendorNameProblem(
   name: string,
@@ -331,14 +340,26 @@ export function vendorNameProblem(
   const t = name.trim();
   if (!t) return null;
   if (isPaymentBrandName(t)) return "payment";
-  if ((t.split(/\s+/).length <= 4 && CITY_STATE_RE.test(t)) || STATE_ZIP_RE.test(t)) return "city";
+  // ", CO" in ANY case is also the company suffix ("JOHNSON LUMBER, CO."):
+  // the comma'd shape alone never condemns it — a ZIP or an echo does.
+  const commaCity = t.split(/\s+/).length <= 4 && CITY_STATE_RE.test(t) && !CO_TAIL_RE.test(t);
+  if (commaCity || STATE_ZIP_RE.test(t)) return "city";
   const key = squashLetters(t);
   if (key.length < 3) return null;
-  for (const l of lines) {
-    const text = l.text;
+  for (let i = 0; i < lines.length; i++) {
+    const text = lines[i]!.text;
     if (!(CITY_STATE_RE.test(text) || STATE_ZIP_RE.test(text) || CITY_STATE_BARE_RE.test(text))) continue;
     const m = CITY_LINE_RE.exec(text);
     if (!m) continue;
+    // A merchant header ending in the company suffix ("JOHNSON LUMBER, CO.",
+    // "FASTENAL CO") has the city-line shape too: a "CO" line without a ZIP
+    // counts only inside an address block (a street line above it, or a
+    // bare ZIP below — the looksLikeVendorLine rule for "SANTA ANA CA").
+    if (m[2]!.toLowerCase() === "co" && !STATE_ZIP_RE.test(text)) {
+      const p = lines[i - 1]?.text.trim() ?? "";
+      const n = lines[i + 1]?.text.trim() ?? "";
+      if (!((STREET_NUMBER_RE.test(p) && ADDRESS_RE.test(p)) || BARE_ZIP_RE.test(n))) continue;
+    }
     const city = squashLetters(m[1]!);
     if (city && (key === city || key === city + m[2]!.toLowerCase())) return "city";
   }

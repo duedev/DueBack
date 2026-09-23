@@ -611,7 +611,11 @@ test("total far above the printed subtotal (no tax read) demands review", () => 
   assert.ok(forcesManualReview(r.flags));
 });
 
-test("clean receipts do not force manual review", () => {
+test("clean receipts do not force manual review", (t) => {
+  // The fixtures are dated 2026: pin the clock so the "more than two years
+  // old" date_suspect (rules/date.ts dateFlags) can't fire as the calendar
+  // moves on — only the direct dateFlags test exercises the age rule.
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 8, 23) });
   const r = parseReceipt(
     ocr(["BLUE BOTTLE COFFEE", "Date: 03/14/2026", "Subtotal 8.25", "Tax 0.74", "TOTAL 8.99"]),
   );
@@ -668,7 +672,9 @@ test("corroborated fuel + big-store total is kept for review, not slip-corrected
   assert.ok(forcesManualReview(r.flags), JSON.stringify(r.flags));
 });
 
-test("advisory reconcile warns no longer force review (tip + savings receipts)", () => {
+test("advisory reconcile warns no longer force review (tip + savings receipts)", (t) => {
+  // A 2026 fixture date: pinned clock (see "clean receipts do not force manual review").
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 8, 23) });
   const tip = parseReceipt(
     ocr(["OLIVE GARDEN", "SUBTOTAL 20.00", "TAX 1.60", "TIP 4.00", "TOTAL 25.60", "VISA 25.60"]),
   );
@@ -1150,7 +1156,9 @@ test("refund/return totals keep their magnitude and demand review", () => {
   }
 });
 
-test("component tax lines sum when the footing corroborates them; TOTAL TAX wins outright", () => {
+test("component tax lines sum when the footing corroborates them; TOTAL TAX wins outright", (t) => {
+  // A 2026 fixture date: pinned clock (see "clean receipts do not force manual review").
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 8, 23) });
   const printed = parseReceipt(
     ocr(["OFFICE DEPOT", "Date: 03/14/2026", "SUBTOTAL 100.00", "STATE TAX 6.00", "COUNTY TAX 1.00", "CITY TAX 1.25", "TOTAL TAX 8.25", "TOTAL 108.25", "VISA 108.25"]),
   );
@@ -1179,6 +1187,26 @@ test("a clock time never donates its hour as the year of a month-name date", () 
   // ctime order recovers the trailing year.
   assert.equal(parseReceipt(ocr(["SHOP", "Wed Sep 11 12:30:45 PDT 2024", "TOTAL 12.00"])).date.value, "2024-09-11");
   assert.equal(parseReceipt(ocr(["SHOP", "WEL SEPTEMBER 11.2024", "TOTAL 12.00"])).date.value, "2024-09-11");
+});
+
+test("a return-policy expiry ranks with the deadlines: the sale date wins wherever it prints", () => {
+  // Home Depot prints "POLICY ID  DAYS  POLICY EXPIRES ON" over
+  // "A 1 90 12/01/2025" — the day the return window closes, 90 days after
+  // the sale (real: mats_09-02-25_home_depot, whose sale line OCR garbled).
+  const block = ["POLICY ID DAYS POLICY EXPIRES ON", "A 1 90 12/01/2025", "B 1 365 09/02/2026"];
+  const dateOf = (lines: string[]) => parseReceipt(ocr(lines)).date.value;
+  assert.equal(dateOf(["HOME DEPOT", ...block, "6593 00053 09/02/25 12:21", "TOTAL 43.74"]), "2025-09-02");
+  // OCR's garbled headers still open the block ("LAPIRES", "POI ICY … py").
+  for (const head of ["POLICY ID DAYS POLICY LAPIRES ON", "POLICY ID DAYS POI ICY EXPIRES py", "| POLICY'ID ~ DAYS POLICY EXPIRES ON"]) {
+    assert.equal(dateOf(["HOME DEPOT", head, "B90 12/01/2025", "6593 00053 09/02/25 12:21", "TOTAL 43.74"]), "2025-09-02", head);
+  }
+  // A line that says it expires is demoted by itself.
+  assert.equal(dateOf(["SHOP", "REWARDS EXPIRE ON 10/31/2025", "09/02/2025 14:03", "TOTAL 5.00"]), "2025-09-02");
+  assert.equal(dateOf(["SHOP", "REWARDS EXPIRE ON 10/31/2025", "09/02/2025", "TOTAL 5.00"]), "2025-09-02");
+  // Still a last resort when it is the only date on the receipt…
+  assert.equal(dateOf(["HOME DEPOT", "68S 09/02, 25 0). ™M", ...block.slice(0, 2), "TOTAL 43.74"]), "2025-12-01");
+  // …and a sale date printed first still wins by line order, as before.
+  assert.equal(dateOf(["HOME DEPOT", "6893 00067 05/26/25 02:18", ...block, "TOTAL 43.74"]), "2025-05-26");
 });
 
 test("Due Date printed above Invoice Date never becomes the expense date", () => {
@@ -1343,6 +1371,18 @@ test("a lowercase-state city line never wins; the SITE ID brand names the Chevro
     assert.equal(parseReceipt(ocr([city, "TOTAL 12.00"])).vendor.value, "", city);
   }
   assert.equal(parseReceipt(ocr(["Acme Co", "TOTAL 12.00"])).vendor.value, "Acme Co");
+});
+
+test("a title-case \", Co.\" tail is the company suffix, not Colorado; every other comma'd state still rejects", () => {
+  const vendorOf = (lines: string[]) => parseReceipt(ocr(lines)).vendor.value;
+  const body = ["4410 Van Buren Blvd", "Riverside, CA 92503", "05/01/2026", "LUMBER 12.00", "TOTAL 12.00"];
+  assert.equal(vendorOf(["Johnson Lumber, Co.", ...body]), "Johnson Lumber, Co.");
+  assert.equal(vendorOf(["Smith & Sons, Co", ...body]), "Smith & Sons, Co");
+  // "Cabazon, Ca" is a real Chevron-app address line (title case); only the
+  // one tail that doubles as a company suffix is exempt.
+  for (const city of ["Cabazon, Ca", "Anaheim, ca", "Irvine, cA", "Denver, CO", "denver, co", "Irvine, cA 92618"]) {
+    assert.equal(vendorOf([city, "TOTAL 12.00"]), "", city);
+  }
 });
 
 test("a printed operator beats the SITE ID brand; only distinctive labeled IDs count", () => {

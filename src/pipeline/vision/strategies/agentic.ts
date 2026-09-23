@@ -28,7 +28,14 @@ const AGENT_SYSTEM =
   " You may call tools to verify your reading before answering. Finish by calling " +
   `${SUBMIT_TOOL} with the fields.`;
 
-const clip = (s: string, n = 300) => (s.length > n ? `${s.slice(0, n)}…` : s);
+// The trace becomes the stored rawAnswer: a cut that keeps an emoji's high
+// surrogate without its low half is a lone surrogate, which Postgres jsonb
+// refuses (provenance.ts tailCap/wellFormed).
+const clip = (s: string, n = 300): string => {
+  if (s.length <= n) return s;
+  const head = s.slice(0, n);
+  return `${/[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head}…`;
+};
 
 export async function runAgentic(
   client: ChatClient,

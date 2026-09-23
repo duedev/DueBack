@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ASSIST_RAW_MAX,
+  CORROBORATE_MIN_RULES_CONFIDENCE,
+  CORROBORATE_MIN_RULES_DATE_CONFIDENCE,
   anchorAssistBoxes,
   assistHost,
   assistKeySource,
@@ -13,6 +15,7 @@ import {
   reusableOcr,
   settleAssistExtraction,
   tailCap,
+  wellFormed,
 } from "../src/pipeline/vision/provenance.ts";
 import { visionToExtraction } from "../src/pipeline/vision/schema.ts";
 import { defaultVisionConfig, mergeVisionConfig } from "../src/pipeline/vision/config.ts";
@@ -57,13 +60,19 @@ function draft(p: {
   vendorBox?: BBox;
   date?: string;
   dateBox?: BBox;
+  dateConfidence?: number;
   amount?: number;
   amountBox?: BBox;
+  amountConfidence?: number;
 }): Extraction {
   return {
     vendor: { value: p.vendor ?? "", confidence: 0.7, ...(p.vendorBox ? { bbox: p.vendorBox } : {}) },
-    date: { value: p.date ?? "", confidence: 0.7, ...(p.dateBox ? { bbox: p.dateBox } : {}) },
-    amount: { value: p.amount ?? 0, confidence: 0.7, ...(p.amountBox ? { bbox: p.amountBox } : {}) },
+    date: { value: p.date ?? "", confidence: p.dateConfidence ?? 0.7, ...(p.dateBox ? { bbox: p.dateBox } : {}) },
+    amount: {
+      value: p.amount ?? 0,
+      confidence: p.amountConfidence ?? 0.7,
+      ...(p.amountBox ? { bbox: p.amountBox } : {}),
+    },
     tax: { value: 1.5, confidence: 0.6 },
     currency: "USD",
     category: { value: "Fuel", confidence: 0.85 },
@@ -278,48 +287,183 @@ const LOWES = real([
   ["STORE: 2563 TERKINAL 6 03/24/26 11:44:31", 59, 0.1179, 0.9712, 0.7554, 0.0062],
 ]);
 
-test("an AI total the OCR can't find, differing from the rules total, is a review-forcing warn", () => {
-  const flags = corroborate(ai("AMERICAN EXPRESS", "2026-03-13", 107.38), draft({ amount: 187.38 }), AMEX);
+// Real lines (mats_09-02-25_home_depot): the purchase-date line is garbled
+// ("68S 09/02, 25 0). ™M", confidence 0); the only date the rules can parse
+// is the return-policy expiry under "POLICY … EXPIRES ON" (09/02 + 90 days).
+// The model answered Home Depot, 2025-09-02, $43.74 — all right.
+const HD_POLICY = real([
+  ["Fel » - gL. uj \\", 48.7, 0.1479, 0.0069, 0.8499, 0.0265],
+  ["ATE va", 24.6, 0.0988, 0.1158, 0.1201, 0.0092],
+  ["WR", 13, 0.101, 0.1227, 0.2152, 0.0131],
+  ["BRANT", 0, 0.0908, 0.12, 0.2269, 0.0438],
+  ["NZ", 36.9, 0.0915, 0.1377, 0.1179, 0.0362],
+  ["744%, ' A", 7.8, 0.0988, 0.1719, 0.2906, 0.0181],
+  ["PA) i How doers", 53.7, 0.0944, 0.1573, 0.6625, 0.0631],
+  ["\"& a aE = 3", 42.9, 0.1288, 0.2088, 0.7057, 0.0208],
+  ["Aad) get more done", 55.7, 0.0893, 0.2138, 0.8053, 0.0369],
+  ["02% Al i Cl", 53.1, 0.1332, 0.2988, 0.451, 0.0158],
+  ["MELIN: AALHOR@HOMEDE OT K)", 30.7, 0.1127, 0.3185, 0.7731, 0.0162],
+  ["639.3 B10 5 J (S452 / 4% MN", 35.9, 0.093, 0.3588, 0.806, 0.0154],
+  ["SALE K |", 49.5, 0.0944, 0.3785, 0.9056, 0.0192],
+  ["LOVEL <A> 9.9", 61.9, 0.4436, 0.4181, 0.4217, 0.015],
+  ["FG IT CK CANVA LOVE |! |", 65, 0.1567, 0.4377, 0.8433, 0.0154],
+  ["NL! Nge $s. 0", 23.4, 0.1567, 0.4569, 0.3836, 0.0181],
+  ["4715409! 22 HUVEL KCB100 7", 38.1, 0.0952, 0.4769, 0.7899, 0.0158],
+  ["CE 14 | K :", 85.4, 0.1574, 0.4965, 0.4619, 0.0158],
+  ["TA", 73.4, 0.4736, 0.5635, 0.0534, 0.0273],
+  ["KAKA (X AME»", 25.8, 0.0959, 0.5965, 0.418, 0.0162],
+  ["AUTH CODE 862445 1.53472", 67.4, 0.0966, 0.6358, 0.4649, 0.0169],
+  ["Chp Read", 70.6, 0.0959, 0.6562, 0.1808, 0.0181],
+  ["AID AQOOCLOOZ%0 1 501 AM", 27.1, 0.0959, 0.675, 0.5051, 0.0165],
+  ["P.0.#/J0B NAME:", 67.2, 0.0959, 0.7146, 0.4817, 0.0208],
+  ["68S 09/02, 25 0). ™M", 0, 0.0578, 0.7342, 0.8902, 0.0296],
+  ["EERE a Th", 26.9, 0.1918, 0.7523, 0.8082, 0.0469],
+  ["All LEE —", 32.9, 0.2182, 0.7715, 0.7818, 0.0504],
+  ["il {ELL 0 [", 40.3, 0.1918, 0.7888, 0.6259, 0.0354],
+  ["6593 53 89002 19/002/72025 9299", 73, 0.1977, 0.8108, 0.5893, 0.0285],
+  ["RETURN POLICY DEF INLI TONS", 37.7, 0.2387, 0.8604, 0.5073, 0.0208],
+  ["POLICY ID DAYS POI ICY EXPIRES ON", 77, 0.1772, 0.8796, 0.7343, 0.0223],
+  ["A 1 90 12/01/2025", 95.7, 0.1164, 0.9, 0.713, 0.0192],
+]);
+// Real lines (mats_08-11-25_the_home_depot): the purchase date prints
+// 08/11/25 but OCR read "06/11/25" on a confidence-8 line; the policy
+// expiry 11/09/2025 is 08/11 + 90 days. The model answered 2025-08-11.
+const THD_0811 = real([
+  ["TERE, fi, cabal 6 \\", 45.4, 0, 0, 0.6781, 0.0162],
+  ["Babs A ia. a ad go", 30.9, 0.0822, 0.1158, 0.6669, 0.0315],
+  ["PRL How doers", 71, 0, 0.1331, 0.7506, 0.0388],
+  ["hu Sl get more done.", 71.4, 0, 0.1496, 0.9022, 0.0638],
+  ["18292 COLLIER AVE LAKE ELS | 92530", 64.2, 0, 0.2504, 0.8977, 0.0265],
+  ["(9913095-5055 MANAGER: WILLIAM \\", 43.4, 0, 0.2773, 0.8566, 0.0219],
+  ["a3eLet 9129 06/11/25", 8.1, 0.0822, 0.3158, 0.6079, 0.0204],
+  ["SALE Stit CHECKOUT", 53.9, 0.0814, 0.3354, 0.3547, 0.0162],
+  ["019812771024 TAPE 100UFT <A>  106.9/", 39, 0.0807, 0.3735, 0.7931, 0.0231],
+  ["EMPIRE 10uu YELLOW CAUTION TAPE", 60.5, 0.1419, 0.3927, 0.6512, 0.0181],
+  ["810113520582 BAFLSHGRP20 <A> 3.48", 68.9, 0, 0.4054, 0.876, 0.0258],
+  ["BOUYARMOP STRAWBERRY KIWI [.V. 2007", 77.1, 0.1419, 0.4319, 0.714, 0.0185],
+  ["| 0000-999-867 BEV DEP 0.05 <A i= 0.05N", 68.2, 0, 0.4504, 0.8969, 0.0196],
+  ["BEVERAGE BOTTLE OFF? 0 05", 64.4, 0.1412, 0.47, 0.4862, 0.0169],
+  ["SUBTOTAL 14.50", 73.7, 0.4272, 0.5096, 0.4503, 0.0181],
+  ["SALES TAX 1.26", 86.8, 0.4264, 0.5292, 0.4511, 0.0185],
+  ["TOTAL $15.76", 93.2, 0.4279, 0.5485, 0.4496, 0.0192],
+  ["HHHXXKKKNKNT417 MASTERCARD", 25.3, 0.0814, 0.5662, 0.5467, 0.0181],
+  ["UsD$ 15.76", 67.7, 0.6721, 0.5885, 0.2061, 0.0185],
+  ["~ AUTH CODE 845857/8517035 A", 52.1, 0.0508, 0.6046, 0.8275, 0.0219],
+  ["Contactless Verified Gy PIN", 91.7, 0.0807, 0.6238, 0.8193, 0.0238],
+  ["AID AOCGG000041010 MASTERCARD", 30.5, 0.0172, 0.6431, 0.8611, 0.0242],
+  ["<i> - NON-DISCOUNTABLE ITEM", 52.8, 0.0605, 0.6754, 0.5683, 0.0323],
+  ["LU ier TE", 5.2, 0.006, 0.7042, 0.3719, 0.0246],
+  ["ES hE Es PM", 31.1, 0.0007, 0.7354, 0.9373, 0.0554],
+  ["jl", 0, 0.1889, 0.8042, 0.0762, 0.025],
+  ["fe ol 71172025 6753", 53.3, 0.1763, 0.825, 0.5967, 0.0335],
+  ["RETURN POLICY DEFINITIONS", 60.2, 0.1673, 0.8558, 0.5639, 0.0335],
+  ["| POLICY'ID ~ DAYS POLICY EXPIRES ON", 49.7, 0.0007, 0.8804, 0.8962, 0.0246],
+  ["1 90 11/09/2025", 84.1, 0.0919, 0.8988, 0.7214, 0.0292],
+]);
+
+test("an AI total the OCR can't find, differing from a confident rules total, is a review-forcing warn", () => {
+  const confident = draft({ amount: 187.38, amountConfidence: 0.8 });
+  const flags = corroborate(ai("AMERICAN EXPRESS", "2026-03-13", 107.38), confident, AMEX);
   assert.deepEqual(flags, [
     {
       code: "total_suspect",
       severity: "warn",
-      message:
-        "The AI read $107.38, but that total isn't printed where the on-device reader could see it (it read $187.38) — check the total.",
+      // Neutral: which reader said what — never a claim about what the receipt prints.
+      message: "The AI read $107.38; the on-device reader found $187.38 — check the total.",
     },
   ]);
   assert.equal(forcesManualReview(flags), true);
+  const atLine = draft({ amount: 187.38, amountConfidence: CORROBORATE_MIN_RULES_CONFIDENCE });
+  assert.equal(corroborate(ai("X", "2026-03-13", 107.38), atLine, AMEX).length, 1, "the threshold itself counts");
 });
 
-test("an AI date the receipt doesn't print, where the rules date IS printed, is a review-forcing warn", () => {
-  const flags = corroborate(ai("LOWES", "2024-03-26", 329), draft({ date: "2026-03-24", amount: 329 }), LOWES);
+test("a weak rules total is no evidence against the AI — a garbled total is why the assist ran", () => {
+  // The real AMEX slip read its FUEL TOTAL line at OCR confidence 64: the
+  // rules' 187.38 carries 0.55, and the model's 107.38 was the right answer.
+  const ex = parseReceipt({ text: AMEX.map((l) => l.text).join("\n"), confidence: 60, lines: AMEX, words: [] });
+  assert.equal(ex.amount.value, 187.38);
+  assert.ok(ex.amount.confidence < CORROBORATE_MIN_RULES_CONFIDENCE, String(ex.amount.confidence));
+  assert.deepEqual(corroborate(ai("X", "2026-03-13", 107.38), ex, AMEX), []);
+  // Real Home Depot: the rules could only scrape 2.25 out of garbled lines
+  // (0.5); the model's $43.74 stands without a flag.
+  const hd = parseReceipt({ text: HD_POLICY.map((l) => l.text).join("\n"), confidence: 50, lines: HD_POLICY, words: [] });
+  assert.ok(hd.amount.confidence < CORROBORATE_MIN_RULES_CONFIDENCE, String(hd.amount.confidence));
+  assert.ok(!corroborate(ai("Home Depot", "2025-09-02", 43.74), hd, HD_POLICY).some((f) => f.code === "total_suspect"));
+  assert.deepEqual(corroborate(ai("X", "2026-03-13", 107.38), draft({ amount: 187.38, amountConfidence: 0.74 }), AMEX), []);
+});
+
+test("an AI date the OCR can't find, differing from a clean rules date, is a review-forcing warn", () => {
+  // Real Lowe's: "03/24/26" (24 > 12, unambiguous: 0.8); the model read 2024-03-26.
+  const flags = corroborate(
+    ai("LOWES", "2024-03-26", 329),
+    draft({ date: "2026-03-24", dateConfidence: 0.8, amount: 329 }),
+    LOWES,
+  );
   assert.deepEqual(flags, [
     {
       code: "date_suspect",
       severity: "warn",
-      message: "The AI read 2024-03-26, but the receipt prints 2026-03-24 — check the date.",
+      message: "The AI read 2024-03-26; the on-device reader found 2026-03-24 — check the date.",
     },
   ]);
   assert.equal(forcesManualReview(flags), true);
+  assert.equal(CORROBORATE_MIN_RULES_DATE_CONFIDENCE, 0.8);
+});
+
+test("an ambiguous, repaired or last-resort rules date is no evidence against the AI's", () => {
+  // Real Home Depot: the rules could only parse the return-policy EXPIRY
+  // (12/01/2025, ambiguous m/d: 0.65); the model's 2025-09-02 is the sale.
+  const hd = parseReceipt({ text: HD_POLICY.map((l) => l.text).join("\n"), confidence: 50, lines: HD_POLICY, words: [] });
+  assert.equal(hd.date.value, "2025-12-01");
+  assert.ok(hd.date.confidence < CORROBORATE_MIN_RULES_DATE_CONFIDENCE, String(hd.date.confidence));
+  assert.deepEqual(corroborate(ai("Home Depot", "2025-09-02", 43.74), hd, HD_POLICY), []);
+  // Real Home Depot: OCR misread 08/11/25 as "06/11/25" (0.65); the model's
+  // 2025-08-11 was right.
+  const thd = parseReceipt({ text: THD_0811.map((l) => l.text).join("\n"), confidence: 50, lines: THD_0811, words: [] });
+  assert.equal(thd.date.value, "2025-06-11");
+  assert.deepEqual(corroborate(ai("The Home Depot", "2025-08-11", 15.76), thd, THD_0811), []);
+});
+
+test("an AI date that swaps the rules date's day and month is flagged whatever the rules' confidence", () => {
+  // Ambiguous m/d dates are exactly where a model swaps day and month: the
+  // real 0.65 read of "06/11/25" against an AI 2025-11-06.
+  const thd = parseReceipt({ text: THD_0811.map((l) => l.text).join("\n"), confidence: 50, lines: THD_0811, words: [] });
+  assert.ok(thd.date.confidence < CORROBORATE_MIN_RULES_DATE_CONFIDENCE);
+  assert.deepEqual(corroborate(ai("The Home Depot", "2025-11-06", 15.76), thd, THD_0811), [
+    {
+      code: "date_suspect",
+      severity: "warn",
+      message: "The AI read 2025-11-06; the on-device reader found 2025-06-11 — check the day and month order.",
+    },
+  ]);
+  // Only an exact swap in the same year counts.
+  const weak = (date: string) => draft({ date, dateConfidence: 0.65, amount: 329 });
+  assert.deepEqual(corroborate(ai("X", "2024-11-06", 329), weak("2025-06-11"), LOWES), []);
+  assert.deepEqual(corroborate(ai("X", "2025-11-07", 329), weak("2025-06-11"), LOWES), []);
 });
 
 test("corroboration stays quiet when the OCR backs the AI, or has nothing to say", () => {
+  const sure = (p: Parameters<typeof draft>[0]) => draft({ amountConfidence: 0.9, dateConfidence: 0.9, ...p });
   // The AI total is printed (the rules read a garbled 61): no flag.
-  assert.deepEqual(corroborate(ai("MOBIL MART", "2026-04-21", 113.61), draft({ amount: 61 }), L), []);
+  assert.deepEqual(corroborate(ai("MOBIL MART", "2026-04-21", 113.61), sure({ amount: 61 }), L), []);
   // Agreement, a missing rules value, or no lines at all: no flag.
-  assert.deepEqual(corroborate(ai("X", "2026-03-13", 187.38), draft({ amount: 187.38 }), AMEX), []);
-  assert.deepEqual(corroborate(ai("X", "2026-03-13", 107.38), draft({ amount: 0 }), AMEX), []);
-  assert.deepEqual(corroborate(ai("X", "2026-03-13", 107.38), draft({ amount: 187.38 }), []), []);
+  assert.deepEqual(corroborate(ai("X", "2026-03-13", 187.38), sure({ amount: 187.38 }), AMEX), []);
+  assert.deepEqual(corroborate(ai("X", "2026-03-13", 107.38), sure({ amount: 0 }), AMEX), []);
+  assert.deepEqual(corroborate(ai("X", "2026-03-13", 107.38), sure({ amount: 187.38 }), []), []);
   // The rules had no date (AMEX): a date the AI alone read isn't contradicted.
-  assert.deepEqual(corroborate(ai("X", "2026-03-13", 187.38), draft({ amount: 187.38 }), AMEX), []);
-  // Both dates printed somewhere, or the AI's is: no flag.
-  assert.deepEqual(corroborate(ai("X", "2026-03-24", 329), draft({ date: "2026-03-24", amount: 329 }), LOWES), []);
-  // A rules date the OCR can't place either is no evidence against the AI.
-  assert.deepEqual(corroborate(ai("X", "2024-03-26", 329), draft({ date: "2025-01-01", amount: 329 }), LOWES), []);
+  assert.deepEqual(corroborate(ai("X", "2026-03-13", 187.38), sure({ amount: 187.38 }), AMEX), []);
+  // The dates agree, or the AI's is printed too — even as a day/month swap.
+  assert.deepEqual(corroborate(ai("X", "2026-03-24", 329), sure({ date: "2026-03-24", amount: 329 }), LOWES), []);
+  const both = lines(["SHOP", "06/11/25 PURCHASE", "11/06/25 PICKUP", "TOTAL 12.00"]);
+  assert.deepEqual(corroborate(ai("X", "2025-11-06", 12), sure({ date: "2025-06-11", amount: 12 }), both), []);
 });
 
 test("settling anchors, puts corroboration flags first, and never throws away a billed answer", () => {
-  const settled = settleAssistExtraction(ai("AMERICAN EXPRESS", "2026-03-13", 107.38), draft({ amount: 187.38 }), AMEX);
+  const settled = settleAssistExtraction(
+    ai("AMERICAN EXPRESS", "2026-03-13", 107.38),
+    draft({ amount: 187.38, amountConfidence: 0.8 }),
+    AMEX,
+  );
   assert.equal(settled.flags[0]!.code, "total_suspect", "the review reason leads (the card shows flags[0])");
   assert.equal(settled.amount.value, 107.38, "values never change — the human decides");
   assert.equal(settled.amount.bbox, undefined);
@@ -379,7 +523,10 @@ const AMEX_FULL = real([
   ["TVR: 6688682860", 59.4, 0.1577, 0.8131, 0.2543, 0.0108],
 ]);
 
-test("the whole assist chain on the real AMERICAN EXPRESS slip: vetted blank, no box, review forced", () => {
+test("the whole assist chain on the real AMERICAN EXPRESS slip: vetted blank, no box, review forced", (t) => {
+  // The slip is dated 2026-03-13: pin the clock so the "more than two years
+  // old" date_suspect (dateFlags) can't join the exact flag list below.
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 8, 23) });
   const ex = parseReceipt({
     text: AMEX_FULL.map((l) => l.text).join("\n"),
     confidence: 60,
@@ -392,9 +539,13 @@ test("the whole assist chain on the real AMERICAN EXPRESS slip: vetted blank, no
   const settled = settleAssistExtraction(visionToExtraction(fields, { draft: ex, lines: AMEX_FULL }), ex, AMEX_FULL);
   assert.equal(settled.vendor.value, "", "the card network never survives as the vendor");
   assert.equal(settled.vendor.bbox, undefined, "a blank vendor is never outlined");
+  // No total_suspect: the rules read the FUEL TOTAL line weakly (OCR 64 →
+  // 0.55, under CORROBORATE_MIN_RULES_CONFIDENCE), and the model's 107.38 was
+  // the right total — the blanked vendor alone forces the review.
+  assert.ok(ex.amount.confidence < CORROBORATE_MIN_RULES_CONFIDENCE, String(ex.amount.confidence));
   assert.deepEqual(
     settled.flags.filter((f) => f.severity === "warn").map((f) => f.code),
-    ["total_suspect", "vendor_unclear"],
+    ["vendor_unclear"],
     JSON.stringify(settled.flags),
   );
   assert.match(settled.flags.find((f) => f.code === "vendor_unclear")!.message, /"AMERICAN EXPRESS"/);
@@ -405,13 +556,13 @@ test("the whole assist chain on the real AMERICAN EXPRESS slip: vetted blank, no
 
 test("a corroboration flag supersedes the answer's own flag of the same code (one date_suspect, not two)", () => {
   // Real Lowe's: the model read 2024-03-26 — over two years old AND not what
-  // the slip prints (03/24/26). The corroboration message says both.
+  // the on-device reader found (03/24/26). The corroboration message names both reads.
   const answer = visionToExtraction({ vendor: "LOWES", date: "2024-03-26", amount: 329, tax: 0, category: "Materials" });
   assert.ok(answer.flags.some((f) => f.code === "date_suspect"), "the age check fired");
-  const settled = settleAssistExtraction(answer, draft({ date: "2026-03-24", amount: 329 }), LOWES);
+  const settled = settleAssistExtraction(answer, draft({ date: "2026-03-24", dateConfidence: 0.8, amount: 329 }), LOWES);
   const dates = settled.flags.filter((f) => f.code === "date_suspect");
   assert.equal(dates.length, 1, JSON.stringify(settled.flags));
-  assert.match(dates[0]!.message, /the receipt prints 2026-03-24/);
+  assert.match(dates[0]!.message, /the on-device reader found 2026-03-24/);
   assert.equal(settled.flags[0]!.code, "date_suspect");
 });
 
@@ -520,6 +671,36 @@ test("the raw answer keeps its tail: the submit line and a reasoning JSON come l
     draft: draft({}),
   });
   assert.equal(p.rawAnswer, capped);
+});
+
+// A lone UTF-16 surrogate in the stored answer rides the sync payload, and
+// Postgres jsonb refuses it ("Unicode low surrogate must follow a high
+// surrogate") — the whole receipts upsert fails, on every push after.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+test("the raw answer is always well-formed text: the cut never splits an emoji, a lone surrogate is replaced", () => {
+  // "👍" straddles the cut: the last ASSIST_RAW_MAX units start on its low half.
+  const straddle = "Reasoning… 👍" + "x".repeat(ASSIST_RAW_MAX - 1);
+  const capped = tailCap(straddle);
+  assert.ok(!LONE_SURROGATE.test(capped), "no half of the emoji survives the cut");
+  assert.equal(capped, "…" + "x".repeat(ASSIST_RAW_MAX - 1));
+  assert.ok(!/\\ud[89a-f]/i.test(JSON.stringify({ rawAnswer: capped })), "stringifies without a surrogate escape");
+  // A whole emoji is kept, at the cut or anywhere else.
+  const whole = "😊" + "x".repeat(ASSIST_RAW_MAX - 2);
+  assert.equal(tailCap("pad" + whole), "…" + whole);
+  assert.equal(tailCap("ok 😊"), "ok 😊");
+  // The model's own lone surrogate (a broken "\ud83d" escape) — short or long.
+  assert.equal(tailCap('{"vendor":"Caf\uD83D"}'), '{"vendor":"Caf\uFFFD"}');
+  assert.equal(wellFormed("a\uDC4Db\uD83D"), "a\uFFFDb\uFFFD");
+  assert.equal(wellFormed("a😊b"), "a😊b");
+  const p = assistProvenance({
+    endpoint: resolveEndpoint(cfg({ backend: "local" }), ""),
+    requested: "oneshot",
+    strategy: "oneshot",
+    result: { model: "m", calls: 1, rawText: straddle },
+    draft: draft({}),
+  });
+  assert.ok(!LONE_SURROGATE.test(p.rawAnswer));
 });
 
 const PROV: AssistProvenance = {

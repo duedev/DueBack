@@ -167,15 +167,34 @@ function dateLabelRank(text: string): number {
   return 2;
 }
 
+// A return-policy block prints the day the return window CLOSES — Home
+// Depot's "POLICY ID  DAYS  POLICY EXPIRES ON" over "A 1 90 12/01/2025", 90
+// days after the sale — never the expense date. Its dates rank with the
+// deadlines (a last resort, like a due date; line order alone used to decide
+// against the sale date): the header line (OCR garbles it: "LAPIRES", "POI
+// ICY … py") or any line saying it "expires on", the line right under a
+// header that holds no date itself, and the policy rows that follow while
+// they stay id/days/date-shaped ("B90 09/14/2025") — a sale line after them
+// ("6593 00053 09/02/25 12:21") is not.
+const EXPIRY_HEAD_RE = /\bpolicy\b.*\b\w{0,3}pire[sd]?\b|\bexpir\w*\s+on\b/i;
+const POLICY_ROW_RE = /^[\s|]*[A-Za-z]?\s*(?:\d{1,3}\s+)*\d{0,3}\s*\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\s*$/;
+
 export function findDate(lines: OcrLine[]): Field<string> | null {
   let best: { hit: DateHit; rank: number } | null = null;
+  let underHead = false; // the previous line is a policy header with no date of its own
+  let inRows = false; // inside that header's policy rows
   for (const line of lines) {
-    const rank = dateLabelRank(line.text);
+    const head = EXPIRY_HEAD_RE.test(line.text);
+    const row: boolean = underHead || (inRows && POLICY_ROW_RE.test(line.text));
+    const rank = head || row ? 3 : dateLabelRank(line.text);
     // Strict "<" keeps line order as the tie-break within a rank; a demoted
     // last-resort hit carries unlabeled confidence rather than 0.9.
-    for (const hit of parseDatesInLine(line, rank <= 1)) {
+    const hits = parseDatesInLine(line, rank <= 1);
+    for (const hit of hits) {
       if (!best || rank < best.rank) best = { hit, rank };
     }
+    underHead = head && hits.length === 0;
+    inRows = row;
   }
   const chosen = best?.hit;
   if (!chosen) return null;

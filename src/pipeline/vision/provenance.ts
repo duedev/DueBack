@@ -20,8 +20,25 @@ import type { Strategy, VisionExtraction } from "./types.ts";
  *  because the agent's submit line and a reasoning-channel JSON come last. */
 export const ASSIST_RAW_MAX = 4000;
 
+// A UTF-16 surrogate without its partner: half of an emoji or other astral
+// character. The stored answer rides the sync payload (`Receipt.assist`), and
+// Postgres jsonb refuses a lone surrogate — the whole receipts upsert fails,
+// on every push after, with nothing in the UI to find or fix the row.
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/** `s` with every lone surrogate replaced by U+FFFD (what
+ *  `String.prototype.toWellFormed` does; ES2022 lacks it). A model can emit
+ *  one itself (a broken "\ud83d" escape), not only a cut. */
+export function wellFormed(s: string): string {
+  return s.replace(LONE_SURROGATE_RE, "\uFFFD");
+}
+
 export function tailCap(s: string): string {
-  return s.length > ASSIST_RAW_MAX ? `…${s.slice(-ASSIST_RAW_MAX)}` : s;
+  if (s.length <= ASSIST_RAW_MAX) return wellFormed(s);
+  let tail = s.slice(-ASSIST_RAW_MAX);
+  // The cut landed inside a surrogate pair: drop the orphaned low half.
+  if (/^[\uDC00-\uDFFF]/.test(tail)) tail = tail.slice(1);
+  return `…${wellFormed(tail)}`;
 }
 
 // ── Boxes ────────────────────────────────────────────────────────────────────
@@ -179,41 +196,77 @@ export function anchorAssistBoxes(ai: Extraction, draft: Extraction, lines: OcrL
   };
 }
 
+/** How sure the rules must be of their OWN total before it may contradict the
+ *  AI's. The assist mostly runs because the OCR garbled the total: on the
+ *  owner's 30 AI reads every total corroboration flag fired on a rules total
+ *  at 0.50–0.55 ("$2850" for $28.50, "9%09", a stray "0.94" line) and the AI
+ *  was right all six times. 0.75 takes a cleanly read total line (label
+ *  weight × OCR line confidence, rules/amount.ts): "TOTAL" read at OCR ≥ 88,
+ *  "AMOUNT DUE" at ≥ 75. */
+export const CORROBORATE_MIN_RULES_CONFIDENCE = 0.75;
+
+/** Same for the date: 0.8 is an unambiguous read (0.9 when labeled). The
+ *  0.65 tier — ambiguous m/d or a repaired year — is where the owner's AI
+ *  dates were right and the rules wrong (a return-policy expiry, an OCR'd
+ *  "06/11" for 08/11); a day/month swap is flagged at any confidence. */
+export const CORROBORATE_MIN_RULES_DATE_CONFIDENCE = 0.8;
+
+/** Same year, day and month exchanged: "2025-11-06" against "2025-06-11". */
+function dayMonthSwapped(a: string, b: string): boolean {
+  const [ya, ma, da] = a.split("-");
+  const [yb, mb, db] = b.split("-");
+  return a !== b && ya === yb && ma === db && da === mb;
+}
+
 /**
  * Flags for AI values the OCR contradicts. Values are never changed — the
- * human decides — but an AI total that differs from the rules total and is
- * printed nowhere the OCR could see, or an AI date the receipt doesn't print
- * where the rules date IS printed, must not ship unreviewed: the same
- * "never silently swap a plausible total" rule the rules path obeys. Both
- * are warns that force review (`extract.forcesManualReview`). No lines, no
- * evidence either way — nothing is flagged.
+ * human decides — but an AI value the OCR can't find, differing from a rules
+ * read that is itself trustworthy, must not ship unreviewed: the same "never
+ * silently swap a plausible total" rule the rules path obeys.
+ *   • total: the rules total is a confident read
+ *     (≥ CORROBORATE_MIN_RULES_CONFIDENCE) — a weak one is usually the very
+ *     garble that sent the receipt to the AI;
+ *   • date: the rules date is a clean read
+ *     (≥ CORROBORATE_MIN_RULES_DATE_CONFIDENCE), or — at any confidence — the
+ *     AI date is the rules date with day and month swapped, the classic model
+ *     error on an ambiguous m/d date.
+ * Both are warns that force review (`extract.forcesManualReview`). The
+ * message says which reader found what, never what the receipt "prints": the
+ * on-device read can be the wrong one. No lines, no evidence either way —
+ * nothing is flagged.
  */
 export function corroborate(ai: Extraction, draft: Extraction, lines: OcrLine[]): Flag[] {
   if (lines.length === 0) return [];
   const flags: Flag[] = [];
   const a = ai.amount.value;
   const d = draft.amount.value;
-  if (a > 0 && d > 0 && Math.abs(a - d) >= 0.005 && !locateValue(lines, "amount", a)) {
+  if (
+    a > 0 &&
+    d > 0 &&
+    Math.abs(a - d) >= 0.005 &&
+    draft.amount.confidence >= CORROBORATE_MIN_RULES_CONFIDENCE &&
+    !locateValue(lines, "amount", a)
+  ) {
     flags.push({
       code: "total_suspect",
       severity: "warn",
-      message: `The AI read ${formatMoney(a)}, but that total isn't printed where the on-device reader could see it (it read ${formatMoney(d)}) — check the total.`,
+      message: `The AI read ${formatMoney(a)}; the on-device reader found ${formatMoney(d)} — check the total.`,
     });
   }
   const aiDate = ai.date.value;
   const rulesDate = draft.date.value;
-  if (
-    aiDate &&
-    rulesDate &&
-    aiDate !== rulesDate &&
-    !locateValue(lines, "date", aiDate) &&
-    locateValue(lines, "date", rulesDate)
-  ) {
-    flags.push({
-      code: "date_suspect",
-      severity: "warn",
-      message: `The AI read ${aiDate}, but the receipt prints ${rulesDate} — check the date.`,
-    });
+  if (aiDate && rulesDate && aiDate !== rulesDate) {
+    const swapped = dayMonthSwapped(aiDate, rulesDate);
+    if (
+      (swapped || draft.date.confidence >= CORROBORATE_MIN_RULES_DATE_CONFIDENCE) &&
+      !locateValue(lines, "date", aiDate)
+    ) {
+      flags.push({
+        code: "date_suspect",
+        severity: "warn",
+        message: `The AI read ${aiDate}; the on-device reader found ${rulesDate} — ${swapped ? "check the day and month order" : "check the date"}.`,
+      });
+    }
   }
   return flags;
 }
@@ -235,8 +288,9 @@ export function settleAssistExtraction(ai: Extraction, draft: Extraction, lines:
   try {
     const flags = corroborate(out, draft, lines);
     // A corroboration flag supersedes the answer's own flag of the same code:
-    // "the AI read 2024-03-26, but the receipt prints 2026-03-24" already
-    // says what the age check's "more than two years old" would (dateFlags).
+    // "the AI read 2024-03-26; the on-device reader found 2026-03-24" already
+    // sends the reviewer to the date, with the likelier year beside it — the
+    // age check's "more than two years old" (dateFlags) would only repeat it.
     const codes = new Set(flags.map((f) => f.code));
     if (flags.length) out = { ...out, flags: [...flags, ...out.flags.filter((f) => !codes.has(f.code))] };
   } catch (err) {
