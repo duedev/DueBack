@@ -1096,6 +1096,251 @@ async function main() {
       await tuneDialog.waitFor({ state: "hidden", timeout: 5000 });
     }
 
+    // 7g runs in its own block too.
+    {
+      // 7g. Settings → "Re-check this batch" heals rows stored before two
+      // read-time fixes, from STORED data only (pipeline/recheck.ts). Seed,
+      // straight into IndexedDB and with no job (nothing reads them):
+      //  (a) a legacy AI read — a copy of the coffee receipt as the assist
+      //      stored it before provenance: methodUsed "paid", no `assist`, no
+      //      boxes, no annotated copy, the model's JSON in ocrText;
+      //  (b) a missed pair — a copy of the gas receipt whose vendor reads
+      //      "Shell Oil #42" (same brand identity, date and amount as the
+      //      original "Shell"; the old dedup compared spellings).
+      // The re-check boxes (a) on the lines that print its values and bakes
+      // its annotated copy — values and ocrText untouched — and flags both
+      // later copies against their originals; a second run finds nothing.
+      // Both seeds are then deleted from review so step 8's count holds.
+      const seeded = await page.evaluate(async () => {
+        const open = indexedDB.open("reimbursements-f5");
+        const db = await new Promise((res, rej) => {
+          open.onsuccess = () => res(open.result);
+          open.onerror = () => rej(open.error);
+        });
+        const req = (r) =>
+          new Promise((res, rej) => {
+            r.onsuccess = () => res(r.result);
+            r.onerror = () => rej(r.error);
+          });
+        const tx = db.transaction(["receipts", "blobs"], "readwrite");
+        const receipts = tx.objectStore("receipts");
+        const blobs = tx.objectStore("blobs");
+        const all = await req(receipts.getAll());
+        const byUpload = (n) => all.find((r) => (r.originalFileName ?? r.fileName) === n);
+        const coffee = byUpload("coffee.png");
+        const gas = byUpload("gas.png");
+        // Each seed owns copies of its blobs: deleting it must not take the
+        // original's images with it.
+        const copyBlob = async (key, tag) => {
+          if (!key) return undefined;
+          const rec = await req(blobs.get(key));
+          if (!rec) return undefined;
+          const copy = `blob_e2e_${tag}_${rec.kind}`;
+          await req(blobs.put({ ...rec, key: copy }));
+          return copy;
+        };
+        const bare = (f) => ({ value: f.value, confidence: f.confidence });
+        const now = Date.now();
+        const answer = JSON.stringify({
+          vendor: coffee.vendor.value,
+          date: coffee.date.value,
+          amount: coffee.amount.value,
+          tax: coffee.tax.value,
+          category: coffee.category.value,
+        });
+        const legacy = {
+          ...coffee,
+          id: "rcpt_e2e-legacy-ai",
+          fileKey: await copyBlob(coffee.fileKey, "legacy"),
+          cleanedKey: await copyBlob(coffee.cleanedKey, "legacy"),
+          fileName: "meals_03-14-26_legacy_ai_seed.jpg",
+          originalFileName: "legacy-ai-seed.png",
+          imageHash: "e2e-seed-legacy-ai",
+          vendor: bare(coffee.vendor),
+          date: bare(coffee.date),
+          amount: bare(coffee.amount),
+          methodUsed: "paid",
+          methodDetail: "Self-hosted · test-model",
+          ocrText: answer,
+          flags: [],
+          status: "done",
+          approved: false,
+          reviewRequired: false,
+          createdAt: now,
+          updatedAt: now,
+        };
+        delete legacy.annotatedKey;
+        delete legacy.assist;
+        const pair = {
+          ...gas,
+          id: "rcpt_e2e-missed-pair",
+          fileKey: await copyBlob(gas.fileKey, "pair"),
+          cleanedKey: await copyBlob(gas.cleanedKey, "pair"),
+          annotatedKey: await copyBlob(gas.annotatedKey, "pair"),
+          fileName: "fuel_06-12-26_shell_oil_42.jpg",
+          originalFileName: "missed-pair-seed.png",
+          imageHash: "e2e-seed-missed-pair",
+          vendor: { ...gas.vendor, value: "Shell Oil #42" },
+          flags: [],
+          status: "done",
+          approved: false,
+          reviewRequired: false,
+          createdAt: now + 1,
+          updatedAt: now + 1,
+        };
+        await req(receipts.put(legacy));
+        await req(receipts.put(pair));
+        await new Promise((res, rej) => {
+          tx.oncomplete = res;
+          tx.onerror = () => rej(tx.error);
+        });
+        db.close();
+        return {
+          legacyId: legacy.id,
+          pairId: pair.id,
+          coffeeId: coffee.id,
+          gasId: gas.id,
+          gasVendor: gas.vendor.value,
+          answer,
+          values: [legacy.vendor.value, legacy.date.value, legacy.amount.value],
+          coffeeBoxes: [coffee.vendor.bbox ?? null, coffee.date.bbox ?? null, coffee.amount.bbox ?? null],
+          blobKeys: [legacy.fileKey, legacy.cleanedKey, pair.fileKey, pair.cleanedKey, pair.annotatedKey].filter(Boolean),
+        };
+      });
+      log(`seeded a legacy AI read and a "Shell Oil #42" copy of "${seeded.gasVendor}"`);
+
+      /** The seeded rows (and their original twins) as stored, with the
+       *  annotated blob each one points at. */
+      const readSeeded = () =>
+        page.evaluate(async (ids) => {
+          const open = indexedDB.open("reimbursements-f5");
+          const db = await new Promise((res, rej) => {
+            open.onsuccess = () => res(open.result);
+            open.onerror = () => rej(open.error);
+          });
+          const req = (r) =>
+            new Promise((res, rej) => {
+              r.onsuccess = () => res(r.result);
+              r.onerror = () => rej(r.error);
+            });
+          const tx = db.transaction(["receipts", "blobs"], "readonly");
+          const out = {};
+          for (const id of ids) {
+            const r = await req(tx.objectStore("receipts").get(id));
+            if (!r) {
+              out[id] = null;
+              continue;
+            }
+            const ann = r.annotatedKey ? await req(tx.objectStore("blobs").get(r.annotatedKey)) : null;
+            out[id] = {
+              status: r.status,
+              methodUsed: r.methodUsed,
+              ocrText: r.ocrText,
+              values: [r.vendor.value, r.date.value, r.amount.value],
+              boxes: [r.vendor.bbox ?? null, r.date.bbox ?? null, r.amount.bbox ?? null],
+              annotatedKey: r.annotatedKey ?? null,
+              annotated: ann ? { kind: ann.kind, size: ann.blob.size } : null,
+              dups: (r.flags || [])
+                .filter((f) => f.code === "duplicate")
+                .map((f) => ({ ref: f.ref ?? null, message: f.message })),
+            };
+          }
+          db.close();
+          return out;
+        }, [seeded.legacyId, seeded.pairId, seeded.coffeeId, seeded.gasId]);
+
+      await page.getByRole("button", { name: "Settings" }).click();
+      const settings = page.getByRole("dialog", { name: "Settings" });
+      await settings.waitFor({ timeout: 5000 });
+      const recheck = settings.getByRole("button", { name: "Re-check this batch" });
+      await recheck.click({ timeout: 10000 });
+      await page
+        .getByText("Added outlines to 1 older AI read and flagged 2 possible duplicates.", { exact: true })
+        .waitFor({ timeout: 20000 });
+      check(true, "Re-check reports what it healed (1 set of outlines, 2 duplicate flags)");
+
+      const healed = await readSeeded();
+      const legacy = healed[seeded.legacyId] ?? {};
+      const pair = healed[seeded.pairId] ?? {};
+      const [vBox, dBox, aBox] = legacy.boxes ?? [];
+      check(!!vBox && !!dBox && !!aBox, `legacy AI read: vendor/date/amount outlined (got ${JSON.stringify(legacy.boxes)})`);
+      // Same stored lines as the coffee read → each box sits on the line the
+      // rules read that value from.
+      const sameLine = (a, b) => !!a && !!b && a.y < b.y + b.h && b.y < a.y + a.h;
+      check(
+        [vBox, dBox, aBox].every((b, i) => sameLine(b, seeded.coffeeBoxes[i])),
+        "legacy AI read: each outline sits on the line that prints its value",
+      );
+      check(
+        !!legacy.annotatedKey && legacy.annotated?.kind === "annotated" && legacy.annotated.size > 0,
+        `legacy AI read: the annotated copy is baked and stored (${legacy.annotatedKey})`,
+      );
+      check(
+        legacy.ocrText === seeded.answer &&
+          legacy.methodUsed === "paid" &&
+          JSON.stringify(legacy.values) === JSON.stringify(seeded.values),
+        "legacy AI read: values, method and ocrText untouched (no OCR, no AI call)",
+      );
+      check(
+        legacy.dups?.length === 1 && legacy.dups[0].ref === seeded.coffeeId && legacy.status === "needs_review",
+        `legacy AI read: flagged as the coffee receipt's copy and sent to review (${JSON.stringify(legacy.dups)} [${legacy.status}])`,
+      );
+      check(
+        pair.dups?.length === 1 && pair.dups[0].ref === seeded.gasId && pair.status === "needs_review",
+        `missed pair: "Shell Oil #42" flagged against "${seeded.gasVendor}" by id, sent to review (${JSON.stringify(pair.dups)} [${pair.status}])`,
+      );
+      check(
+        healed[seeded.coffeeId]?.dups.length === 0 && healed[seeded.gasId]?.dups.length === 0,
+        "the originals gain no flag — only the copy read second holds it",
+      );
+
+      await recheck.click({ timeout: 10000 });
+      await page.getByText("Nothing to fix — this batch is up to date.", { exact: true }).waitFor({ timeout: 20000 });
+      check(true, "a second re-check finds nothing to fix");
+      await page.keyboard.press("Escape");
+      await settings.waitFor({ state: "hidden", timeout: 5000 });
+
+      // Delete both seeds from review (row + blobs): back to 7 receipts.
+      await page.waitForFunction(() => document.querySelectorAll(".rc").length === 9, { timeout: 15000 });
+      const review = page.getByRole("dialog", { name: /Review receipt/ });
+      for (const name of ["fuel_06-12-26_shell_oil_42.jpg", "meals_03-14-26_legacy_ai_seed.jpg"]) {
+        await page.locator(".rc", { hasText: name }).click();
+        await review.waitFor({ timeout: 10000 });
+        await review.getByRole("button", { name: "Delete", exact: true }).click();
+        await page.waitForFunction(
+          (n) => ![...document.querySelectorAll(".rc .fname")].some((el) => el.textContent === n),
+          name,
+          { timeout: 15000 },
+        );
+        await page.keyboard.press("Escape");
+        await review.waitFor({ state: "hidden", timeout: 5000 });
+      }
+      await page.waitForFunction(() => document.querySelectorAll(".rc").length === 7, { timeout: 15000 });
+      const gone = await readSeeded();
+      const leftBlobs = await page.evaluate(async (keys) => {
+        const open = indexedDB.open("reimbursements-f5");
+        const db = await new Promise((res, rej) => {
+          open.onsuccess = () => res(open.result);
+          open.onerror = () => rej(open.error);
+        });
+        const tx = db.transaction("blobs", "readonly");
+        const found = [];
+        for (const k of keys) {
+          const rec = await new Promise((res) => {
+            const r = tx.objectStore("blobs").get(k);
+            r.onsuccess = () => res(r.result);
+          });
+          if (rec) found.push(k);
+        }
+        db.close();
+        return found;
+      }, [...seeded.blobKeys, legacy.annotatedKey].filter(Boolean));
+      check(
+        gone[seeded.legacyId] === null && gone[seeded.pairId] === null && leftBlobs.length === 0,
+        `the seeds are deleted with their images (left blobs: ${leftBlobs.join(", ") || "none"})`,
+      );
+    }
+
     // 8. Header brand navigates home; the hero offers the way back.
     await page.locator("header.ws-head .brand").click();
     await page.getByRole("heading", { name: /Receipts in/ }).waitFor({ timeout: 10000 });

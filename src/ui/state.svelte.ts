@@ -6,6 +6,7 @@ import { onAuthChange, currentUser } from "../supabase/auth.ts";
 import { getVisionConfig, saveVisionConfig } from "../pipeline/vision/config.ts";
 import { validateFile, safeBasename, isPdf, isZip } from "../util/files.ts";
 import { chooseAdoptionBatch, type AdoptionCandidate } from "../store/syncMerge.ts";
+import { annotateReceipt } from "../pipeline/annotate.ts";
 import { uid } from "../util/id.ts";
 import { LIMITS, CURRENCY_DEFAULT } from "../config/constants.ts";
 import type { Batch, Receipt, ReceiptStatus } from "../types.ts";
@@ -60,6 +61,8 @@ class AppState {
   /** Receipt currently open in the review modal (id), if any. */
   reviewId = $state<string | null>(null);
   settingsOpen = $state(false);
+  /** Settings → This batch: a re-check is running (`recheckBatch`). */
+  rechecking = $state(false);
 
   /** Boot could not open IndexedDB (a storage-blocked embed, some private
    *  modes): the landing shows it and every add explains itself with it. */
@@ -327,6 +330,42 @@ class AppState {
     await repo.enqueue(id);
     void queue.wake();
     return true;
+  }
+
+  /** Re-check the active batch from STORED data only — no OCR call, no AI
+   *  call (pipeline/recheck.ts): legacy AI reads get the outlines a fresh
+   *  read's anchoring gives them (plus the re-baked annotated copy), and
+   *  duplicate pairs the old dedup missed get their flag. Plans from the
+   *  rows as stored (never the reactive board — no $state proxy may reach
+   *  IndexedDB) and applies each receipt's fixes as ONE compare-and-swap
+   *  write, so a save, read or sync that lands meanwhile wins. Refused while
+   *  this device still has receipts to read: they'd be skipped unread. */
+  async recheckBatch(): Promise<void> {
+    if (!this.batch || this.rechecking) return;
+    if (this.pendingJobs > 0) {
+      this.toast("Finish reading this batch first — then re-check it.", "warn");
+      return;
+    }
+    this.rechecking = true;
+    try {
+      const { runBatchRecheck, recheckSummary } = await import("../pipeline/recheck.ts");
+      const result = await runBatchRecheck(this.batch.id, {
+        listReceipts: (id) => repo.listReceipts(id),
+        getBlob: (key) => repo.getBlob(key),
+        putBlob: (blob, kind) => repo.putBlob(blob, kind),
+        deleteBlob: (key) => repo.deleteBlob(key),
+        updateReceipt: (id, patch, expect) => repo.updateReceipt(id, patch, expect),
+        bake: (blob, marks) => annotateReceipt(blob, marks),
+      });
+      await this.refresh();
+      const changed = result.boxes + result.duplicates > 0;
+      this.toast(recheckSummary(result), result.skipped > 0 ? "warn" : changed ? "ok" : "info");
+    } catch (err) {
+      console.error("re-check failed", err);
+      this.toast("The re-check stopped part-way — run it again to finish.", "err");
+    } finally {
+      this.rechecking = false;
+    }
   }
 
   /** Retry every failed receipt on the board. */

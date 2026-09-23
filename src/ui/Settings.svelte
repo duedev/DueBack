@@ -6,6 +6,7 @@
   import SavedJobsSection from "./settings/SavedJobsSection.svelte";
   import AiAssistSection from "./settings/AiAssistSection.svelte";
   import BrandsSection from "./settings/BrandsSection.svelte";
+  import BatchSection from "./settings/BatchSection.svelte";
   import ImprovementSection from "./settings/ImprovementSection.svelte";
 
   // The Settings dialog shell: scrim, focus management and the shared
@@ -94,6 +95,7 @@
         <SavedJobsSection />
         <AiAssistSection />
         <BrandsSection />
+        <BatchSection />
         <ImprovementSection />
       </div>
     </div>
