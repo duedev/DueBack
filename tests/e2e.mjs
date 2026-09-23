@@ -723,9 +723,13 @@ async function main() {
     await dupDialog.getByRole("button", { name: "Review duplicate" }).click();
     const reviewDialog = page.getByRole("dialog", { name: /Review receipt/ });
     await reviewDialog.waitFor({ timeout: 5000 });
+    // The review opens straight into the side-by-side compare (the warning
+    // lives in the compare panel there, not in the flag list).
+    const twinPanel = reviewDialog.getByRole("region", { name: /Possible duplicate/ });
+    await twinPanel.waitFor({ timeout: 5000 }).catch(() => {});
     check(
-      (await dupDialog.count()) === 0 && dupMsg.test(await reviewDialog.innerText()),
-      "Review duplicate closes the prompt and opens the flagged receipt",
+      (await dupDialog.count()) === 0 && (await twinPanel.count()) === 1,
+      "Review duplicate closes the prompt and opens the flagged receipt beside its twin",
     );
     // Resolve it the way a human would: delete the repeat. The modal then
     // moves on to a neighbour — close it only once the delete has landed
