@@ -3,6 +3,7 @@ import { brandFieldFromLines, dateFlags, vendorNameProblem, type Extraction } fr
 import { CATEGORIES, categorize } from "../../config/categories.ts";
 import { CONFIDENCE, FLAGS, CURRENCY_DEFAULT } from "../../config/constants.ts";
 import { stripProcessorPrefix } from "../../config/vendors.ts";
+import { wellFormed } from "./provenance.ts";
 import { parseAmount, safeAmount } from "../../util/money.ts";
 import { isValidIso } from "../../util/format.ts";
 
@@ -179,7 +180,10 @@ export function vetVisionVendor(
  *  `ctx` lets the vendor be vetted against the receipt's own OCR read
  *  (`vetVisionVendor`); a processor prefix ("SQ *JOES COFFEE") is dropped. */
 export function visionToExtraction(raw: Record<string, unknown>, ctx: VisionContext = {}): Extraction {
-  const vetted = vetVisionVendor(stripProcessorPrefix(String(raw.vendor ?? "").trim()).slice(0, 80), ctx);
+  // Cut on a code point and made well-formed: a lone surrogate (an emoji
+  // split at 80, or a model's broken \ud83d escape) makes Postgres refuse
+  // the whole receipts upsert on every push.
+  const vetted = vetVisionVendor(wellFormed(Array.from(stripProcessorPrefix(String(raw.vendor ?? "").trim())).slice(0, 80).join("")), ctx);
   const vendorName = vetted.field.value;
   const amountVal = coerceAmount(raw.amount);
   const taxVal = coerceAmount(raw.tax);

@@ -393,11 +393,12 @@ test("a weak rules total is no evidence against the AI — a garbled total is wh
 });
 
 test("an AI date the OCR can't find, differing from a clean rules date, is a review-forcing warn", () => {
-  // Real Lowe's: "03/24/26" (24 > 12, unambiguous: 0.8); the model read 2024-03-26.
+  // A cleanly read, labeled "DATE: 03/24/26"; the model read 2024-03-26.
+  const CLEAN = lines(["LOWE'S HOME CENTERS", "DATE: 03/24/26 11:44", "TOTAL: 329.00"]);
   const flags = corroborate(
     ai("LOWES", "2024-03-26", 329),
     draft({ date: "2026-03-24", dateConfidence: 0.8, amount: 329 }),
-    LOWES,
+    CLEAN,
   );
   assert.deepEqual(flags, [
     {
@@ -408,6 +409,47 @@ test("an AI date the OCR can't find, differing from a clean rules date, is a rev
   ]);
   assert.equal(forcesManualReview(flags), true);
   assert.equal(CORROBORATE_MIN_RULES_DATE_CONFIDENCE, 0.8);
+  // The real Lowe's slip prints the same date only on lines OCR read at
+  // 17–59, and the rules pick the first (17): no evidence against the AI.
+  // That receipt is still forced to review — by the two-year age check.
+  assert.deepEqual(
+    corroborate(ai("LOWES", "2024-03-26", 329), draft({ date: "2026-03-24", dateConfidence: 0.8, amount: 329 }), LOWES),
+    [],
+  );
+  assert.ok(
+    visionToExtraction({ vendor: "LOWES", date: "2024-03-26", amount: 329, tax: 0, category: "Materials" }).flags.some(
+      (f) => f.code === "date_suspect",
+    ),
+  );
+});
+
+test("a last-resort rules date, or one on a garbled line, never contradicts the AI — even when unambiguous", () => {
+  // An UNAMBIGUOUS policy expiry (14 > 12 → confidence 0.8, rank 3).
+  const policy = lines(["THE HOME DEPOT", "POLICY ID DAYS POLICY EXPIRES ON", "A 1 90 12/14/2025", "TOTAL $43.74"]);
+  const hd = parseReceipt({ text: policy.map((l) => l.text).join("\n"), confidence: 80, lines: policy, words: [] });
+  assert.equal(hd.date.value, "2025-12-14");
+  assert.ok(hd.date.confidence >= CORROBORATE_MIN_RULES_DATE_CONFIDENCE);
+  assert.deepEqual(corroborate(ai("Home Depot", "2025-09-15", 43.74), hd, policy), []);
+  // An unambiguous date on a line OCR read at 20.
+  const garbled: OcrLine[] = lines(["SHELL", "08/23/25 12:21", "TOTAL 40.00"]).map((l, i) => (i === 1 ? { ...l, confidence: 20 } : l));
+  assert.deepEqual(
+    corroborate(ai("Shell", "2025-08-28", 40), draft({ date: "2025-08-23", dateConfidence: 0.8, amount: 40 }), garbled),
+    [],
+  );
+  // The day/month swap still fires whatever the evidence.
+  assert.equal(
+    corroborate(ai("Shell", "2025-03-08", 40), draft({ date: "2025-08-03", dateConfidence: 0.65, amount: 40 }), garbled)[0]?.code,
+    "date_suspect",
+  );
+});
+
+test("a rules total the rules themselves question is no evidence against the AI's", () => {
+  const L = lines(["SHELL", "SUBTOTAL 36.00", "TOTAL 39.20"]);
+  const d = draft({ amount: 36, amountConfidence: 0.9 });
+  assert.equal(corroborate(ai("Shell", "", 39.2), d, L).length, 0, "the AI total is printed");
+  const doubted = { ...d, flags: [{ code: "total_suspect" as const, severity: "warn" as const, message: "window recovery" }] };
+  assert.deepEqual(corroborate(ai("Shell", "", 41.5), doubted, L), []);
+  assert.equal(corroborate(ai("Shell", "", 41.5), d, L)[0]?.code, "total_suspect");
 });
 
 test("an ambiguous, repaired or last-resort rules date is no evidence against the AI's", () => {
@@ -559,7 +601,8 @@ test("a corroboration flag supersedes the answer's own flag of the same code (on
   // the on-device reader found (03/24/26). The corroboration message names both reads.
   const answer = visionToExtraction({ vendor: "LOWES", date: "2024-03-26", amount: 329, tax: 0, category: "Materials" });
   assert.ok(answer.flags.some((f) => f.code === "date_suspect"), "the age check fired");
-  const settled = settleAssistExtraction(answer, draft({ date: "2026-03-24", dateConfidence: 0.8, amount: 329 }), LOWES);
+  const CLEAN = lines(["LOWE'S HOME CENTERS", "DATE: 03/24/26 11:44", "TOTAL: 329.00"]);
+  const settled = settleAssistExtraction(answer, draft({ date: "2026-03-24", dateConfidence: 0.8, amount: 329 }), CLEAN);
   const dates = settled.flags.filter((f) => f.code === "date_suspect");
   assert.equal(dates.length, 1, JSON.stringify(settled.flags));
   assert.match(dates[0]!.message, /the on-device reader found 2026-03-24/);

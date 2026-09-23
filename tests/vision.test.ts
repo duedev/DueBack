@@ -352,3 +352,14 @@ test("the model's date gets the rules' plausibility flags: over two years old is
   assert.equal(forcesManualReview(ex.flags), true);
   assert.ok(ex.confidence < 0.9);
 });
+
+test("the model's vendor is cut on a code point and never keeps a lone surrogate", () => {
+  // An emoji straddling the 80-unit cut, and a model's broken "\ud83d" escape:
+  // either lone surrogate made Postgres refuse the receipts upsert on every push.
+  const straddle = visionToExtraction({ vendor: "A".repeat(79) + "\u{1F600}tail", date: "", amount: 1 }).vendor.value;
+  assert.ok(straddle.isWellFormed(), JSON.stringify(straddle));
+  assert.ok(straddle.startsWith("A".repeat(79)));
+  const broken = visionToExtraction({ vendor: "Corner Cafe \ud83d", date: "", amount: 1 }).vendor.value;
+  assert.ok(broken.isWellFormed(), JSON.stringify(broken));
+  assert.match(broken, /^Corner Cafe/);
+});

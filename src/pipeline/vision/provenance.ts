@@ -1,5 +1,5 @@
 import type { AssistProvenance, BBox, Field, Flag, OcrLine, Receipt } from "../../types.ts";
-import { findAliasOnLines, locateValue, VENDOR_STOPWORD_RE, type Extraction } from "../extract.ts";
+import { findAliasOnLines, findDateEvidence, locateValue, VENDOR_STOPWORD_RE, type Extraction } from "../extract.ts";
 import { FUZZY_HINT_RATIO, fuzzyMatchVendorLines, matchVendor } from "../../config/vendors.ts";
 import { formatMoney } from "../../util/money.ts";
 import { BUILTIN_OPENROUTER_KEY } from "./config.ts";
@@ -210,6 +210,10 @@ export const CORROBORATE_MIN_RULES_CONFIDENCE = 0.75;
  *  dates were right and the rules wrong (a return-policy expiry, an OCR'd
  *  "06/11" for 08/11); a day/month swap is flagged at any confidence. */
 export const CORROBORATE_MIN_RULES_DATE_CONFIDENCE = 0.8;
+/** The OCR confidence (0..100) the rules date's line needs before it can
+ *  contradict the AI: the owner's Lowe's date sat on a line read at 17 and
+ *  a Home Depot misread "06/11" on one read at 8. */
+export const CORROBORATE_MIN_DATE_LINE_CONFIDENCE = 50;
 
 /** Same year, day and month exchanged: "2025-11-06" against "2025-06-11". */
 function dayMonthSwapped(a: string, b: string): boolean {
@@ -224,12 +228,15 @@ function dayMonthSwapped(a: string, b: string): boolean {
  * read that is itself trustworthy, must not ship unreviewed: the same "never
  * silently swap a plausible total" rule the rules path obeys.
  *   • total: the rules total is a confident read
- *     (≥ CORROBORATE_MIN_RULES_CONFIDENCE) — a weak one is usually the very
- *     garble that sent the receipt to the AI;
- *   • date: the rules date is a clean read
- *     (≥ CORROBORATE_MIN_RULES_DATE_CONFIDENCE), or — at any confidence — the
- *     AI date is the rules date with day and month swapped, the classic model
- *     error on an ambiguous m/d date.
+ *     (≥ CORROBORATE_MIN_RULES_CONFIDENCE) that the rules don't themselves
+ *     question (no total_suspect/total_mismatch) — a weak one is usually the
+ *     very garble that sent the receipt to the AI;
+ *   • date: the rules date is a clean read — ≥ CORROBORATE_MIN_RULES_DATE_
+ *     CONFIDENCE, not a last-resort pick (a policy expiry or due date, rank
+ *     3 in `findDateEvidence`), on a line OCR read at ≥ CORROBORATE_MIN_DATE_
+ *     LINE_CONFIDENCE — or, at any confidence, the AI date is the rules date
+ *     with day and month swapped, the classic model error on an ambiguous
+ *     m/d date.
  * Both are warns that force review (`extract.forcesManualReview`). The
  * message says which reader found what, never what the receipt "prints": the
  * on-device read can be the wrong one. No lines, no evidence either way —
@@ -240,11 +247,15 @@ export function corroborate(ai: Extraction, draft: Extraction, lines: OcrLine[])
   const flags: Flag[] = [];
   const a = ai.amount.value;
   const d = draft.amount.value;
+  // A rules total the rules themselves question (footing's window recovery
+  // stamps a synthetic confidence but flags it) is no evidence against the AI.
+  const draftDoubtsTotal = draft.flags.some((f) => f.code === "total_suspect" || f.code === "total_mismatch");
   if (
     a > 0 &&
     d > 0 &&
     Math.abs(a - d) >= 0.005 &&
     draft.amount.confidence >= CORROBORATE_MIN_RULES_CONFIDENCE &&
+    !draftDoubtsTotal &&
     !locateValue(lines, "amount", a)
   ) {
     flags.push({
@@ -257,10 +268,18 @@ export function corroborate(ai: Extraction, draft: Extraction, lines: OcrLine[])
   const rulesDate = draft.date.value;
   if (aiDate && rulesDate && aiDate !== rulesDate) {
     const swapped = dayMonthSwapped(aiDate, rulesDate);
-    if (
-      (swapped || draft.date.confidence >= CORROBORATE_MIN_RULES_DATE_CONFIDENCE) &&
-      !locateValue(lines, "date", aiDate)
-    ) {
+    // A clean rules date is not just its confidence: a last-resort pick (a
+    // return-policy expiry, a due date — rank 3) keeps unlabeled confidence,
+    // and an unambiguous misread on a garbled line reads 0.8 too. Both used
+    // to flag a CORRECT AI date.
+    const ev = findDateEvidence(lines);
+    const cleanRulesDate =
+      draft.date.confidence >= CORROBORATE_MIN_RULES_DATE_CONFIDENCE &&
+      !!ev &&
+      ev.field.value === rulesDate &&
+      ev.rank < 3 &&
+      ev.lineConfidence >= CORROBORATE_MIN_DATE_LINE_CONFIDENCE;
+    if ((swapped || cleanRulesDate) && !locateValue(lines, "date", aiDate)) {
       flags.push({
         code: "date_suspect",
         severity: "warn",

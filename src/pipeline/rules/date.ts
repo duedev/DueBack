@@ -179,8 +179,23 @@ function dateLabelRank(text: string): number {
 const EXPIRY_HEAD_RE = /\bpolicy\b.*\b\w{0,3}pire[sd]?\b|\bexpir\w*\s+on\b/i;
 const POLICY_ROW_RE = /^[\s|]*[A-Za-z]?\s*(?:\d{1,3}\s+)*\d{0,3}\s*\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\s*$/;
 
+/** What the rules' date pick rests on: its rank (0 = an invoice/order/
+ *  transaction label … 3 = a last resort — a due/expiry date or a
+ *  return-policy row) and the OCR confidence (0..100) of the line it came
+ *  from. The AI tier's corroboration only trusts a rules date that isn't a
+ *  last resort and was read cleanly (vision/provenance.ts). Pure. */
+export interface DateEvidence {
+  field: Field<string>;
+  rank: number;
+  lineConfidence: number;
+}
+
 export function findDate(lines: OcrLine[]): Field<string> | null {
-  let best: { hit: DateHit; rank: number } | null = null;
+  return findDateEvidence(lines)?.field ?? null;
+}
+
+export function findDateEvidence(lines: OcrLine[]): DateEvidence | null {
+  let best: { hit: DateHit; rank: number; lineConfidence: number } | null = null;
   let underHead = false; // the previous line is a policy header with no date of its own
   let inRows = false; // inside that header's policy rows
   for (const line of lines) {
@@ -191,7 +206,7 @@ export function findDate(lines: OcrLine[]): Field<string> | null {
     // last-resort hit carries unlabeled confidence rather than 0.9.
     const hits = parseDatesInLine(line, rank <= 1);
     for (const hit of hits) {
-      if (!best || rank < best.rank) best = { hit, rank };
+      if (!best || rank < best.rank) best = { hit, rank, lineConfidence: line.confidence };
     }
     underHead = head && hits.length === 0;
     inRows = row;
@@ -203,7 +218,7 @@ export function findDate(lines: OcrLine[]): Field<string> | null {
     confidence: chosen.labeled ? 0.9 : chosen.ambiguous ? 0.65 : 0.8,
   };
   if (chosen.bbox) field.bbox = chosen.bbox;
-  return field;
+  return { field, rank: best!.rank, lineConfidence: best!.lineConfidence };
 }
 
 /** Plausibility flags for a receipt date (the rules read AND the AI assist's,
