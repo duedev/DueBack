@@ -9,11 +9,16 @@ import {
   borderColor,
   darkBorderInsets,
   paperRegionBox,
+  inkContentBox,
+  padBox,
+  toSourceBox,
+  ANALYSIS_MAX_EDGE,
+  type PaperBox,
 } from "./binarize.ts";
 
 // Image pre-pass (§5 step 1, §14). Runs entirely client-side on a <canvas>:
 //   decode → auto-rotate (EXIF) → deskew (small tilt) → grayscale →
-//   auto-crop background → downscale.
+//   auto-crop (paper slab → printed ink → edge energy) → downscale.
 // Free, improves every downstream step, shrinks uploads, and lowers the cost
 // of any optional paid call. Two renders come out of the same cleaned frame:
 // a transient higher-res copy for OCR (small print survives) and the stored
@@ -113,13 +118,13 @@ function detectContentBox(
   return { x: left, y: top, w: right - left + 1, h: bottom - top + 1 };
 }
 
-/** Draw a small (≤480px) analysis copy and return its pixels. */
+/** Draw a small (≤ ANALYSIS_MAX_EDGE px) analysis copy and return its pixels. */
 function analysisFrame(
   src: ImageBitmap | HTMLCanvasElement,
 ): { data: Uint8ClampedArray; w: number; h: number; scale: number } {
   const srcW = src.width;
   const srcH = src.height;
-  const aMax = 480;
+  const aMax = ANALYSIS_MAX_EDGE;
   const scale = Math.min(1, aMax / Math.max(srcW, srcH));
   const w = Math.max(1, Math.round(srcW * scale));
   const h = Math.max(1, Math.round(srcH * scale));
@@ -224,26 +229,35 @@ export async function cleanImage(file: File | Blob): Promise<CleanedImage> {
 
     const srcW = src.width;
     const srcH = src.height;
+    // One grayscale of the (now upright) analysis copy serves the border
+    // trim and the ink crop.
+    const gray = a ? toGrayscale(a.data, a.w, a.h) : null;
+    // Every crop maps back to the source through here, clamped at BOTH ends
+    // (a far-end overrun left a transparent sliver the JPEG stored black).
+    const toSource = (b: PaperBox, scale: number): PaperBox => toSourceBox(b, scale, srcW, srcH);
 
     // --- trim near-black scan borders (CamScanner-style sawtooth strips) ---
     // Pre-scanned uploads arrive already cropped/deskewed, but with black edge
     // strips the content-box crop alone keeps (they carry edge energy).
     let inset = { left: 0, top: 0, right: 0, bottom: 0 };
-    if (a) {
-      inset = darkBorderInsets(toGrayscale(a.data, a.w, a.h), a.w, a.h);
+    if (a && gray) {
+      inset = darkBorderInsets(gray, a.w, a.h);
     }
 
     // --- auto-crop analysis on the small copy of the (now upright) frame ---
-    let crop = { x: 0, y: 0, w: srcW, h: srcH };
+    let crop: PaperBox = { x: 0, y: 0, w: srcW, h: srcH };
     if (a && (inset.left || inset.top || inset.right || inset.bottom)) {
-      crop = {
-        x: inset.left / a.scale,
-        y: inset.top / a.scale,
-        w: Math.max(1, (a.w - inset.left - inset.right) / a.scale),
-        h: Math.max(1, (a.h - inset.top - inset.bottom) / a.scale),
-      };
+      crop = toSource(
+        {
+          x: inset.left,
+          y: inset.top,
+          w: a.w - inset.left - inset.right,
+          h: a.h - inset.top - inset.bottom,
+        },
+        a.scale,
+      );
     }
-    if (IMAGE_PREP.autoCrop && a) {
+    if (IMAGE_PREP.autoCrop && a && gray) {
       const inner = {
         x1: inset.left,
         y1: inset.top,
@@ -257,19 +271,8 @@ export async function cleanImage(file: File | Blob): Promise<CleanedImage> {
         const y2 = Math.min(b.y + b.h, inner.y2);
         return { x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
       };
-      const toCrop = (
-        b: { x: number; y: number; w: number; h: number },
-        pad: number,
-      ) => {
-        const px = b.w * pad;
-        const py = b.h * pad;
-        return {
-          x: Math.max(0, (b.x - px) / a.scale),
-          y: Math.max(0, (b.y - py) / a.scale),
-          w: Math.min(srcW, (b.w + 2 * px) / a.scale),
-          h: Math.min(srcH, (b.h + 2 * py) / a.scale),
-        };
-      };
+      const toCrop = (b: PaperBox, pad: number): PaperBox =>
+        toSource(padBox(b, pad, a.w, a.h), a.scale);
 
       // First choice: the paper slab (largest bright, desaturated connected
       // region). The edge-energy box keeps every textured thing in frame — a
@@ -285,8 +288,9 @@ export async function cleanImage(file: File | Blob): Promise<CleanedImage> {
         // that band holds bright paper — a long receipt on a dark car seat or
         // counter with its top/bottom edge inside the outer 8%. Clamping cut
         // the TOTAL line or the vendor header there (~5% of the frame per end
-        // even after the 3% pad); the edge-energy fallback keeps its clamp
-        // because sawtooth strips genuinely carry edge energy.
+        // even after the 3% pad); the ink crop and the edge-energy fallback
+        // keep the clamp because sawtooth strips genuinely read as ink and
+        // carry edge energy.
         const pbox = paper;
         const area = (pbox.w * pbox.h) / (a.w * a.h);
         if (area >= 0.05 && area <= 0.92) {
@@ -294,7 +298,24 @@ export async function cleanImage(file: File | Blob): Promise<CleanedImage> {
           paperCropped = true;
         }
       }
+      // Second choice: the printed content. A frame that is (nearly) all
+      // paper — a digital PDF page, a flatbed scan with white margins — has
+      // no slab to find, and the edge-energy guards below refuse any box
+      // under 45% of the frame: a Chevron-app e-receipt was stored as the
+      // whole blank Letter sheet. inkContentBox says null unless the trim
+      // wins a lot (and below a page-white paper level), so photos and
+      // full-bleed scans fall through unchanged. It honours the dark-border
+      // insets like the edge-energy fallback does: a sawtooth strip is only
+      // 30–90% dark per line, so the ink mask alone would re-include it.
+      let inkCropped = false;
       if (!paperCropped) {
+        const ink = inkContentBox(gray, a.w, a.h, { exclude: inset });
+        if (ink) {
+          crop = toCrop(ink, 0); // already carries its margin
+          inkCropped = true;
+        }
+      }
+      if (!paperCropped && !inkCropped) {
         const box = detectContentBox(a.data, a.w, a.h);
         // Keep the content box inside the border-trimmed region.
         const nbox = clampInner(box);

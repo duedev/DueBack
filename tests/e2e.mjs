@@ -410,6 +410,8 @@ async function main() {
           method: r.methodUsed,
           status: r.status,
           flags: (r.flags || []).map((f) => f.message).join(" | "),
+          dims: [r.imageWidth, r.imageHeight],
+          abox: r.amount.bbox ?? null,
         }));
       });
     // The device-local work-list (store/repo.ts jobs): the pause's contract
@@ -720,6 +722,28 @@ async function main() {
     check(/TARGET/i.test(pdfP1.vendor || ""), `PDF page 1: vendor (got ${pdfP1.vendor})`);
     check(pdfP2.amount === 4.25, `PDF page 2: total read (got ${pdfP2.amount})`);
     check(/STARBUCKS/i.test(pdfP2.vendor || ""), `PDF page 2: vendor (got ${pdfP2.vendor})`);
+
+    // 7c-bis. A digital PDF page is stored cropped to its print (the ink
+    // crop), not as the whole blank Letter sheet — the Chevron-app
+    // e-receipts exported as full 8.5×11 images. A whole page renders at
+    // 2010×2600 and stores at 1237×1600; each fixture's print covers under
+    // half the page's height, so its crop stores smaller (the aspect is no
+    // test: page 1's crop happens to land near Letter's). And the TOTAL —
+    // the last printed line, at the column's right edge — ends in the
+    // bottom quarter and right 30% of the stored frame; on the uncropped
+    // page it sat mid-sheet (~0.5 across, 0.33–0.5 down).
+    for (const [label, r] of [["page 1", pdfP1], ["page 2", pdfP2]]) {
+      const [w, h] = r.dims ?? [];
+      const b = r.abox;
+      check(
+        w > 0 && h > 0 && Math.max(w, h) < 1400,
+        `PDF ${label}: stored cropped to the print, not the Letter page (got ${w}×${h})`,
+      );
+      check(
+        !!b && b.y + b.h > 0.75 && b.x + b.w > 0.7,
+        `PDF ${label}: the total sits at the crop's bottom-right edge (got ${b ? `x2 ${(b.x + b.w).toFixed(2)}, y2 ${(b.y + b.h).toFixed(2)}` : "no box"})`,
+      );
+    }
 
     // 7d. ZIP intake: an archive of nested folders (the "here's the folder of
     // Tesla charging receipts" case) becomes one receipt per usable file, and

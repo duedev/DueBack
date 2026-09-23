@@ -1,10 +1,12 @@
 // Pure image math for the OCR pre-pass: grayscale, adaptive (Bradley)
-// binarization, and projection-profile skew estimation. No DOM — everything
-// operates on plain typed arrays so Node tests can cover it; the canvas glue
-// lives in imagePrep.ts. These are the two preprocessing steps quality-focused
-// Tesseract front-ends apply that we previously skipped: local thresholding
-// rescues unevenly lit thermal paper, and deskew rescues slightly tilted
-// phone photos (Tesseract's line finder degrades fast past ~1–2°).
+// binarization, projection-profile skew estimation, and the content-box
+// crops (paper slab, printed ink). No DOM — everything operates on plain
+// typed arrays so Node tests can cover it; the canvas glue lives in
+// imagePrep.ts (and export/images.ts for the export trim). These are the
+// preprocessing steps quality-focused Tesseract front-ends apply that we
+// previously skipped: local thresholding rescues unevenly lit thermal
+// paper, and deskew rescues slightly tilted phone photos (Tesseract's line
+// finder degrades fast past ~1–2°).
 
 /** Luminance (0..255) from RGBA pixel data. */
 export function toGrayscale(
@@ -408,4 +410,202 @@ export function paperRegionBox(
   }
 
   return { x: x1, y: y1, w: x2 - x1 + 1, h: y2 - y1 + 1 };
+}
+
+/** Longest edge of the small analysis copy the crop detectors measure
+ *  (imagePrep's analysis frame and the export trim in export/images.ts).
+ *  Their pixel thresholds — dust size, minimum margin — are tuned at this
+ *  scale. */
+export const ANALYSIS_MAX_EDGE = 480;
+
+/** Grow `b` by `pad` × its own size on every side, clamped to the w × h
+ *  frame at BOTH ends. The inline version this replaced clamped only the
+ *  near end: a box flush with the right/bottom edge ran past the image,
+ *  drawImage left that sliver transparent, and the stored JPEG kept it as
+ *  black edge columns. */
+export function padBox(b: PaperBox, pad: number, w: number, h: number): PaperBox {
+  const x1 = Math.max(0, b.x - b.w * pad);
+  const y1 = Math.max(0, b.y - b.h * pad);
+  const x2 = Math.min(w, b.x + b.w * (1 + pad));
+  const y2 = Math.min(h, b.y + b.h * (1 + pad));
+  return { x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
+}
+
+/** Map a box on the analysis copy back to the srcW × srcH source frame
+ *  (÷ `scale`), clamped at BOTH ends. The analysis copy's edge is a ROUNDED
+ *  `src × scale`, so even a full-frame box can land a sliver past the
+ *  source — drawImage then leaves that sliver transparent and the JPEG
+ *  encode stores it black. Every crop imagePrep takes goes through here. */
+export function toSourceBox(
+  b: PaperBox,
+  scale: number,
+  srcW: number,
+  srcH: number,
+): PaperBox {
+  const x = Math.max(0, Math.min(srcW - 1, b.x / scale));
+  const y = Math.max(0, Math.min(srcH - 1, b.y / scale));
+  return {
+    x,
+    y,
+    w: Math.max(1, Math.min(srcW, (b.x + b.w) / scale) - x),
+    h: Math.max(1, Math.min(srcH, (b.y + b.h) / scale) - y),
+  };
+}
+
+export interface InkBoxOptions {
+  /** Per-side insets (px) the box must stay inside — imagePrep passes its
+   *  dark scan-border insets, so a sawtooth strip the inset trim removed
+   *  can never come back through the ink box. */
+  exclude?: { left: number; top: number; right: number; bottom: number };
+  /** Lowest paper level (median luminance) that still counts as a page.
+   *  Digital renders (255), scan-app output and flatbed backgrounds sit
+   *  well above the 235 default; an auto-exposed phone photo of a receipt
+   *  on a light table (~200–230) keeps the edge-energy path. */
+  minPaper?: number;
+}
+
+/**
+ * The printed content's bounding box, plus a margin, on a frame that is
+ * (nearly) all paper: a digital PDF page, or a flatbed scan with white
+ * margins. paperRegionBox has nothing to find there (the slab IS the
+ * frame) and the edge-energy crop refuses boxes under 45% of the frame, so
+ * a Chevron-app e-receipt — a narrow column top-left on a Letter page —
+ * was stored and exported as the whole blank sheet.
+ *
+ * Deliberately inclusive: ink is anything noticeably darker than the paper
+ * (the median luminance), so faint gray logos and faded print count, and
+ * paper texture only GROWS the box — a missed crop costs looks, a wrong one
+ * loses a line. On a near-white frame (paper ≥ 245: digital or flatbed) the
+ * cut sits closer to the paper, because an area-averaging downscale to the
+ * analysis size lightens thin light-gray strokes (a #CCC "Customer Copy"
+ * footer) past the stricter cut. Two things don't count as content:
+ *  - dust: 8-connected components under ~4 px at the analysis scale;
+ *  - solid dark lines along a whole frame edge (lid shadows, page-edge
+ *    rules, the 1-px borders scan PDFs carry), stripped by darkBorderInsets
+ *    at the ink threshold, together with the caller's `exclude` insets. A
+ *    banner row with lettering in it is not ≥ 90% dark, so text inside a
+ *    bleed bar is kept.
+ * Null unless trimming wins a lot (padded box ≤ 70% of the frame), so
+ * receipt scans and photos whose print fills the frame never crop, and the
+ * function is idempotent on its own output (the margin is relative to the
+ * CONTENT, so a re-run lands on the whole frame). Also null for frames
+ * darker than `minPaper` (a photo, not a page), blank frames, and heavy
+ * texture (> 30% ink). A page holding two receipts crops to both.
+ */
+export function inkContentBox(
+  gray: Float32Array,
+  w: number,
+  h: number,
+  opts: InkBoxOptions = {},
+): PaperBox | null {
+  const n = w * h;
+  if (w < 8 || h < 8) return null;
+  const hist = new Uint32Array(256);
+  for (let p = 0; p < n; p++) hist[Math.max(0, Math.min(255, Math.round(gray[p] ?? 0)))]!++;
+  let paper = 255;
+  for (let v = 0, acc = 0; v < 256; v++) {
+    acc += hist[v] ?? 0;
+    if (acc * 2 >= n) {
+      paper = v;
+      break;
+    }
+  }
+  if (paper < (opts.minPaper ?? 235)) return null;
+  const cut = paper >= 245 ? paper - Math.max(8, paper * 0.035) : paper - Math.max(16, paper * 0.07);
+  // Its own full-edge lines at the ink threshold (≥ 90% dark, ≤ 3% deep),
+  // widened per side by the caller's exclusions.
+  const own = darkBorderInsets(gray, w, h, { darkPx: cut, frac: 0.9, maxFrac: 0.03 });
+  const ex = opts.exclude ?? { left: 0, top: 0, right: 0, bottom: 0 };
+  const left = Math.max(own.left, ex.left);
+  const top = Math.max(own.top, ex.top);
+  const right = w - Math.max(own.right, ex.right);
+  const bottom = h - Math.max(own.bottom, ex.bottom);
+  if (right - left < 2 || bottom - top < 2) return null;
+
+  const mask = new Uint8Array(n);
+  let inkCount = 0;
+  for (let y = top; y < bottom; y++) {
+    for (let x = left; x < right; x++) {
+      if ((gray[y * w + x] ?? 255) < cut) {
+        mask[y * w + x] = 1;
+        inkCount++;
+      }
+    }
+  }
+  if (inkCount === 0 || inkCount / n > 0.3) return null;
+
+  // Bounding box over every 8-connected ink component bigger than dust.
+  const speck = Math.max(2, Math.round(n * 2e-5));
+  const seen = new Uint8Array(n);
+  const stack: number[] = [];
+  let x1 = w;
+  let y1 = h;
+  let x2 = -1;
+  let y2 = -1;
+  for (let start = 0; start < n; start++) {
+    if (!mask[start] || seen[start]) continue;
+    let area = 0;
+    let cx1 = w;
+    let cy1 = h;
+    let cx2 = -1;
+    let cy2 = -1;
+    stack.length = 0;
+    stack.push(start);
+    seen[start] = 1;
+    while (stack.length) {
+      const p = stack.pop()!;
+      const x = p % w;
+      const y = (p - x) / w;
+      area++;
+      if (x < cx1) cx1 = x;
+      if (x > cx2) cx2 = x;
+      if (y < cy1) cy1 = y;
+      if (y > cy2) cy2 = y;
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= h) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= w) continue;
+          const q = ny * w + nx;
+          if (mask[q] && !seen[q]) {
+            seen[q] = 1;
+            stack.push(q);
+          }
+        }
+      }
+    }
+    if (area < speck) continue; // dust; a lone period sits inside the margin anyway
+    if (cx1 < x1) x1 = cx1;
+    if (cy1 < y1) y1 = cy1;
+    if (cx2 > x2) x2 = cx2;
+    if (cy2 > y2) y2 = cy2;
+  }
+  if (x2 < 0) return null;
+
+  // Margin relative to the CONTENT (not the frame): re-running on the crop
+  // lands on the same box, i.e. idempotent.
+  const m = Math.max(3, Math.round(Math.max(x2 - x1 + 1, y2 - y1 + 1) * 0.05));
+  const bx1 = Math.max(left, x1 - m);
+  const by1 = Math.max(top, y1 - m);
+  const bx2 = Math.min(right, x2 + 1 + m);
+  const by2 = Math.min(bottom, y2 + 1 + m);
+  const box = { x: bx1, y: by1, w: bx2 - bx1, h: by2 - by1 };
+  return (box.w * box.h) / n <= 0.7 ? box : null;
+}
+
+/** US Letter, ISO A4, US Legal (short edge / long edge). */
+const PAGE_ASPECTS = [8.5 / 11, 1 / Math.SQRT2, 8.5 / 14];
+
+/** Is this frame shaped like a whole paper page, in either orientation? The
+ *  export trim's gate: a digital PDF page read before the ink crop existed
+ *  was stored whole (pdf.ts renders Letter at 2010×2600, stored 1237×1600 —
+ *  0.0004 off the Letter aspect; A4 and Legal land as close). The tolerance
+ *  is tight on purpose: a slab-cropped short receipt can land within 1% of
+ *  Legal or A4, and the export must not newly crop a photo intake never
+ *  ink-cropped. */
+export function isFullPageAspect(w: number, h: number, tol = 0.003): boolean {
+  if (w <= 0 || h <= 0) return false;
+  const r = Math.min(w, h) / Math.max(w, h);
+  return PAGE_ASPECTS.some((a) => Math.abs(r - a) <= tol);
 }
