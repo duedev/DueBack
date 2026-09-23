@@ -5,7 +5,9 @@ name: Preview
 # (https://pr-<number>.<project>.pages.dev — the PR's "View deployment"
 # button links it). The live site (deploy.yml, GitHub Pages) is never touched.
 #
-# Off until the repo owner configures it (the jobs are SKIPPED, never red):
+# Off until the repo owner configures it (Settings › Secrets and variables ›
+# Actions). Until then the `setup` job passes with a notice naming what is
+# missing, and build/deploy are skipped — never red:
 #   variable CF_PAGES_PROJECT       the Pages project name, e.g. dueback-preview
 #                                   (created on the first run if it's missing)
 #   secret   CLOUDFLARE_API_TOKEN   a token with Account › Cloudflare Pages › Edit
@@ -36,9 +38,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Says WHY a preview didn't run: a bare "skipped" job gives no reason, and
+  # the likeliest mistake is a value on the wrong tab (the project name as a
+  # secret, or a token as a variable). Only true/false reaches the script,
+  # never a secret's value, and no PR code is checked out here.
+  setup:
+    # Same-repo branches only: fork PRs get no secrets.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        shell: bash
+        env:
+          PROJECT_VAR: ${{ vars.CF_PAGES_PROJECT != '' }}
+          PROJECT_AS_SECRET: ${{ secrets.CF_PAGES_PROJECT != '' }}
+          TOKEN_SECRET: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+          TOKEN_AS_VAR: ${{ vars.CLOUDFLARE_API_TOKEN != '' }}
+          ACCOUNT_SECRET: ${{ secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+          ACCOUNT_AS_VAR: ${{ vars.CLOUDFLARE_ACCOUNT_ID != '' }}
+        run: |
+          problems=()
+          need() { # present-where-expected, present-on-the-other-tab, name, expected tab
+            [ "$1" = true ] && return
+            if [ "$2" = true ]; then
+              problems+=("$3 is saved as a $([ "$4" = variable ] && echo secret || echo variable); it must be a $4")
+            else
+              problems+=("$3 ($4) is not set")
+            fi
+          }
+          need "$PROJECT_VAR" "$PROJECT_AS_SECRET" CF_PAGES_PROJECT variable
+          need "$TOKEN_SECRET" "$TOKEN_AS_VAR" CLOUDFLARE_API_TOKEN secret
+          need "$ACCOUNT_SECRET" "$ACCOUNT_AS_VAR" CLOUDFLARE_ACCOUNT_ID secret
+          if [ ${#problems[@]} -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          echo "### Preview not configured" >> "$GITHUB_STEP_SUMMARY"
+          for p in "${problems[@]}"; do
+            echo "::notice title=Preview skipped::$p (Settings › Secrets and variables › Actions)"
+            echo "- $p" >> "$GITHUB_STEP_SUMMARY"
+          done
+
   build:
-    # Same-repo branches only (fork PRs get no secrets), once configured.
-    if: vars.CF_PAGES_PROJECT != '' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: setup
+    if: needs.setup.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:

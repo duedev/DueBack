@@ -114,7 +114,8 @@ branch in this repo can build to its own Cloudflare Pages site at
 `https://pr-<number>.<project>.pages.dev` without touching production. It's
 off until you add a repo variable `CF_PAGES_PROJECT` (e.g. `dueback-preview`;
 created on the first run) and secrets `CLOUDFLARE_API_TOKEN` (Account ›
-Cloudflare Pages › Edit) + `CLOUDFLARE_ACCOUNT_ID`. Previews leave out
+Cloudflare Pages › Edit) + `CLOUDFLARE_ACCOUNT_ID`; until then the run's
+`setup` job names whatever is missing. Previews leave out
 Supabase, OneDrive and analytics (their sign-in redirects only allow the
 production domain, and previews must never sync into real workspaces).
 

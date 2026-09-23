@@ -712,8 +712,10 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   capacity). CI has `permissions: contents: read`, per-PR cancellation and
   job timeouts; Pages deploys are never cancelled mid-publish. PR previews
   (`preview.yml`) go to Cloudflare Pages at a stable `pr-<N>` alias,
-  gated on the `CF_PAGES_PROJECT` repo var (unset = jobs SKIPPED, not red)
-  and same-repo branches; the build job (PR code, OpenRouter key) and the
+  same-repo branches only; a `setup` job checks the `CF_PAGES_PROJECT` var
+  and both secrets and, when one is missing or on the wrong tab (a bare
+  "skipped" gave no reason), passes with a notice naming it while
+  build/deploy skip — never red; the build job (PR code, OpenRouter key) and the
   deploy job (Cloudflare token, no checkout — it only uploads the artifact)
   are separate so the token never shares a job with PR code; the project is
   created on first use (`pages deploy` would prompt), and the URL comes from
