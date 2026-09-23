@@ -1,9 +1,10 @@
-import type { Category, Field, Flag } from "../../types.ts";
-import type { Extraction } from "../extract.ts";
+import type { Category, Field, Flag, OcrLine } from "../../types.ts";
+import { brandFieldFromLines, dateFlags, vendorNameProblem, type Extraction } from "../extract.ts";
 import { CATEGORIES, categorize } from "../../config/categories.ts";
 import { CONFIDENCE, FLAGS, CURRENCY_DEFAULT } from "../../config/constants.ts";
+import { stripProcessorPrefix } from "../../config/vendors.ts";
 import { parseAmount, safeAmount } from "../../util/money.ts";
-import { isValidIso, fromIso, daysBetween } from "../../util/format.ts";
+import { isValidIso } from "../../util/format.ts";
 
 // The contract with the vision model + the mapping of its JSON back into the
 // app's `Extraction` shape. Pure (no network, no DOM) so it is unit-testable
@@ -15,7 +16,10 @@ export const RECEIPT_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
-    vendor: { type: "string", description: "Merchant/brand name, not the street address." },
+    vendor: {
+      type: "string",
+      description: "Merchant/brand name — not the street address, the city, or the card network/payment processor.",
+    },
     date: { type: "string", description: "Purchase date as ISO yyyy-mm-dd." },
     amount: { type: "number", description: "Grand total actually paid." },
     tax: { type: "number", description: "Tax amount, or 0 if none shown." },
@@ -27,7 +31,9 @@ export const RECEIPT_JSON_SCHEMA = {
 export const SYSTEM_PROMPT =
   "You are a meticulous receipt-data extractor. Read the receipt image and " +
   "return ONLY the requested fields as strict JSON. Use the merchant/brand name " +
-  "for vendor (never the street address). Date must be ISO yyyy-mm-dd. amount is " +
+  "for vendor — never the street address, the city, or the card network/payment " +
+  "processor printed on the tender lines (American Express, Visa, Square…). " +
+  "Date must be ISO yyyy-mm-dd. amount is " +
   "the grand total actually paid; tax is the tax line (0 if none). Pick the single " +
   "best category from the allowed list. Do not invent values you cannot see.";
 
@@ -106,10 +112,75 @@ function coerceAmount(v: unknown): number {
   return 0;
 }
 
+/** What the assist knows besides the model's JSON: vision/index.ts passes
+ *  both; the settings probe and legacy callers pass neither. Extend THIS
+ *  (never a positional parameter) when the mapping needs more evidence. */
+export interface VisionContext {
+  /** The rules path's draft for this receipt (it was unsure — that is why
+   *  the assist ran). */
+  draft?: Extraction | null;
+  /** The on-device OCR lines — what a rejected vendor falls back to. */
+  lines?: OcrLine[];
+}
+
+/**
+ * The model's vendor, vetted against the receipt's own OCR read. A model
+ * copies the clearest text it sees, and on a worn slip that is often the
+ * bold card-network line (it answered "AMERICAN EXPRESS" for a Banning, CA
+ * fill-up) or the address block's city. Such an answer is never taken:
+ *   • the brand the OCR prints near the top (or in the site ID) replaces it
+ *     silently — the same evidence the rules trust without review;
+ *   • a brand printed only further down (a footer ad?) replaces it, flagged;
+ *   • else a cleanly-read rules header (≥ 0.8) is kept, flagged;
+ *   • else the vendor is BLANKED, flagged — a known-wrong value must not
+ *     reach file names and the workbook through a click-through review.
+ * The `vendor_unclear` warn quotes the model's answer and forces review
+ * (`extract.forcesManualReview`). A draft vendor keeps no box of its own:
+ * anchoring (provenance.ts) re-finds it on the lines, guarded against logo
+ * fusion's leftover box; a brand's box comes straight from its OCR line.
+ * Pure; Node-tested.
+ */
+export function vetVisionVendor(
+  name: string,
+  ctx: VisionContext = {},
+): { field: Field<string>; flag?: Flag } {
+  const lines = ctx.lines ?? [];
+  const problem = vendorNameProblem(name, lines);
+  if (!problem) return { field: { value: name, confidence: name ? 0.9 : 0 } };
+  const what = problem === "payment" ? "a card network/payment processor" : "the city printed on the receipt";
+  const unclear = (message: string): Flag => ({ code: "vendor_unclear", severity: "warn", message });
+  const brand = brandFieldFromLines(lines);
+  if (brand?.header) return { field: brand.field };
+  if (brand) {
+    return {
+      field: brand.field,
+      flag: unclear(
+        `The AI named ${what} ("${name}"), not the merchant — used "${brand.field.value}", printed further down the receipt; confirm the vendor.`,
+      ),
+    };
+  }
+  const draft = ctx.draft?.vendor;
+  if (draft?.value && draft.confidence >= 0.8 && !vendorNameProblem(draft.value, lines)) {
+    return {
+      field: { value: draft.value, confidence: draft.confidence },
+      flag: unclear(
+        `The AI named ${what} ("${name}"), not the merchant — kept the printed header "${draft.value}"; confirm the vendor.`,
+      ),
+    };
+  }
+  return {
+    field: { value: "", confidence: 0 },
+    flag: unclear(`The AI named ${what} ("${name}"), not the merchant — enter the vendor.`),
+  };
+}
+
 /** Map a model's loose JSON into the app's `Extraction` (same shape the rules
- *  path produces), so the rest of the pipeline is identical for either tier. */
-export function visionToExtraction(raw: Record<string, unknown>): Extraction {
-  const vendorName = String(raw.vendor ?? "").trim().slice(0, 80);
+ *  path produces), so the rest of the pipeline is identical for either tier.
+ *  `ctx` lets the vendor be vetted against the receipt's own OCR read
+ *  (`vetVisionVendor`); a processor prefix ("SQ *JOES COFFEE") is dropped. */
+export function visionToExtraction(raw: Record<string, unknown>, ctx: VisionContext = {}): Extraction {
+  const vetted = vetVisionVendor(stripProcessorPrefix(String(raw.vendor ?? "").trim()).slice(0, 80), ctx);
+  const vendorName = vetted.field.value;
   const amountVal = coerceAmount(raw.amount);
   const taxVal = coerceAmount(raw.tax);
 
@@ -124,7 +195,7 @@ export function visionToExtraction(raw: Record<string, unknown>): Extraction {
     ? { category: modelCat, matched: true }
     : categorize(vendorName);
 
-  const vendor: Field<string> = { value: vendorName, confidence: vendorName ? 0.9 : 0 };
+  const vendor: Field<string> = vetted.field;
   const date: Field<string> = { value: dateVal, confidence: dateVal ? 0.9 : 0 };
   const amount: Field<number> = { value: amountVal, confidence: amountVal > 0 ? 0.92 : 0 };
   const tax: Field<number> = { value: taxVal, confidence: 0.85 };
@@ -136,12 +207,15 @@ export function visionToExtraction(raw: Record<string, unknown>): Extraction {
   const flags: Flag[] = [];
   if (amountVal <= 0) flags.push({ code: "no_amount", severity: "error", message: "No total found." });
   if (!dateVal) flags.push({ code: "no_date", severity: "warn", message: "No date found." });
-  if (!vendorName) flags.push({ code: "no_vendor", severity: "warn", message: "No vendor found." });
+  if (vetted.flag) flags.push(vetted.flag);
+  else if (!vendorName) flags.push({ code: "no_vendor", severity: "warn", message: "No vendor found." });
   if (!cat.matched) flags.push({ code: "uncategorized", severity: "info", message: "Category is a guess." });
   if (amountVal > FLAGS.largeAmount) {
     flags.push({ code: "large_amount", severity: "info", message: "Unusually large amount — verify." });
   }
-  flags.push(...dateFlags(dateVal));
+  // The rules' own plausibility flags (future / stale / more than two years
+  // old — a model misreads a faded year as readily as the OCR does).
+  flags.push(...dateFlags(dateVal ? date : null));
 
   // A vision read with all key fields present is high-confidence; missing fields
   // and warnings pull it down, routing the receipt back into the review sweep.
@@ -159,21 +233,4 @@ export function visionToExtraction(raw: Record<string, unknown>): Extraction {
   }
 
   return { vendor, date, amount, tax, currency, category, confidence, flags };
-}
-
-function dateFlags(iso: string): Flag[] {
-  const flags: Flag[] = [];
-  const d = fromIso(iso);
-  if (!d) return flags;
-  const now = new Date();
-  if (d.getTime() > now.getTime() + 86_400_000) {
-    flags.push({ code: "future_date", severity: "warn", message: "Date is in the future." });
-  } else if (daysBetween(d, now) > FLAGS.staleAfterDays) {
-    flags.push({
-      code: "stale_date",
-      severity: "info",
-      message: `Receipt is over ${FLAGS.staleAfterDays} days old.`,
-    });
-  }
-  return flags;
 }

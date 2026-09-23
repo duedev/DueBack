@@ -1,7 +1,7 @@
 import type { ToolCall, ToolResult, ToolSpec } from "../types.ts";
 import type { Extraction } from "../../extract.ts";
 import { TAX_MAX_RATIO } from "../../extract.ts";
-import { matchVendor, fuzzyMatchVendor } from "../../../config/vendors.ts";
+import { matchVendor, fuzzyMatchVendor, isPaymentBrandName } from "../../../config/vendors.ts";
 import { CATEGORIES, categorize } from "../../../config/categories.ts";
 import { parseAmount } from "../../../util/money.ts";
 import { RECEIPT_JSON_SCHEMA } from "../schema.ts";
@@ -69,7 +69,8 @@ export const AGENT_TOOLS: ToolSpec[] = [
     name: "lookup_vendor",
     description:
       "Look a merchant name up in the app's brand database (hundreds of US chains, OCR-typo tolerant). " +
-      "Returns the canonical brand and its expense category, or a keyword-based category guess.",
+      "Returns the canonical brand and its expense category, or a keyword-based category guess. " +
+      "Says so when the name is a card network or payment processor (never the merchant).",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -143,11 +144,17 @@ export function checkMath(args: Record<string, unknown>): Record<string, unknown
   };
 }
 
-/** The brand database's answer for a name: exact/glyph pass, then the
+/** The brand database's answer for a name: a card network/processor is
+ *  called out as not the merchant; else the exact/glyph pass, then the
  *  bounded fuzzy pass, else the keyword categorizer's guess. */
 export function lookupVendor(name: string): Record<string, unknown> {
   const q = name.trim();
   if (!q) return { error: "Give a merchant name." };
+  // The cheapest place to self-correct: the bold "AMERICAN EXPRESS" on the
+  // tender block is what a model reaches for when the header is worn.
+  if (isPaymentBrandName(q)) {
+    return { known: false, payment_network: true, note: "card network/payment processor — not the merchant" };
+  }
   const hit = matchVendor(q);
   if (hit) return { known: true, brand: hit.name, category: hit.category, match: hit.via };
   const fuzzy = fuzzyMatchVendor(q);

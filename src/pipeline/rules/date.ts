@@ -5,7 +5,7 @@ import { DATE_LABEL_RE } from "./labels.ts";
 import { sliceBBox } from "./text.ts";
 
 // Dates: glyph repair, numeric/month-name/ctime forms, label ranking, and
-// the future/stale flags.
+// the future/stale/too-old flags.
 
 interface DateHit {
   iso: string;
@@ -187,17 +187,27 @@ export function findDate(lines: OcrLine[]): Field<string> | null {
   return field;
 }
 
-export function dateFlags(date: Field<string> | null): Flag[] {
+/** Plausibility flags for a receipt date (the rules read AND the AI assist's,
+ *  vision/schema.ts): in the future; more than two years old — a
+ *  review-forcing `date_suspect`, since an expense that old is almost always
+ *  a misread year, and it replaces the informational stale flag rather than
+ *  stacking on it; or merely stale. `now` is injectable for tests. */
+export function dateFlags(date: Field<string> | null, now: Date = new Date()): Flag[] {
   const flags: Flag[] = [];
   if (!date) return flags;
   const d = fromIso(date.value);
   if (!d) return flags;
-  const now = new Date();
   if (d.getTime() > now.getTime() + 86_400_000) {
     flags.push({
       code: "future_date",
       severity: "warn",
       message: "Date is in the future.",
+    });
+  } else if (daysBetween(d, now) > FLAGS.suspectAfterDays) {
+    flags.push({
+      code: "date_suspect",
+      severity: "warn",
+      message: `Dated ${date.value} — more than two years old; check the year.`,
     });
   } else if (daysBetween(d, now) > FLAGS.staleAfterDays) {
     flags.push({

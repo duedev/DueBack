@@ -1,4 +1,14 @@
-import { GENERIC_ALIASES, matchVendor, normalizeGlyphs, wordBoundaryMatcher, type VendorMatch } from "../../config/vendors.ts";
+import {
+  FUZZY_HINT_RATIO,
+  fuzzyMatchVendorLines,
+  GENERIC_ALIASES,
+  isPaymentBrandName,
+  matchVendor,
+  normalizeGlyphs,
+  stripProcessorPrefix,
+  wordBoundaryMatcher,
+  type VendorMatch,
+} from "../../config/vendors.ts";
 import type { BBox, Field, OcrLine } from "../../types.ts";
 import { parseDatesInLine } from "./date.ts";
 import { ENERGY_QTY_RE, FUEL_RATE_RE, FUEL_UNIT_RE, QTY_AFTER_RE, QTY_BEFORE_RE } from "./fuel.ts";
@@ -7,7 +17,9 @@ import { MONEY_RE } from "./money.ts";
 import { sliceBBox } from "./text.ts";
 
 // The merchant: the vendor-line heuristic, brand-scan scoping for generic
-// aliases, and locating an alias on the OCR lines.
+// aliases, locating an alias on the OCR lines, the site-ID brand hint, and
+// vetting a vendor that came from elsewhere (the AI assist's answer, a drawn
+// review box) against what the receipt actually prints.
 
 // "blv\w{0,2}" instead of "blvd": OCR regularly misreads the suffix ("Blvg",
 // "Blvo") and the address line then won a vendor slot.
@@ -20,15 +32,24 @@ const GREETING_RE =
 // state+zip guard) — "Anaheim CA" is an address, not a merchant. But merchant
 // names also end in state-shaped words ("SMITH SUPPLY CO", "GRILL IN LA"), so
 // only a comma'd form ("Santa Fe, NM") or a bare two-word "City ST" rejects.
+// OCR and e-receipts don't keep the state's case ("Anaheim, ca" on every
+// Chevron-app receipt, "Irvine, cA 92618"): the comma'd and ZIP forms match
+// any case; the bare form takes all-caps or all-lower only, because a
+// title-case tail is a company suffix ("Acme Co"), not a state.
 const US_STATES =
   "AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY";
-const CITY_STATE_RE = new RegExp(`,\\s*(?:${US_STATES})\\.?\\s*$`);
+// "[Cc][Aa]": a state code in any case, for the shapes that already prove an address.
+const US_STATES_ANYCASE = US_STATES.split("|")
+  .map((s) => [...s].map((c) => `[${c}${c.toLowerCase()}]`).join(""))
+  .join("|");
+const CITY_STATE_RE = new RegExp(`,\\s*(?:${US_STATES_ANYCASE})\\.?\\s*$`);
 const CITY_STATE_BARE_RE = new RegExp(
-  `^\\s*[A-Z][A-Za-z.'-]+\\s+(?:${US_STATES})\\.?\\s*$`,
+  `^\\s*[A-Z][A-Za-z.'-]+\\s+(?:${US_STATES}|${US_STATES.toLowerCase()})\\.?\\s*$`,
 );
 const PHONE_RE = /(\+?\d[\d\s().-]{6,}\d)/;
-// "Springfield, IL 62704" — a US state abbreviation followed by a ZIP code.
-const STATE_ZIP_RE = /\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/;
+// "Springfield, IL 62704" — a US state abbreviation followed by a ZIP code
+// (any two capitals, as before, or a real state code in any case).
+const STATE_ZIP_RE = new RegExp(`\\b(?:[A-Z]{2}|${US_STATES_ANYCASE})\\s+\\d{5}(?:-\\d{4})?\\b`);
 // "123 Main St", "1700 W 7th Ave" — a leading street number plus a street word.
 const STREET_NUMBER_RE = /^\s*\d{1,6}\s+\w/;
 // A short line ending in a state abbreviation ("SANTA ANA CA") — deliberately
@@ -52,6 +73,9 @@ const TIMESTAMP_LINE_RE =
 // A fuel-grade line with a number ("SUPER 93 OCTANE", "REGULAR 87") is pump
 // data, and out-scored "JOE'S GAS" for the vendor slot.
 const FUEL_GRADE_RE = /\b(?:super|regular|premium|mid-?grade|unleaded|diesel|octane)\b/i;
+// A site/store ID line ("SITE ID: chevron0020-981", "Store Number: 0442",
+// "MERCHANT #: 8812") — names the site, never the merchant.
+const ID_LINE_RE = /^\s*(?:site|store|station|location|merchant)\s*(?:id\b|#|no\b|num(?:ber)?\b)/i;
 
 function looksLikeVendorLine(line: OcrLine, prev?: OcrLine, next?: OcrLine): boolean {
   const t = line.text.trim();
@@ -91,13 +115,19 @@ function looksLikeVendorLine(line: OcrLine, prev?: OcrLine, next?: OcrLine): boo
   if (/^(store|reg(?:ister)?|lane|till|terminal|cashier|clerk|trans(?:action)?)\b[\s#:.]*\d/i.test(t)) {
     return false;
   }
+  // An ID line names the site, never the merchant — a brand glued into it is
+  // siteIdBrand's job.
+  if (ID_LINE_RE.test(t)) return false;
   // Loyalty/account boilerplate ("REWARDS MEMBER #1234") is longer than the
   // real name above it and out-scored "JOES DINER".
   if (/^(?:rewards?|member(?:ship)?|loyalty|customer|acct|account)\b[\s#:.\w]*\d/i.test(t)) {
     return false;
   }
-  // Tender, staff and social-footer lines are never the merchant.
+  // Tender, staff and social-footer lines are never the merchant — nor is a
+  // line that IS a card network/processor ("AM Express", "Powered by Toast",
+  // "MASTERCRD XXXX1234").
   if (VENDOR_TENDER_RE.test(t) || STAFF_LINE_RE.test(t) || SOCIAL_FOOTER_RE.test(t)) return false;
+  if (isPaymentBrandName(t)) return false;
   if (TIMESTAMP_LINE_RE.test(t)) return false;
   // Pump/quantity data ("GALLONS: 6.927", "PRICE/GAL 4.599", "PUMP# 01")
   // dodges the money-line reject (3-decimal quantities aren't strict money)
@@ -227,6 +257,181 @@ export function findAliasOnLines(
   return undefined;
 }
 
+/** Locate a vendor VALUE (a review correction, a model's answer) on the OCR
+ *  lines — `locateValue`'s vendor branch, here so the box reader below can
+ *  ask "is the current value what this box shows?" without a cycle. */
+export function locateVendorOnLines(
+  lines: OcrLine[],
+  value: string,
+): { bbox: BBox; lineText: string } | null {
+  const needle = value.trim().toLowerCase();
+  const first = needle.split(/\s+/)[0] ?? "";
+  // Full name first; then the leading word — corrections often use the
+  // canonical brand form the receipt doesn't print in full. Never a
+  // stopword ("The" would land on "OTHER STORE"), and word-bounded like
+  // brand matching — a bare substring put "Ace" on "REPLACE" and baked
+  // that box onto the image and into the training log.
+  const probes = [
+    needle,
+    ...(first !== needle && !VENDOR_STOPWORD_RE.test(first) ? [first] : []),
+  ].filter((p) => p.length >= 3);
+  for (const probe of probes) {
+    const hit = findAliasOnLines(lines, probe);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// ── Vendor evidence beyond the line heuristic ────────────────────────────────
+
+// A brand glued to digits inside a site/store ID ("SITE ID: chevron0020-981"
+// on every Chevron-app e-receipt): the word-bounded matcher can't see it, and
+// on a slip whose only merchant-shaped line was the city ("Anaheim, ca") it is
+// the one brand printed. Label-scoped (a SKU or card number never counts),
+// and the token must BE a distinctive alias — a generic word ("shell",
+// "pilot") or a 2–3 letter code glued into an ID proves nothing.
+const SITE_ID_RE =
+  /\b(?:site|store|station|location|merchant)\s*(?:id|#|no\.?|num(?:ber)?)\s*[:#.]?\s*([a-z][a-z'&.-]{2,}?)[-_]?\d/i;
+
+export function siteIdBrand(lines: OcrLine[]): { match: VendorMatch; bbox: BBox } | null {
+  for (const line of lines) {
+    const m = SITE_ID_RE.exec(line.text);
+    if (!m) continue;
+    const token = m[1]!.toLowerCase();
+    const hit = matchVendor(token);
+    if (!hit || hit.via !== "exact" || hit.alias !== token) continue;
+    if (GENERIC_ALIASES.has(hit.alias) || hit.alias.length < 4) continue;
+    // The token is the last letter run before the ID's digits.
+    const start = m.index + m[0].toLowerCase().lastIndexOf(token);
+    return { match: hit, bbox: sliceBBox(line, start, start + token.length) ?? line.bbox };
+  }
+  return null;
+}
+
+/** The city (group 1) and state (group 2) of a printed address-block line:
+ *  "BANNING , CA", "Anaheim Hills, CA", "Irvine, cA 92618", "ANAHEIM CA". */
+const CITY_LINE_RE = /^\s*([A-Za-z][A-Za-z .'-]*?)\s*,?\s+([A-Za-z]{2})\.?(?:\s+\d{5}(?:-\d{4})?)?\s*$/;
+const squashLetters = (s: string): string => s.toLowerCase().replace(/[^a-z]+/g, "");
+
+/**
+ * Why a vendor NAME from outside the line heuristic (the AI assist's answer)
+ * can't be the merchant — judged on evidence, not word shape:
+ *   • "payment": it IS a card network/processor/wallet (`isPaymentBrandName`);
+ *   • "city": it has the address shape itself ("Anaheim, ca", "Irvine, CA
+ *     92618"), or it echoes the city (or city + state) of an address line
+ *     this receipt prints — a bare "BANNING" when "BANNING , CA" is printed.
+ * Never the bare "WORD ST" form on its own: "ACME CO", "PHO CA" and "JACK
+ * IN" are merchants, and blanking a correct answer is worse than the rules'
+ * skipping one header line. Null when nothing is wrong with it.
+ */
+export function vendorNameProblem(
+  name: string,
+  lines: readonly { text: string }[] = [],
+): "payment" | "city" | null {
+  const t = name.trim();
+  if (!t) return null;
+  if (isPaymentBrandName(t)) return "payment";
+  if ((t.split(/\s+/).length <= 4 && CITY_STATE_RE.test(t)) || STATE_ZIP_RE.test(t)) return "city";
+  const key = squashLetters(t);
+  if (key.length < 3) return null;
+  for (const l of lines) {
+    const text = l.text;
+    if (!(CITY_STATE_RE.test(text) || STATE_ZIP_RE.test(text) || CITY_STATE_BARE_RE.test(text))) continue;
+    const m = CITY_LINE_RE.exec(text);
+    if (!m) continue;
+    const city = squashLetters(m[1]!);
+    if (city && (key === city || key === city + m[2]!.toLowerCase())) return "city";
+  }
+  return null;
+}
+
+/**
+ * The brand the OCR lines themselves print, as a vendor field — the scoped
+ * brand scan, then the site-ID hint. `header` says whether it is safe to
+ * adopt silently: the alias sits on one of the top 8 lines, or the site ID
+ * names it. A distinctive alias only further down may be a footer ad ("fill
+ * up at Chevron with a Techron Advantage card") — usable, but only with a
+ * review.
+ */
+export function brandFieldFromLines(
+  lines: OcrLine[],
+): { field: Field<string>; header: boolean } | null {
+  const known = matchKnownVendor(lines, lines.map((l) => l.text).join("\n"));
+  const id = siteIdBrand(lines);
+  if (known) {
+    const top = findAliasOnLines(lines.slice(0, 8), known.alias);
+    // "Shopping Chevron" at the foot of a Chevron-app slip is vouched for by
+    // its "SITE ID: chevron0020-073" — outline the ID, the higher evidence.
+    const vouched = id?.match.name === known.name ? id.bbox : undefined;
+    const bbox = top?.bbox ?? vouched ?? lineBBoxForAlias(lines, known.alias);
+    return {
+      field: { value: known.name, confidence: 0.85, ...(bbox ? { bbox: { ...bbox } } : {}) },
+      header: !!top || !!vouched,
+    };
+  }
+  return id
+    ? { field: { value: id.match.name, confidence: 0.85, bbox: { ...id.bbox } }, header: true }
+    : null;
+}
+
+/** A drawn vendor box autofills from a printed line only when OCR read that
+ *  line at least this confidently (0..100 — both engines' line scale). The
+ *  Costco logo line "——— WEFT SOLE" read at 9 and replaced a correct
+ *  "Costco Wholesale"; clean print reads 80–97. */
+export const BOX_VENDOR_MIN_CONFIDENCE = 60;
+
+/**
+ * The vendor a HAND-DRAWN box reads (locate.readValueInBox → the review
+ * modal's autofill). A box is a question — "what is printed here?" — not an
+ * order to rename, so:
+ *   0. a box over the value already in the field (`current`) confirms it:
+ *      null, the field is kept as typed — no rename, no correction logged;
+ *   1. else the printed merchant line: one the vendor heuristic accepts (no
+ *      address, city, ID, tender or card-network line) that OCR read at
+ *      ≥ BOX_VENDOR_MIN_CONFIDENCE, AS PRINTED ("MOBIL MART", "Chevron
+ *      Stations Inc" — the owner's own correction, never reverted to the
+ *      canonical brand). A line naming a known brand outranks a plain one
+ *      (COSTCO over the WHOLESALE under it), then most letters. Only a
+ *      glyph/fuzzy read is renamed to its brand ("M0BIL" → Mobil);
+ *   2. else, with no clean line, the brand the box prints (scoped scan, the
+ *      site ID, the fuzzy header sweep at FUZZY_HINT_RATIO);
+ *   3. else null — the box still stands; a garbled read never replaces the
+ *      field.
+ */
+export function vendorFromBox(inBox: OcrLine[], current?: string): string | null {
+  if (current?.trim() && locateVendorOnLines(inBox, current)) return null;
+  let best: { name: string; brand: boolean; letters: number } | null = null;
+  for (let i = 0; i < inBox.length; i++) {
+    const l = inBox[i]!;
+    if (!(l.confidence >= BOX_VENDOR_MIN_CONFIDENCE)) continue;
+    if (!looksLikeVendorLine(l, inBox[i - 1], inBox[i + 1])) continue;
+    let name = cleanVendorName(l.text);
+    if (!name) continue;
+    let brand = false;
+    const hit = matchVendor(l.text);
+    if (hit) {
+      // A generic word ("shell", "target") ranks like any printed line.
+      brand = !GENERIC_ALIASES.has(hit.alias);
+      if (brand && hit.via !== "exact") name = hit.name;
+    } else {
+      const fuzzy = fuzzyMatchVendorLines(fuzzyHeaderLines([l]));
+      if (fuzzy && fuzzy.ratio >= FUZZY_HINT_RATIO) {
+        brand = true;
+        name = fuzzy.name;
+      }
+    }
+    const letters = (name.match(/[A-Za-z]/g) ?? []).length;
+    if (!best || (brand && !best.brand) || (brand === best.brand && letters > best.letters)) {
+      best = { name, brand, letters };
+    }
+  }
+  if (best) return best.name;
+  const printed = brandFieldFromLines(inBox);
+  if (printed) return printed.field.value;
+  const fuzzy = fuzzyMatchVendorLines(fuzzyHeaderLines(inBox));
+  return fuzzy && fuzzy.ratio >= FUZZY_HINT_RATIO ? fuzzy.name : null;
+}
+
 export function findVendor(lines: OcrLine[]): Field<string> | null {
   const top = lines.slice(0, 6);
   // Best candidate: among the top lines, the earliest qualifying line, biased
@@ -254,7 +459,8 @@ export function findVendor(lines: OcrLine[]): Field<string> | null {
 }
 
 function cleanVendorName(raw: string): string {
-  return raw
+  // "SQ *JOES COFFEE": the processor's descriptor prefix is not the name.
+  return stripProcessorPrefix(raw)
     // "PRICE CHOPPER #123", "STORE #0442", "STR # 12" — a trailing hash-number
     // is the store/register id, never part of the name (it made every branch
     // a different vendor in the Summary). Bare digits ("STUDIO 54") are left

@@ -17,7 +17,7 @@ import {
 import { visionToExtraction } from "../src/pipeline/vision/schema.ts";
 import { defaultVisionConfig, mergeVisionConfig } from "../src/pipeline/vision/config.ts";
 import { resolveEndpoint } from "../src/pipeline/vision/endpoint.ts";
-import { forcesManualReview, type Extraction } from "../src/pipeline/extract.ts";
+import { forcesManualReview, parseReceipt, type Extraction } from "../src/pipeline/extract.ts";
 import type { AssistProvenance, BBox, OcrLine } from "../src/types.ts";
 
 // The AI assist's answer is values only: vision/provenance.ts anchors them
@@ -201,7 +201,10 @@ test("a box is never invented or transferred to a different value", () => {
 });
 
 test("a wrong-but-printed vendor gets an honest box on the line it was read from", () => {
-  const out = anchorAssistBoxes(ai("AMERICAN EXPRESS", "", 113.61), draft({ vendor: "Chevron", vendorBox: D }), L);
+  // Anchoring is value-agnostic. (visionToExtraction itself now blanks a
+  // card network — vetVisionVendor — so the read is built directly.)
+  const wrong: Extraction = { ...ai("", "", 113.61), vendor: { value: "AMERICAN EXPRESS", confidence: 0.9 } };
+  const out = anchorAssistBoxes(wrong, draft({ vendor: "Chevron", vendorBox: D }), L);
   assert.ok(out.vendor.bbox);
   assert.ok(Math.abs(out.vendor.bbox!.y - 5 / 6) < 1e-9);
 });
@@ -320,7 +323,10 @@ test("settling anchors, puts corroboration flags first, and never throws away a 
   assert.equal(settled.flags[0]!.code, "total_suspect", "the review reason leads (the card shows flags[0])");
   assert.equal(settled.amount.value, 107.38, "values never change — the human decides");
   assert.equal(settled.amount.bbox, undefined);
-  assert.ok(settled.vendor.bbox, "the printed card network is boxed, visibly wrong");
+  // The card network was blanked before anchoring (vetVisionVendor), and a
+  // blank vendor never gets a box.
+  assert.equal(settled.vendor.value, "");
+  assert.equal(settled.vendor.bbox, undefined);
 
   // A poisoned draft makes both steps throw: the bare answer survives.
   const poisoned = new Proxy({} as Extraction, {
@@ -336,6 +342,77 @@ test("settling anchors, puts corroboration flags first, and never throws away a 
   } finally {
     console.warn = warn;
   }
+});
+
+// ── The whole chain: vet, then anchor and corroborate ────────────────────────
+
+// Every real OCR line of fuel_03-13-26_american_express, as the pipeline
+// holds them (runVisionAssist gets the same lines and the rules draft).
+const AMEX_FULL = real([
+  ["5. Hg Springs hee", 51.6, 0.2741, 0.1312, 0.4332, 0.0238],
+  ["Baring op gpg", 23.5, 0.3608, 0.1523, 0.2543, 0.0192],
+  ["308 g, HIGHLAND SPRI", 68.6, 0.1662, 0.1988, 0.6506, 0.0277],
+  ["SOBHy YOUSEF", 72.8, 0.169, 0.2177, 0.3963, 0.0231],
+  ["KRARRK NHN 39", 0, 0.1705, 0.2365, 0.4233, 0.0238],
+  ["BANNING , CA", 81.2, 0.1733, 0.255, 0.527, 0.0262],
+  ["9222@", 24.1, 0.1747, 0.2738, 0.1676, 0.0146],
+  ["83/13/2028 78883184", 72.3, 0.1776, 0.2927, 0.6236, 0.0254],
+  ["05:31:99 AM", 72.6, 0.179, 0.3112, 0.3679, 0.0196],
+  ["KEXRRRURR NY 285 7", 24.2, 0.1847, 0.3485, 0.4901, 0.0188],
+  ["AM Express", 88.1, 0.1889, 0.3669, 0.3239, 0.0173],
+  ["INVOICE 879212", 86.7, 0.1932, 0.3858, 0.4517, 0.0169],
+  ["AUTH 8z925@", 61.7, 0.1875, 0.4042, 0.3551, 0.0146],
+  ["PUMP# 14", 74.6, 0.1861, 0.4412, 0.7784, 0.0212],
+  ["Regular 18.842G", 71.8, 0.1491, 0.4673, 0.7045, 0.0281],
+  ["PRICE/GAL . $5.899", 47.1, 0.1747, 0.4935, 0.6804, 0.0208],
+  ["= FUEL TOTAL $ 187.38", 64.4, 0.1108, 0.5277, 0.7457, 0.0215],
+  ["TS TOTAL S & pr", 0, 0.0227, 0.5742, 0.8224, 0.0254],
+  ["CREDIT $ 187.38", 79.6, 0.1634, 0.6173, 0.6761, 0.0169],
+  ["Dustostr-activated Pacchse Capture", 32.9, 0.1619, 0.6588, 0.5909, 0.0281],
+  ["Site #: 69%88RRR0TS4Y3 :", 9.3, 0.1619, 0.6858, 0.7955, 0.0169],
+  ["Shaft Number : :", 62.1, 0.1605, 0.7038, 0.4773, 0.0208],
+  ["Sequence Number 57823 Gg", 66.7, 0.1605, 0.7219, 0.5256, 0.0196],
+  ["Contactless N", 60.6, 0.1591, 0.7396, 0.5781, 0.0181],
+  ["AMERICAN EXPRESS", 67.2, 0.1605, 0.7585, 0.2699, 0.0115],
+  ["Kode: Issuer", 55.7, 0.1577, 0.7769, 0.2031, 0.0112],
+  ["AID: ABEREABA256188A1", 29.9, 0.1591, 0.795, 0.3466, 0.0108],
+  ["TVR: 6688682860", 59.4, 0.1577, 0.8131, 0.2543, 0.0108],
+]);
+
+test("the whole assist chain on the real AMERICAN EXPRESS slip: vetted blank, no box, review forced", () => {
+  const ex = parseReceipt({
+    text: AMEX_FULL.map((l) => l.text).join("\n"),
+    confidence: 60,
+    lines: AMEX_FULL,
+    words: [],
+  });
+  const fields = { vendor: "AMERICAN EXPRESS", date: "2026-03-13", amount: 107.38, tax: 0, category: "Fuel" };
+  // The order runVisionAssist uses: visionToExtraction vets the vendor with
+  // the draft + lines, and only then does settle anchor and corroborate.
+  const settled = settleAssistExtraction(visionToExtraction(fields, { draft: ex, lines: AMEX_FULL }), ex, AMEX_FULL);
+  assert.equal(settled.vendor.value, "", "the card network never survives as the vendor");
+  assert.equal(settled.vendor.bbox, undefined, "a blank vendor is never outlined");
+  assert.deepEqual(
+    settled.flags.filter((f) => f.severity === "warn").map((f) => f.code),
+    ["total_suspect", "vendor_unclear"],
+    JSON.stringify(settled.flags),
+  );
+  assert.match(settled.flags.find((f) => f.code === "vendor_unclear")!.message, /"AMERICAN EXPRESS"/);
+  assert.equal(forcesManualReview(settled.flags), true);
+  assert.equal(settled.amount.value, 107.38, "values are the human's call");
+  assert.equal(settled.category.value, "Fuel");
+});
+
+test("a corroboration flag supersedes the answer's own flag of the same code (one date_suspect, not two)", () => {
+  // Real Lowe's: the model read 2024-03-26 — over two years old AND not what
+  // the slip prints (03/24/26). The corroboration message says both.
+  const answer = visionToExtraction({ vendor: "LOWES", date: "2024-03-26", amount: 329, tax: 0, category: "Materials" });
+  assert.ok(answer.flags.some((f) => f.code === "date_suspect"), "the age check fired");
+  const settled = settleAssistExtraction(answer, draft({ date: "2026-03-24", amount: 329 }), LOWES);
+  const dates = settled.flags.filter((f) => f.code === "date_suspect");
+  assert.equal(dates.length, 1, JSON.stringify(settled.flags));
+  assert.match(dates[0]!.message, /the receipt prints 2026-03-24/);
+  assert.equal(settled.flags[0]!.code, "date_suspect");
 });
 
 // ── Provenance ───────────────────────────────────────────────────────────────

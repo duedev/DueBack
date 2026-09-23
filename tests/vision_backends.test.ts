@@ -414,6 +414,13 @@ test("lookup_vendor answers from the brand database", () => {
   const unknown = lookupVendor("Zzyzx Widgets");
   assert.equal(unknown.known, false);
   assert.ok("error" in lookupVendor(""));
+  // The card network on the tender block is called out, not looked up.
+  assert.deepEqual(lookupVendor("AMERICAN EXPRESS"), {
+    known: false,
+    payment_network: true,
+    note: "card network/payment processor — not the merchant",
+  });
+  assert.equal(lookupVendor("Panda Express").payment_network, undefined);
 });
 
 test("an unknown tool is an error RESULT, never a thrown run", () => {

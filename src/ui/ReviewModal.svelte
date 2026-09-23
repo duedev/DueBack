@@ -509,7 +509,7 @@
     // The box also ANSWERS: read the stored OCR geometry inside it and
     // autofill the field, so drawing on the right line fixes the value too.
     const lines = ($state.snapshot(current.ocrLines ?? []) as OcrLine[]) ?? [];
-    const read = readValueInBox(lines, field, box);
+    const read = readValueInBox(lines, field, box, field === "vendor" ? vendor : undefined);
     if (read !== null && read !== "") {
       if (field === "vendor") vendor = String(read);
       else if (field === "date") date = String(read);

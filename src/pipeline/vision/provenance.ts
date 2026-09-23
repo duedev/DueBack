@@ -234,7 +234,11 @@ export function settleAssistExtraction(ai: Extraction, draft: Extraction, lines:
   }
   try {
     const flags = corroborate(out, draft, lines);
-    if (flags.length) out = { ...out, flags: [...flags, ...out.flags] };
+    // A corroboration flag supersedes the answer's own flag of the same code:
+    // "the AI read 2024-03-26, but the receipt prints 2026-03-24" already
+    // says what the age check's "more than two years old" would (dateFlags).
+    const codes = new Set(flags.map((f) => f.code));
+    if (flags.length) out = { ...out, flags: [...flags, ...out.flags.filter((f) => !codes.has(f.code))] };
   } catch (err) {
     console.warn("[vision] couldn't corroborate the AI read.", err);
   }

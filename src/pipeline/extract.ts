@@ -1,7 +1,7 @@
 import { categorize } from "../config/categories.ts";
 import { CONFIDENCE, CURRENCY_DEFAULT, FLAGS } from "../config/constants.ts";
 import { FUZZY_HINT_RATIO, fuzzyMatchVendor, fuzzyMatchVendorLines, type FuzzyVendorMatch } from "../config/vendors.ts";
-import type { Category, Field, Flag, OcrLine, OcrResult } from "../types.ts";
+import type { BBox, Category, Field, Flag, OcrLine, OcrResult } from "../types.ts";
 import { findAmount } from "./rules/amount.ts";
 import { dateFlags, findDate } from "./rules/date.ts";
 import { applyFootingMath, reconcile } from "./rules/footing.ts";
@@ -9,7 +9,7 @@ import { applyPumpMath } from "./rules/fuel.ts";
 import { DISCOUNT_RE, REFUND_ECHO_RE, REFUND_LABEL_RE, TIP_RE } from "./rules/labels.ts";
 import { moneyHitsFromLine } from "./rules/money.ts";
 import { findTax } from "./rules/tax.ts";
-import { findVendor, fuzzyHeaderLines, lineBBoxForAlias, matchKnownVendor } from "./rules/vendor.ts";
+import { findVendor, fuzzyHeaderLines, lineBBoxForAlias, matchKnownVendor, siteIdBrand } from "./rules/vendor.ts";
 
 // Extract structured fields from OCR text with rules/heuristics (§5 step 3).
 // Deterministic, free, portable. The goal isn't perfection — it's "right often
@@ -55,8 +55,9 @@ function overallConfidence(
 /** Flags that force a human review even when extraction "succeeded".
  *  Suspicious totals and garbled vendors are accepted as one-offs the rules
  *  can't fix — but they must never ship to a report without a human look.
- *  `date_suspect` is the AI tier's date the OCR can't corroborate
- *  (vision/provenance.ts `corroborate`). */
+ *  `date_suspect` is a date more than two years old (`rules/date.ts
+ *  dateFlags` — a misread year, "2012-12-12") or the AI tier's date the OCR
+ *  can't corroborate (vision/provenance.ts `corroborate`). */
 export function forcesManualReview(flags: Flag[]): boolean {
   return flags.some(
     (f) =>
@@ -105,13 +106,25 @@ export function parseReceipt(ocr: OcrResult): Extraction {
   // Vendor: prefer a recognized brand (names the merchant, not the store address —
   // the lesson ported from the original app's vendor DB). Fall back to the
   // address-skipping line heuristic when no known brand is present.
-  const known = matchKnownVendor(lines, ocr.text);
+  let known = matchKnownVendor(lines, ocr.text);
   let vendor = findVendor(lines);
   const ocrVendor = vendor;
+  // No brand and no merchant-shaped line (the Chevron app prints only the
+  // address block — "Anaheim, ca" used to win): a distinctive brand glued
+  // into the SITE ID names it. Never over a printed merchant line — "G&M OIL
+  // #185" operating a Chevron-branded pump stays the vendor of record.
+  let knownBox: BBox | undefined;
+  if (!known && !vendor) {
+    const id = siteIdBrand(lines);
+    if (id) {
+      known = id.match;
+      knownBox = id.bbox;
+    }
+  }
   let fuzzy: FuzzyVendorMatch | null = null;
   if (known) {
     const field: Field<string> = { value: known.name, confidence: 0.92 };
-    const bbox = lineBBoxForAlias(lines, known.alias);
+    const bbox = knownBox ?? lineBBoxForAlias(lines, known.alias);
     if (bbox) field.bbox = bbox;
     vendor = field;
   } else {
@@ -274,4 +287,11 @@ export function parseReceipt(ocr: OcrResult): Extraction {
 export { TAX_MAX_RATIO } from "./rules/labels.ts";
 export { locateValue, readValueInBox } from "./rules/locate.ts";
 export { looksLikeMoney } from "./rules/money.ts";
-export { findAliasOnLines, matchKnownVendor, VENDOR_STOPWORD_RE } from "./rules/vendor.ts";
+export { dateFlags } from "./rules/date.ts";
+export {
+  brandFieldFromLines,
+  findAliasOnLines,
+  matchKnownVendor,
+  VENDOR_STOPWORD_RE,
+  vendorNameProblem,
+} from "./rules/vendor.ts";

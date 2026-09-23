@@ -3,7 +3,7 @@ import { parseAmount } from "../../util/money.ts";
 import { findDate, parseDatesInLine } from "./date.ts";
 import { DATE_LABEL_RE, lenientTotalLine, PAYMENT_RE } from "./labels.ts";
 import { MONEY_SRC, moneyHitsFromLine } from "./money.ts";
-import { findAliasOnLines, VENDOR_STOPWORD_RE } from "./vendor.ts";
+import { locateVendorOnLines, vendorFromBox } from "./vendor.ts";
 
 // ── Post-hoc field location ──────────────────────────────────────────────────
 // The digital "go back and find it": after a human corrects a field in
@@ -34,24 +34,9 @@ export function locateValue(
     return best ? { bbox: best.bbox, lineText: best.lineText } : null;
   }
 
-  if (kind === "vendor") {
-    const needle = String(value).trim().toLowerCase();
-    const first = needle.split(/\s+/)[0] ?? "";
-    // Full name first; then the leading word — corrections often use the
-    // canonical brand form the receipt doesn't print in full. Never a
-    // stopword ("The" would land on "OTHER STORE"), and word-bounded like
-    // brand matching — a bare substring put "Ace" on "REPLACE" and baked
-    // that box onto the image and into the training log.
-    const probes = [
-      needle,
-      ...(first !== needle && !VENDOR_STOPWORD_RE.test(first) ? [first] : []),
-    ].filter((p) => p.length >= 3);
-    for (const probe of probes) {
-      const hit = findAliasOnLines(lines, probe);
-      if (hit) return hit;
-    }
-    return null;
-  }
+  // Vendor: full name, then the leading non-stopword, word-bounded
+  // (rules/vendor.ts — shared with the drawn-box reader).
+  if (kind === "vendor") return locateVendorOnLines(lines, String(value));
 
   // date: any line whose parsed dates (numeric or month-name forms, with
   // glyph repair) include the ISO value — the same machinery extraction uses.
@@ -70,11 +55,14 @@ export function locateValue(
  *  reverse of `locateValue`: the human points at the receipt, the stored
  *  geometry supplies the text. A line counts as "inside" when its vertical
  *  center falls in the box and it overlaps horizontally. Returns null when
- *  nothing readable sits there (the box still stands; only autofill skips). */
+ *  nothing readable sits there (the box still stands; only autofill skips).
+ *  `current` is the field's value as the form holds it: a vendor box drawn
+ *  over it confirms it rather than renaming it (`vendorFromBox`). */
 export function readValueInBox(
   lines: OcrLine[],
   kind: "amount" | "vendor" | "date",
   box: BBox,
+  current?: string,
 ): string | number | null {
   const inBox = lines.filter((l) => {
     const b = l.bbox;
@@ -110,8 +98,9 @@ export function readValueInBox(
     }
     return best;
   }
-  // Vendor: the longest line in the box (short fragments are usually noise).
-  const texts = inBox.map((l) => l.text.replace(/\s{2,}/g, " ").trim()).filter(Boolean);
-  if (texts.length === 0) return null;
-  return texts.sort((a, b) => b.length - a.length)[0]!.slice(0, 60);
+  // Vendor: the printed merchant line, or the brand the box prints — never
+  // a garbled logo read over the value already in the field (it used to be
+  // the longest line: "——— WEFT SOLE", read at 9, replaced "Costco
+  // Wholesale").
+  return vendorFromBox(inBox, current);
 }

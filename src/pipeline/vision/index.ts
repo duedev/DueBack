@@ -96,12 +96,14 @@ export async function runVisionAssist(
   try {
     const result = await runPlan(plan, { type: "image", ...(await blobToBase64(image)) }, { draft: ex, lines });
     // `ex` is the rules draft (after the rescue swap and logo fusion), read
-    // from the same OCR lines, so its boxes share their frame. Any vetting
-    // of the model's values belongs BEFORE the settle step, which anchors
-    // boxes on the values as they stand. Both steps below are total — the
-    // answer is already billed and must never be discarded by bookkeeping.
+    // from the same OCR lines, so its boxes share their frame. The vendor is
+    // vetted FIRST (visionToExtraction: a card network or the city falls
+    // back to the printed brand, a clean rules header, or blank), and only
+    // then does the settle step anchor boxes on the values as they stand.
+    // Both steps are total — the answer is already billed and must never be
+    // discarded by bookkeeping.
     return {
-      extraction: settleAssistExtraction(visionToExtraction(result.fields), ex, lines),
+      extraction: settleAssistExtraction(visionToExtraction(result.fields, { draft: ex, lines }), ex, lines),
       costUsd: result.costUsd,
       provenance: assistProvenance({
         endpoint: plan.endpoint,
