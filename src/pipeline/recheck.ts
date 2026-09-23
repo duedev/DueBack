@@ -92,11 +92,12 @@ function stored(r: Receipt): Extraction {
 }
 
 /** The outlines a legacy AI read would have been given at read time, or
- *  null when there is nothing to do. Approved rows are healed too: a box is
- *  geometry, not a value — the approval and every value stay as they are —
- *  and an approved receipt still exports its annotated copy. */
+ *  null when there is nothing to do. An APPROVED receipt is left alone like
+ *  everywhere else in the re-check: the human signed it off as it stands,
+ *  and a new annotated copy would still change what that receipt exports
+ *  (and bump its updatedAt into a sync push). */
 export function planBoxFix(r: Receipt): BoxFix | null {
-  if (!isLegacyAiRead(r) || !settled(r) || !r.cleanedKey) return null;
+  if (r.approved || !isLegacyAiRead(r) || !settled(r) || !r.cleanedKey) return null;
   // The same OCR input the image-hash cache lends an AI row: text rebuilt
   // from the lines (ocrText is the MODEL's answer on a legacy row), at the
   // lines' mean confidence.
@@ -248,9 +249,13 @@ export interface RecheckResult {
   boxes: number;
   /** Duplicate flags added. */
   duplicates: number;
-  /** Fixes that couldn't land: the row changed after planning (a save, a
-   *  read, a sync), or its cleaned image is missing / wouldn't bake. */
+  /** Fixes that lost the race: the row changed after planning (a save, a
+   *  read, a sync). Another re-check can land them. */
   skipped: number;
+  /** Outlines that can't be drawn: the cleaned image is missing (a synced
+   *  row whose image never downloaded) or wouldn't bake. Re-running can't
+   *  help, so the toast never says "try again" about these. */
+  unfixable: number;
 }
 
 /**
@@ -270,7 +275,7 @@ export async function runBatchRecheck(batchId: string, io: RecheckIO): Promise<R
   const dupFor = new Map(plan.duplicates.map((f) => [f.id, f]));
   const ids = [...new Set([...plan.boxes.map((f) => f.id), ...plan.duplicates.map((f) => f.id)])];
 
-  const result: RecheckResult = { boxes: 0, duplicates: 0, skipped: 0 };
+  const result: RecheckResult = { boxes: 0, duplicates: 0, skipped: 0, unfixable: 0 };
   for (const id of ids) {
     const row = byId.get(id)!;
     let box = boxFor.get(id);
@@ -286,7 +291,7 @@ export async function runBatchRecheck(batchId: string, io: RecheckIO): Promise<R
         console.warn("[recheck] couldn't bake the highlighted copy for", id, err);
       }
       if (!newKey) {
-        result.skipped++;
+        result.unfixable++;
         box = undefined;
       }
     }
@@ -326,15 +331,19 @@ const plural = (n: number, one: string, many: string): string => `${n} ${n === 1
 
 /** The toast after a re-check. Pure. */
 export function recheckSummary(r: RecheckResult): string {
+  const raced = r.skipped > 0
+    ? `${plural(r.skipped, "receipt", "receipts")} changed meanwhile — re-check again to include ${r.skipped === 1 ? "it" : "them"}.`
+    : "";
+  const noImage = r.unfixable > 0
+    ? `${plural(r.unfixable, "older AI read has", "older AI reads have")} no stored image to outline.`
+    : "";
+  const tail = [raced, noImage].filter(Boolean).join(" ");
   if (r.boxes === 0 && r.duplicates === 0) {
-    return r.skipped === 0
-      ? "Nothing to fix — this batch is up to date."
-      : `Nothing changed — ${plural(r.skipped, "fix", "fixes")} couldn't be applied (a receipt changed meanwhile, or its image is missing). Try again.`;
+    return tail ? `Nothing changed. ${tail}` : "Nothing to fix — this batch is up to date.";
   }
   const parts: string[] = [];
   if (r.boxes > 0) parts.push(`added outlines to ${plural(r.boxes, "older AI read", "older AI reads")}`);
   if (r.duplicates > 0) parts.push(`flagged ${plural(r.duplicates, "possible duplicate", "possible duplicates")}`);
   const head = parts.join(" and ");
-  const tail = r.skipped > 0 ? ` ${plural(r.skipped, "fix", "fixes")} couldn't be applied — try again.` : "";
-  return `${head[0]!.toUpperCase()}${head.slice(1)}.${tail}`;
+  return `${head[0]!.toUpperCase()}${head.slice(1)}.${tail ? ` ${tail}` : ""}`;
 }

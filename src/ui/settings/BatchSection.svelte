@@ -33,10 +33,14 @@
     as they are.
   </p>
   <div class="row">
+    <!-- Busy is aria-disabled, not disabled: disabling the focused button
+         dropped focus to <body>, outside the dialog's Tab trap, for the
+         whole run (recheckBatch ignores a second click itself). -->
     <button
       class="btn btn-sm"
       onclick={() => void app.recheckBatch()}
-      disabled={app.rechecking || reading || empty}
+      disabled={reading || empty}
+      aria-disabled={app.rechecking}
       aria-describedby={why ? "recheck-why" : undefined}
     >
       {app.rechecking ? "Re-checking…" : "Re-check this batch"}
@@ -46,3 +50,10 @@
     {/if}
   </div>
 </section>
+
+<style>
+  button[aria-disabled="true"] {
+    opacity: 0.6;
+    cursor: progress;
+  }
+</style>
