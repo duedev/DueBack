@@ -30,7 +30,7 @@ import {
 // their office: a Summary *form* with per-category receipt tables whose "#"
 // cells hyperlink to the receipt's image on the category sheet, subtotals and
 // a TOTAL that foot with real SUM formulas, per-category image sheets
-// (header band → 4pt anchor row → image → data row), an Insights sheet, and
+// (header band → 4pt gap row → image → data row), an Insights sheet, and
 // print setup so every sheet is legible the moment it opens — no zooming.
 
 // ── Palette (lifted from the original app's spreadsheet_theme.py) ───────────
@@ -70,11 +70,16 @@ interface EmbeddedImage {
   h: number;
 }
 
-/** Per-receipt placement on its category sheet, for Summary hyperlinks. */
+/** Per-receipt link target on its category sheet, for Summary hyperlinks:
+ *  the rows A{top}:F{end} the "#" cell selects (blockSpan). */
 interface ReceiptAnchor {
   sheet: string;
-  /** The 4pt anchor row right under the receipt's header band. */
-  row: number;
+  /** The receipt's header band — the range's top-left, its active cell. */
+  top: number;
+  /** Last row of the link range: the data row when the block (band
+   *  through data row) fits LINK_VIEW_PX, otherwise the last carrier row
+   *  inside that budget. */
+  end: number;
 }
 
 // Field color-coding on the detail sheets (NOT the Summary form): the same
@@ -93,8 +98,26 @@ export const IMG_DISPLAY_W = 380; // ≈ column A at width 55 (385 px)
 export const IMG_ROW_PT = 14.25;
 export const IMG_INSET_PX = 4; // gutter between the image and its cell's edge
 
+/** Row heights (pt) of a receipt block's fixed rows on its image sheet —
+ *  named once so buildImageSheet writes them and blockSpan measures them
+ *  from the same numbers. */
+const HEADER_ROW_PT = 16; // "Receipt n  ·  file.jpg" band
+const GAP_ROW_PT = 4; // gap between the header band and the image
+const DATA_ROW_PT = 22; // the receipt's own data cells (the amount lives here)
+const SPACER_ROW_PT = 8; // breathing room before the next block
+
+/** Height budget (px) for a Summary "#" link's target range. Excel brings a
+ *  range that FITS the window fully into view, but for a taller one it only
+ *  guarantees the top-left cell — reached by scrolling down, that cell sat
+ *  on the window's bottom edge with the receipt below it off-screen (the old
+ *  "hit or miss" jump). 360px is the scrollable pane below the frozen 2-row
+ *  header on the smallest common laptop window at 100% zoom (1366×768, or
+ *  1080p at 150%). One constant: if Excel turns out to top-align tall
+ *  ranges, raise it. */
+export const LINK_VIEW_PX = 360;
+
 /** Carrier rows one receipt image needs. The ONE definition: the Summary's
- *  hyperlink anchors, its amount references and the image sheet itself must
+ *  hyperlink ranges, its amount references and the image sheet itself must
  *  agree row for row, and they only do while they share this. */
 export function imageRows(img: { h: number } | undefined): number {
   return img ? Math.max(1, Math.ceil(img.h / rowPtToPx(IMG_ROW_PT))) : 1;
@@ -244,11 +267,10 @@ export async function buildWorkbook(
     const sheet = sheetName(g.cat);
     let row = 3; // first receipt block starts right under the header rows
     for (const rec of g.rows) {
-      anchors.set(rec.id, { sheet, row: row + 1 }); // the 4pt anchor row
-      const img = imageByReceipt.get(rec.id);
-      const imgRows = imageRows(img);
-      amountRefs.set(rec.id, `'${sheet}'!F${row + 2 + imgRows}`); // the data row
-      row += blockRows(img);
+      const span = blockSpan(row, imageByReceipt.get(rec.id));
+      anchors.set(rec.id, { sheet, top: span.top, end: span.linkEnd });
+      amountRefs.set(rec.id, `'${sheet}'!F${span.data}`); // the data row
+      row = span.next;
     }
   }
 
@@ -271,10 +293,33 @@ export async function buildWorkbook(
 }
 
 /** Rows one receipt block occupies on its image sheet:
- *  header band + 4pt anchor + image carrier rows + data row + spacer. */
+ *  header band + 4pt gap row + image carrier rows + data row + spacer.
+ *  blockSpan says which of them the Summary link and amount ref point at. */
 export function blockRows(img: EmbeddedImage | undefined): number {
   const imgRows = imageRows(img);
   return 1 + 1 + imgRows + 1 + 1;
+}
+
+/** Where one receipt block, starting at row `top`, sits on its image sheet —
+ *  in the order buildImageSheet writes it: header band (`top`), gap row,
+ *  carrier rows, data row (`data`, the cell the Summary amount references),
+ *  spacer; `next` is the following block's header band. `linkEnd` closes
+ *  the Summary "#" link's range A{top}:F{linkEnd}: the data row when the
+ *  block (band through data row) fits LINK_VIEW_PX, otherwise the last
+ *  carrier row that still fits it, so the range Excel is asked to show
+ *  always fits the window. */
+export function blockSpan(
+  top: number,
+  img: EmbeddedImage | undefined,
+): { top: number; data: number; linkEnd: number; next: number } {
+  const carriers = imageRows(img);
+  const data = top + 2 + carriers;
+  const fixedPx = rowPtToPx(HEADER_ROW_PT) + rowPtToPx(GAP_ROW_PT); // 21 + 5
+  const carrierPx = rowPtToPx(IMG_ROW_PT); // 19
+  const blockPx = fixedPx + carriers * carrierPx + rowPtToPx(DATA_ROW_PT);
+  const fit = Math.max(1, Math.floor((LINK_VIEW_PX - fixedPx) / carrierPx));
+  const linkEnd = blockPx <= LINK_VIEW_PX ? data : top + 1 + Math.min(carriers, fit);
+  return { top, data, linkEnd, next: top + blockRows(img) };
 }
 
 // ── Shared styling helpers ───────────────────────────────────────────────────
@@ -355,8 +400,17 @@ function writeReceiptCells(
     // the first column of the sheet the office reads. HYPERLINK("#…")
     // navigates in Excel desktop/Online/iOS (Google Sheets and LibreOffice
     // ignore the fragment form; Excel is the product's consumer).
+    // The target is a RANGE from the receipt's header band, not one cell:
+    // Excel scrolls a link target only just into view, so a single cell
+    // reached by scrolling DOWN sat on the window's bottom edge with the
+    // image below it off-screen (upward jumps landed, downward ones missed).
+    // A range that fits the window comes into view whole — so it is capped
+    // at LINK_VIEW_PX (blockSpan): a short block runs through its data row,
+    // a tall one stops inside its image, showing the band and the top of
+    // the receipt. Leaving a tall block's data row out also keeps a stray
+    // Delete after the jump off the amount the Summary references.
     num.value = {
-      formula: `HYPERLINK("#'${opts.link.sheet}'!A${opts.link.row}",${n})`,
+      formula: `HYPERLINK("#'${opts.link.sheet}'!A${opts.link.top}:F${opts.link.end}",${n})`,
       result: n,
     };
   } else {
@@ -645,12 +699,13 @@ function buildImageSheet(
     head.font = { bold: true, size: 10, color: { argb: "FF374151" } };
     head.alignment = { horizontal: "left", vertical: "middle" };
     for (let c = 1; c <= 6; c++) fill(ws.getCell(r, c), tint);
-    ws.getRow(r).height = 16;
+    ws.getRow(r).height = HEADER_ROW_PT;
     r++;
 
-    // 4pt anchor row — the Summary "#" hyperlink lands here, image in view.
+    // 4pt gap row between the header band and the image. The Summary "#"
+    // link selects the block from the band down (blockSpan), not this row.
     ws.mergeCells(r, 1, r, 6);
-    ws.getRow(r).height = 4;
+    ws.getRow(r).height = GAP_ROW_PT;
     r++;
 
     // Image carrier rows
@@ -669,7 +724,7 @@ function buildImageSheet(
       // width×10000 model and come out ~6.75× too narrow.
       // Inset horizontally only: the carrier rows are sized to the image's
       // own height, so a top gutter would push its bottom edge into the data
-      // row. The 4pt anchor row above the image is the gap.
+      // row. The 4pt gap row above the image is the gutter.
       const range = imageAnchor(
         { col: 0, row: r - 1, x: IMG_INSET_PX, y: 0, w: img.w, h: img.h },
         geom,
@@ -686,11 +741,11 @@ function buildImageSheet(
 
     // Data row
     writeReceiptCells(ws, r, i + 1, rec, batch, fmt, { small: true, colorFields: true });
-    ws.getRow(r).height = 22;
+    ws.getRow(r).height = DATA_ROW_PT;
     r++;
 
     // Spacer
-    ws.getRow(r).height = 8;
+    ws.getRow(r).height = SPACER_ROW_PT;
     r++;
   });
 
