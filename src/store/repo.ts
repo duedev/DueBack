@@ -80,6 +80,15 @@ export const jobRows = {
   unclaimed(job: Job): Job {
     return { ...job, lockedAt: null, attempts: Math.max(0, job.attempts - 1) };
   },
+  /** A run is over (it landed, or its last attempt failed): the row goes —
+   *  UNLESS a "Retry reading" re-armed it meanwhile (`requeued` resets
+   *  attempts to 0, and every claim leaves attempts ≥ 1). A Retry landing
+   *  between the final attempt's "failed" write and this used to have its
+   *  row deleted under it: the receipt sat "queued" with no job, forever.
+   *  null = delete. */
+  retired(stored: Job): Job | null {
+    return stored.attempts === 0 ? { ...stored, lockedAt: null } : null;
+  },
   /** "Retry reading": null (a no-op) unless the receipt is still failed and
    *  unapproved — a human's work outranks a retry. Otherwise the receipt
    *  goes back to queued and it ends up with AT MOST one job: a job it
@@ -374,6 +383,20 @@ class Repo {
 
   async completeJob(jobId: string): Promise<void> {
     await (await db()).delete("jobs", jobId);
+  }
+
+  /** Finish a run's job — delete it, or keep it unlocked when a Retry
+   *  re-armed it mid-run (`jobRows.retired`), in one transaction. */
+  async retireJob(jobId: string): Promise<void> {
+    const conn = await db();
+    const tx = conn.transaction("jobs", "readwrite");
+    const cur = await tx.store.get(jobId);
+    if (cur) {
+      const keep = jobRows.retired(cur);
+      if (keep) await tx.store.put(keep);
+      else await tx.store.delete(jobId);
+    }
+    await tx.done;
   }
 
   /** Unlock a job for retry — only if it still exists (read-then-put in one

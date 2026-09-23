@@ -24,7 +24,7 @@ type ProgressListener = (p: QueueProgress) => void;
 export interface QueueDeps {
   jobs: Pick<
     typeof repo,
-    "claimNextJob" | "touchJob" | "completeJob" | "releaseJob" | "unclaimJob" | "pendingJobCount"
+    "claimNextJob" | "touchJob" | "completeJob" | "retireJob" | "releaseJob" | "unclaimJob" | "pendingJobCount"
   >;
   process(receiptId: string, signal: AbortSignal): Promise<void>;
   /** Stop in-flight OCR at once (terminate the worker) — the pause. */
@@ -198,15 +198,17 @@ export class ProcessingQueue {
         // the stale window after a resume.
         clearInterval(heartbeat);
       }
-      await this.deps.jobs.completeJob(jobId);
+      // retire, not a blind delete: a Retry may have re-armed the row.
+      await this.deps.jobs.retireJob(jobId);
     } catch (err) {
       if (signal.aborted && isAbortError(err)) {
         // Paused mid-read — not a failed attempt. processReceipt put the
         // receipt back to "queued"; give the claim (and its attempt) back.
         await this.deps.jobs.unclaimJob(jobId);
       } else if (attempts >= PROCESSING.maxAttempts) {
-        // processReceipt already marked the receipt failed; retry a couple times.
-        await this.deps.jobs.completeJob(jobId);
+        // processReceipt already marked the receipt failed; retry a couple
+        // times. Retired, not deleted: a Retry may already have re-armed it.
+        await this.deps.jobs.retireJob(jobId);
       } else {
         await this.deps.jobs.releaseJob({ id: jobId, receiptId, attempts, lockedAt: null });
       }

@@ -59,6 +59,13 @@ class FakeJobs implements Jobs {
     this.log.push(`complete ${id}`);
     this.rows.delete(id);
   }
+  async retireJob(id: string): Promise<void> {
+    this.log.push(`retire ${id}`);
+    const cur = this.rows.get(id);
+    const keep = cur ? jobRows.retired(cur) : null;
+    if (keep) this.rows.set(id, keep);
+    else this.rows.delete(id);
+  }
   async releaseJob(job: Job): Promise<void> {
     this.log.push(`release ${job.id}`);
     const cur = this.rows.get(job.id);
@@ -173,7 +180,7 @@ test("a run past its last checkpoint (a metered AI call) finishes and completes 
   assert.deepEqual(h.jobs.log, ["claim a"]);
   h.runs[0]!.resolve();
   await flush();
-  assert.deepEqual(h.jobs.log, ["claim a", "complete a"]);
+  assert.deepEqual(h.jobs.log, ["claim a", "retire a"]);
   assert.deepEqual(h.progress.at(-1), { remaining: 0, running: 0 });
 });
 
@@ -187,7 +194,7 @@ test("a real error is a failed attempt — unpaused, paused, and an AbortError t
   assert.deepEqual(h.jobs.log, ["claim a", "release a", "claim a"]);
   h.live("a").reject(new Error("decode"));
   await flush();
-  assert.deepEqual(h.jobs.log.at(-1), "complete a", "gives up after maxAttempts");
+  assert.deepEqual(h.jobs.log.at(-1), "retire a", "gives up after maxAttempts");
 
   // Paused: the pause path needs BOTH the fired signal and an AbortError.
   const p = harness(["b"]);
@@ -441,4 +448,32 @@ test("retry: a receipt that is no longer failed, or is approved, is left alone",
     assert.equal(jobRows.requeued({ ...failed, status }, [], NOW, "new"), null, status);
   }
   assert.equal(jobRows.requeued({ ...failed, approved: true }, [], NOW, "new"), null, "approved");
+});
+
+test("a Retry that lands while the last failed attempt winds down keeps the receipt's job", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const h = harness(["a"]);
+  // The final attempt is already running (claimed at maxAttempts).
+  h.jobs.rows.set("a", { ...h.jobs.rows.get("a")!, attempts: PROCESSING.maxAttempts - 1 });
+  await h.q.wake();
+  await flush();
+  // "failed" lands; before the queue finishes the job, the human clicks Retry
+  // (jobRows.requeued re-arms the still-locked row: attempts back to 0).
+  const next = jobRows.requeued({ id: "a", status: "failed", approved: false }, [h.jobs.rows.get("a")!], NOW, "a-new");
+  assert.ok(next);
+  for (const j of next.jobs) h.jobs.rows.set(j.id, j);
+  h.live("a").reject(new Error("The source image could not be decoded."));
+  await flush();
+  // Retired, not deleted: the re-armed row survives, unlocked, and is read again.
+  assert.equal(h.jobs.rows.size, 1, "the receipt still has its job");
+  assert.equal(h.jobs.rows.get("a")?.attempts, 1, "claimed once more");
+  assert.deepEqual(h.runs.map((r) => r.id), ["a", "a"]);
+  // Without the Retry, the last failed attempt deletes the row as before.
+  assert.equal(jobRows.retired({ id: "x", receiptId: "x", attempts: PROCESSING.maxAttempts, lockedAt: NOW }), null);
+  assert.deepEqual(jobRows.retired({ id: "x", receiptId: "x", attempts: 0, lockedAt: NOW }), {
+    id: "x",
+    receiptId: "x",
+    attempts: 0,
+    lockedAt: null,
+  });
 });
