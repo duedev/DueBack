@@ -55,6 +55,10 @@ export class ProcessingQueue {
    *  2600 px canvas and OCR blob live at once on a phone. */
   private filling = false;
   private rewake = false;
+  /** receiptId → the job id of the run reading it in this tab. Two runs of
+   *  one receipt race each other's writes (the older claim's extraction is
+   *  discarded, its blobs orphaned, the metered assist billed twice). */
+  private inFlight = new Map<string, string>();
   private listeners = new Set<ProgressListener>();
   private rewakeTimer: ReturnType<typeof setTimeout> | null = null;
   /** Paused: nothing is claimed, and the runs in flight unwind at their next
@@ -134,6 +138,19 @@ export class ProcessingQueue {
             await this.deps.jobs.unclaimJob(job.id);
             break;
           }
+          const holder = this.inFlight.get(job.receiptId);
+          if (holder !== undefined) {
+            // Already being read here — never a second run beside it. A
+            // DIFFERENT row is a duplicate job: drop it (the running read
+            // owns the receipt, and its own row carries any retry or pause).
+            // The run's OWN row, re-claimed because its lock looked stale,
+            // is left as the claim re-locked it — deleting or unlocking it
+            // would strand a paused run's receipt or invite another tab in.
+            // Either way the row is no longer claimable, so this can't spin.
+            if (holder !== job.id) await this.deps.jobs.completeJob(job.id);
+            continue;
+          }
+          this.inFlight.set(job.receiptId, job.id);
           this.running++;
           void this.run(job.id, job.receiptId, job.attempts, signal);
         }
@@ -195,6 +212,7 @@ export class ProcessingQueue {
       }
     } finally {
       clearInterval(heartbeat);
+      this.inFlight.delete(receiptId);
       this.running--;
       // Pull the next job if any remain — through the same single runner,
       // so this can never push the pool past its cap. It also announces.

@@ -301,6 +301,68 @@ test("the 30 s re-wake is never armed while paused, and pause() clears a pending
   assert.equal(h.jobs.countCalls, paused, "pause() cleared the armed re-wake");
 });
 
+test("a Retry while paused re-arms the failed receipt's released job instead of adding a second — resume reads it once", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const h = harness(["a"]);
+  await h.q.wake();
+  await flush();
+  // A real error lands after the pause (cleanImage takes no signal): the
+  // receipt is "failed" and its job released, unclaimed for the whole pause.
+  h.live("a").ignorePause = true;
+  h.q.pause();
+  await flush();
+  h.live("a").reject(new Error("canvas encode failed"));
+  await flush();
+  assert.deepEqual(h.jobs.log, ["claim a", "release a"]);
+
+  // "Retry reading" — the rule repo.requeueFailed applies in one transaction.
+  const next = jobRows.requeued(
+    { id: "a", status: "failed", approved: false },
+    [...h.jobs.rows.values()].filter((j) => j.receiptId === "a"),
+    NOW,
+    "a-retry",
+  );
+  assert.ok(next);
+  for (const j of next.jobs) h.jobs.rows.set(j.id, j);
+  assert.equal(h.jobs.rows.size, 1, "no second job for the receipt");
+
+  h.q.resume();
+  await flush();
+  assert.deepEqual(h.runs.map((r) => r.id), ["a", "a"], "one read on resume, not two at once");
+  h.live("a").resolve();
+  await flush();
+  assert.equal(h.jobs.rows.size, 0);
+});
+
+test("the pool never starts a second read of a receipt it is already reading", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const h = harness([]);
+  // Two rows for one receipt (a duplicate from an older build's Retry).
+  h.jobs.rows.set("a1", { id: "a1", receiptId: "a", attempts: 0, lockedAt: null, createdAt: 1 });
+  h.jobs.rows.set("a2", { id: "a2", receiptId: "a", attempts: 0, lockedAt: null, createdAt: 2 });
+  h.jobs.rows.set("b", { id: "b", receiptId: "b", attempts: 0, lockedAt: null, createdAt: 3 });
+  await h.q.wake();
+  await flush();
+  assert.deepEqual(h.runs.map((r) => r.id), ["a", "b"], "the slot goes to other work");
+  assert.deepEqual(h.jobs.log, ["claim a1", "claim a2", "complete a2", "claim b"]);
+
+  // The running read's OWN row re-claimed (its lock went stale under a
+  // starved heartbeat): left locked — never deleted out from under the run.
+  h.jobs.rows.set("a1", { ...h.jobs.rows.get("a1")!, lockedAt: NOW - STALE_LOCK_MS - 1 });
+  h.live("b").resolve();
+  await flush();
+  assert.deepEqual(h.runs.map((r) => r.id), ["a", "b"]);
+  assert.equal(h.jobs.rows.get("a1")?.lockedAt, NOW, "still held by the running read");
+
+  // The run still owns its retry (and its pause) through its own row.
+  h.live("a").reject(new Error("decode"));
+  await flush();
+  assert.deepEqual(h.runs.map((r) => r.id), ["a", "b", "a"], "released, then read again — once");
+  h.live("a").resolve();
+  await flush();
+  assert.equal(h.jobs.rows.size, 0);
+});
+
 // ---- the row rules themselves (store/repo.ts jobRows) ---------------------
 
 const job = (over: Partial<Job>): Job => ({
@@ -340,4 +402,43 @@ test("unclaimed returns the lock AND the attempt, floored at 0, createdAt kept",
 test("a heartbeat refreshes a lock but never creates one", () => {
   assert.equal(jobRows.touched(job({ lockedAt: null }), NOW), null);
   assert.equal(jobRows.touched(job({ lockedAt: NOW - 5 }), NOW)?.lockedAt, NOW);
+});
+
+// "Retry reading" (repo.requeueFailed → jobRows.requeued): at most one job
+// per receipt. repo.enqueue always inserted, so a receipt that failed while
+// paused (its released job still in the table) got a SECOND job, and resume
+// read it twice at once — the older claim's extraction discarded, its blobs
+// orphaned, the metered assist possibly billed twice.
+const failed = { id: "r", status: "failed" as const, approved: false };
+
+test("retry: a failed receipt with no job gets exactly one new job, and is queued afresh", () => {
+  const next = jobRows.requeued(failed, [], NOW, "new");
+  assert.deepEqual(next?.jobs, [job({ id: "new", createdAt: NOW })]);
+  assert.deepEqual(next?.patch, {
+    status: "queued",
+    error: undefined,
+    flags: [],
+    reviewRequired: false,
+    updatedAt: NOW,
+  });
+});
+
+test("retry: a failed receipt whose job was released keeps that one job, attempts back to 0", () => {
+  const released = job({ id: "old", attempts: 1, createdAt: 7 });
+  const next = jobRows.requeued(failed, [released], NOW, "new");
+  assert.deepEqual(next?.jobs, [{ ...released, attempts: 0 }], "createdAt kept — no queue jump");
+});
+
+test("retry: a locked job (a run unwinding, another tab) keeps its lock — only the attempts reset", () => {
+  const locked = job({ id: "old", attempts: 2, lockedAt: NOW - 1_000 });
+  const next = jobRows.requeued(failed, [locked], NOW, "new");
+  assert.deepEqual(next?.jobs, [{ ...locked, attempts: 0 }]);
+});
+
+test("retry: a receipt that is no longer failed, or is approved, is left alone", () => {
+  assert.equal(jobRows.requeued(undefined, [], NOW, "new"), null, "deleted");
+  for (const status of ["queued", "processing", "done", "needs_review"] as const) {
+    assert.equal(jobRows.requeued({ ...failed, status }, [], NOW, "new"), null, status);
+  }
+  assert.equal(jobRows.requeued({ ...failed, approved: true }, [], NOW, "new"), null, "approved");
 });

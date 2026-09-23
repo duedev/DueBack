@@ -317,17 +317,13 @@ class AppState {
    *  receipt (a human's work outranks a retry) and re-runs the same intake
    *  path as addFiles, so the pipeline's completion write lands a full
    *  extraction: the retry's updatedAt precedes the claim. Fields a human
-   *  already edited stay theirs (`touchedBeforeClaim`). */
+   *  already edited stay theirs (`touchedBeforeClaim`). The re-check and
+   *  both writes are one transaction that reuses the receipt's job when it
+   *  still has one (`repo.requeueFailed`): a receipt that failed while
+   *  paused keeps its released job, and a second one made resume read it
+   *  twice at once. */
   async retryReceipt(id: string): Promise<boolean> {
-    const r = await repo.getReceipt(id);
-    if (!r || r.status !== "failed" || r.approved) return false;
-    await repo.updateReceipt(id, {
-      status: "queued",
-      error: undefined,
-      flags: [],
-      reviewRequired: false,
-    });
-    await repo.enqueue(id);
+    if (!(await repo.requeueFailed(id))) return false;
     void queue.wake();
     return true;
   }

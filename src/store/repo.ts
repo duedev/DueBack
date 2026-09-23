@@ -80,6 +80,40 @@ export const jobRows = {
   unclaimed(job: Job): Job {
     return { ...job, lockedAt: null, attempts: Math.max(0, job.attempts - 1) };
   },
+  /** "Retry reading": null (a no-op) unless the receipt is still failed and
+   *  unapproved — a human's work outranks a retry. Otherwise the receipt
+   *  goes back to queued and it ends up with AT MOST one job: a job it
+   *  already has only gets its attempts back (`createdAt` kept), and a new
+   *  one is inserted only when there is none. A blind insert gave a receipt
+   *  that failed while paused a SECOND job beside its released one, and
+   *  resume read it twice at once — the older claim's extraction discarded,
+   *  its blobs orphaned, the metered assist possibly billed twice. A locked
+   *  job keeps its lock: it belongs to a run still unwinding (the queue
+   *  releases or completes the row a few writes after "failed" lands —
+   *  before the board's coalesced refresh can even show a Retry) or to
+   *  another tab, and goes stale on its own if that tab died; unlocking it
+   *  would let a second claim start beside the run that holds it. */
+  requeued(
+    receipt: Pick<Receipt, "id" | "status" | "approved"> | undefined,
+    jobs: Job[],
+    now: number,
+    newJobId: string,
+  ): { patch: Partial<Receipt>; jobs: Job[] } | null {
+    if (!receipt || receipt.status !== "failed" || receipt.approved) return null;
+    return {
+      patch: {
+        status: "queued",
+        error: undefined,
+        flags: [],
+        reviewRequired: false,
+        updatedAt: now,
+      },
+      jobs:
+        jobs.length > 0
+          ? jobs.map((j) => ({ ...j, attempts: 0 }))
+          : [{ id: newJobId, receiptId: receipt.id, attempts: 0, lockedAt: null, createdAt: now }],
+    };
+  },
 };
 
 class Repo {
@@ -276,17 +310,34 @@ class Repo {
   }
 
   // ---- Jobs (the cheap work-list) --------------------------------------
+  // New jobs are born with their receipt (addReceipt) or by a retry
+  // (requeueFailed) — there is deliberately no blind "insert a job": one
+  // receipt with two jobs is two reads racing each other.
 
-  async enqueue(receiptId: string): Promise<Job> {
-    const job: Job = {
-      id: uid("job"),
-      receiptId,
-      attempts: 0,
-      lockedAt: null,
-      createdAt: Date.now(),
-    };
-    await (await db()).put("jobs", job);
-    return job;
+  /** Re-queue a failed receipt for a fresh read: the status re-check, the
+   *  receipt write and the job write in ONE transaction over receipts+jobs
+   *  (`jobRows.requeued` — at most one job per receipt). Returns whether
+   *  it re-queued. */
+  async requeueFailed(id: string): Promise<boolean> {
+    const conn = await db();
+    const tx = conn.transaction(["receipts", "jobs"], "readwrite");
+    const receipts = tx.objectStore("receipts");
+    const jobs = tx.objectStore("jobs");
+    const [cur, existing] = await Promise.all([
+      receipts.get(id),
+      jobs.index("byReceipt").getAll(id),
+    ]);
+    const next = jobRows.requeued(cur, existing, Date.now(), uid("job"));
+    if (cur && next) {
+      await Promise.all([
+        receipts.put({ ...normalizeReceipt(cur), ...next.patch }),
+        ...next.jobs.map((j) => jobs.put(j)),
+      ]);
+    }
+    await tx.done;
+    if (!next) return false;
+    this.notify();
+    return true;
   }
 
   /** Atomically claim the oldest unlocked job (by `createdAt` — upload
