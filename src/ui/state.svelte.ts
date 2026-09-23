@@ -355,7 +355,7 @@ class AppState {
       });
       await this.refresh();
       const changed = result.boxes + result.duplicates > 0;
-      this.toast(recheckSummary(result), result.skipped > 0 ? "warn" : changed ? "ok" : "info");
+      this.toast(recheckSummary(result), result.skipped > 0 || result.failed > 0 ? "warn" : changed ? "ok" : "info");
     } catch (err) {
       console.error("re-check failed", err);
       this.toast("The re-check stopped part-way — run it again to finish.", "err");

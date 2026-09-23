@@ -488,7 +488,7 @@ test("runBatchRecheck: one CAS write per receipt; the replaced annotated copy is
   assert.ok(blobs.has("stale_annotated"));
 
   const result = await runBatchRecheck(BATCH, io);
-  assert.deepEqual(result, { boxes: 2, duplicates: 2, skipped: 0, unfixable: 0 });
+  assert.deepEqual(result, { boxes: 2, duplicates: 2, skipped: 0, unfixable: 0, failed: 0 });
   assert.equal(writes.filter((w) => w.id === scanMar02.id).length, 1, "boxes + flag in ONE write");
 
   const chevron = receipts.get(scanMar02.id)!;
@@ -501,7 +501,7 @@ test("runBatchRecheck: one CAS write per receipt; the replaced annotated copy is
   assert.equal(chevron.ocrText, chevronScanMar02.ocrText);
 
   // Run it again: nothing left to do.
-  assert.deepEqual(await runBatchRecheck(BATCH, io), { boxes: 0, duplicates: 0, skipped: 0, unfixable: 0 });
+  assert.deepEqual(await runBatchRecheck(BATCH, io), { boxes: 0, duplicates: 0, skipped: 0, unfixable: 0, failed: 0 });
 });
 
 test("runBatchRecheck: a write that lost the race lands nothing and leaves no orphan blob", async () => {
@@ -515,7 +515,7 @@ test("runBatchRecheck: a write that lost the race lands nothing and leaves no or
   });
   const blobsBefore = new Set(blobs.keys());
   const result = await runBatchRecheck(BATCH, io);
-  assert.deepEqual(result, { boxes: 1, duplicates: 1, skipped: 2, unfixable: 0 });
+  assert.deepEqual(result, { boxes: 1, duplicates: 1, skipped: 1, unfixable: 0, failed: 0 });
   const chevron = receipts.get(scanMar02.id)!;
   assert.equal(chevron.vendor.value, "Chevron", "the human's save stands");
   assert.equal(chevron.flags.some((f) => f.code === "duplicate"), false);
@@ -530,7 +530,7 @@ test("runBatchRecheck: a bake that fails drops the outlines, never the duplicate
   const { io, receipts, blobs } = fakeIO(ownerBatch(), { bake: async () => null });
   const blobsBefore = blobs.size;
   const result = await runBatchRecheck(BATCH, io);
-  assert.deepEqual(result, { boxes: 0, duplicates: 2, skipped: 0, unfixable: 2 });
+  assert.deepEqual(result, { boxes: 0, duplicates: 2, skipped: 0, unfixable: 2, failed: 0 });
   const chevron = receipts.get(scanMar02.id)!;
   assert.equal(chevron.vendor.bbox, undefined, "no boxes without their baked copy");
   assert.equal(chevron.flags[0]!.ref, appMar02.id);
@@ -540,18 +540,18 @@ test("runBatchRecheck: a bake that fails drops the outlines, never the duplicate
   const missing = fakeIO(ownerBatch());
   missing.blobs.delete(`clean_${scanMar02.id}`);
   const r2 = await runBatchRecheck(BATCH, missing.io);
-  assert.deepEqual(r2, { boxes: 1, duplicates: 2, skipped: 0, unfixable: 1 });
+  assert.deepEqual(r2, { boxes: 1, duplicates: 2, skipped: 0, unfixable: 1, failed: 0 });
 });
 
 test("runBatchRecheck touches only the batch it was given", async () => {
   const rows = ownerBatch().map((r) => ({ ...r, batchId: "other" }));
   const { io, writes } = fakeIO(rows);
-  assert.deepEqual(await runBatchRecheck(BATCH, io), { boxes: 0, duplicates: 0, skipped: 0, unfixable: 0 });
+  assert.deepEqual(await runBatchRecheck(BATCH, io), { boxes: 0, duplicates: 0, skipped: 0, unfixable: 0, failed: 0 });
   assert.equal(writes.length, 0);
 });
 
 test("the summary says what changed, in plain words", () => {
-  const R = (boxes: number, duplicates: number, skipped = 0, unfixable = 0) => ({ boxes, duplicates, skipped, unfixable });
+  const R = (boxes: number, duplicates: number, skipped = 0, unfixable = 0, failed = 0) => ({ boxes, duplicates, skipped, unfixable, failed });
   assert.equal(recheckSummary(R(0, 0)), "Nothing to fix — this batch is up to date.");
   assert.equal(recheckSummary(R(2, 1)), "Added outlines to 2 older AI reads and flagged 1 possible duplicate.");
   assert.equal(recheckSummary(R(1, 0)), "Added outlines to 1 older AI read.");
@@ -559,10 +559,29 @@ test("the summary says what changed, in plain words", () => {
   // A lost race can land next time; a missing image can't — only the first says so.
   assert.equal(recheckSummary(R(0, 1, 2)), "Flagged 1 possible duplicate. 2 receipts changed meanwhile — re-check again to include them.");
   assert.equal(recheckSummary(R(0, 0, 1)), "Nothing changed. 1 receipt changed meanwhile — re-check again to include it.");
-  assert.equal(recheckSummary(R(0, 0, 0, 1)), "Nothing changed. 1 older AI read has no stored image to outline.");
+  assert.equal(recheckSummary(R(0, 0, 0, 1)), "Nothing changed. 1 older AI read has no usable image on this device to outline.");
   assert.equal(
     recheckSummary(R(3, 0, 0, 2)),
-    "Added outlines to 3 older AI reads. 2 older AI reads have no stored image to outline.",
+    "Added outlines to 3 older AI reads. 2 older AI reads have no usable image on this device to outline.",
   );
   assert.doesNotMatch(recheckSummary(R(0, 0, 0, 4)), /again/i);
+  // Storage that threw is the retryable case — and only it says "try again".
+  assert.equal(recheckSummary(R(0, 0, 0, 0, 1)), "Nothing changed. 1 receipt couldn't be saved — try again.");
+});
+
+test("runBatchRecheck: storage that throws is 'failed' (retryable), not 'unfixable'", async () => {
+  const { io, receipts } = fakeIO(ownerBatch());
+  // A quota error storing the FIRST new highlighted copy only.
+  const put = io.putBlob;
+  let calls = 0;
+  io.putBlob = async (blob, kind) =>
+    calls++ === 0 ? Promise.reject(new DOMException("quota", "QuotaExceededError")) : put(blob, kind);
+  const result = await runBatchRecheck(BATCH, io);
+  assert.equal(result.failed, 1, JSON.stringify(result));
+  assert.equal(result.unfixable, 0);
+  assert.equal(result.boxes, 1, "the other legacy read still gains its outlines");
+  assert.match(recheckSummary(result), /1 receipt couldn't be saved — try again/);
+  // A receipt whose bake failed still gets its duplicate flag.
+  const flagged = [...receipts.values()].filter((r) => r.flags.some((f) => f.code === "duplicate" && f.ref));
+  assert.ok(flagged.length >= 2, "both missed pairs are flagged");
 });

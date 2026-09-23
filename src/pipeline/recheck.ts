@@ -258,13 +258,18 @@ export interface RecheckResult {
   boxes: number;
   /** Duplicate flags added. */
   duplicates: number;
-  /** Fixes that lost the race: the row changed after planning (a save, a
-   *  read, a sync). Another re-check can land them. */
+  /** Receipts whose fixes lost the race: the row changed after planning (a
+   *  save, a read, a sync). Another re-check can land them. */
   skipped: number;
-  /** Outlines that can't be drawn: the cleaned image is missing (a synced
-   *  row whose image never downloaded) or wouldn't bake. Re-running can't
-   *  help, so the toast never says "try again" about these. */
+  /** Outlines this device can't draw: no cleaned image here (a synced row
+   *  whose image hasn't downloaded — the next pull back-fills it) or one
+   *  that won't decode/bake. Re-running now won't help, so the toast never
+   *  says "try again" about these. */
   unfixable: number;
+  /** Receipts whose fixes couldn't be saved: storage threw reading or
+   *  writing a blob, or on the row write (quota, a closing database).
+   *  Retryable — the one case the toast says "try again". */
+  failed: number;
 }
 
 /**
@@ -284,7 +289,7 @@ export async function runBatchRecheck(batchId: string, io: RecheckIO): Promise<R
   const dupFor = new Map(plan.duplicates.map((f) => [f.id, f]));
   const ids = [...new Set([...plan.boxes.map((f) => f.id), ...plan.duplicates.map((f) => f.id)])];
 
-  const result: RecheckResult = { boxes: 0, duplicates: 0, skipped: 0, unfixable: 0 };
+  const result: RecheckResult = { boxes: 0, duplicates: 0, skipped: 0, unfixable: 0, failed: 0 };
   for (const id of ids) {
     const row = byId.get(id)!;
     let box = boxFor.get(id);
@@ -292,15 +297,35 @@ export async function runBatchRecheck(batchId: string, io: RecheckIO): Promise<R
 
     let newKey: string | undefined;
     if (box) {
+      // Sorted by cause: storage throwing is retryable ("failed"); no image
+      // here, or one that won't bake, is not ("unfixable").
+      let storageError = false;
+      let cleaned: Blob | undefined;
       try {
-        const cleaned = await io.getBlob(box.cleanedKey);
-        const baked = cleaned ? await io.bake(cleaned, box.marks) : null;
-        if (baked) newKey = await io.putBlob(baked, "annotated");
+        cleaned = await io.getBlob(box.cleanedKey);
       } catch (err) {
-        console.warn("[recheck] couldn't bake the highlighted copy for", id, err);
+        storageError = true;
+        console.warn("[recheck] couldn't read the cleaned image for", id, err);
+      }
+      let baked: Blob | null = null;
+      if (cleaned) {
+        try {
+          baked = await io.bake(cleaned, box.marks);
+        } catch (err) {
+          console.warn("[recheck] couldn't bake the highlighted copy for", id, err);
+        }
+      }
+      if (baked) {
+        try {
+          newKey = await io.putBlob(baked, "annotated");
+        } catch (err) {
+          storageError = true;
+          console.warn("[recheck] couldn't store the highlighted copy for", id, err);
+        }
       }
       if (!newKey) {
-        result.unfixable++;
+        if (storageError) result.failed++;
+        else result.unfixable++;
         box = undefined;
       }
     }
@@ -312,17 +337,21 @@ export async function runBatchRecheck(batchId: string, io: RecheckIO): Promise<R
       continue;
     }
     let written: Receipt | null | undefined = null;
+    let threw = false;
     try {
       // `row` is the snapshot the plan was made from: its updatedAt is every
       // fix's `expectUpdatedAt`.
       written = await io.updateReceipt(id, patch, { updatedAt: row.updatedAt });
     } catch (err) {
+      threw = true;
       console.warn("[recheck] couldn't write", id, err);
     }
     if (!written) {
-      // Changed (or gone) since planning: nothing of ours references the bake.
+      // Changed (or gone) since planning — or storage threw: nothing of ours
+      // references the bake. Counted per RECEIPT, as the toast says.
       if (newKey) await io.deleteBlob(newKey).catch(() => {});
-      result.skipped += (box ? 1 : 0) + (duplicate ? 1 : 0);
+      if (threw) result.failed++;
+      else result.skipped++;
       continue;
     }
     if (box) {
@@ -343,10 +372,11 @@ export function recheckSummary(r: RecheckResult): string {
   const raced = r.skipped > 0
     ? `${plural(r.skipped, "receipt", "receipts")} changed meanwhile — re-check again to include ${r.skipped === 1 ? "it" : "them"}.`
     : "";
+  const failed = r.failed > 0 ? `${plural(r.failed, "receipt", "receipts")} couldn't be saved — try again.` : "";
   const noImage = r.unfixable > 0
-    ? `${plural(r.unfixable, "older AI read has", "older AI reads have")} no stored image to outline.`
+    ? `${plural(r.unfixable, "older AI read has", "older AI reads have")} no usable image on this device to outline.`
     : "";
-  const tail = [raced, noImage].filter(Boolean).join(" ");
+  const tail = [raced, failed, noImage].filter(Boolean).join(" ");
   if (r.boxes === 0 && r.duplicates === 0) {
     return tail ? `Nothing changed. ${tail}` : "Nothing to fix — this batch is up to date.";
   }
