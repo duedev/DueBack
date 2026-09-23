@@ -34,9 +34,11 @@
       });
       downloadBundle(bundle);
       app.toast(
-        `Tuning bundle packaged (${formatBytes(bundle.blob.size)}${compact ? ", compact" : ""}): ` +
+        // The mode that was BUILT (the checkbox can't change mid-build, but
+        // the toast still reads the bundle, not the live control).
+        `Tuning bundle packaged (${formatBytes(bundle.blob.size)}${bundle.mode === "compact" ? ", compact" : ""}): ` +
           `${bundle.receiptCount} receipts, ${bundle.correctionCount} corrections.` +
-          (!compact && bundle.omittedOriginals > 0
+          (bundle.mode === "full" && bundle.omittedOriginals > 0
             ? ` ${bundle.omittedOriginals} originals were left out to keep it under 200 MB.`
             : ""),
         "ok",
@@ -72,7 +74,7 @@
     </button>
   </div>
   <label class="check">
-    <input type="checkbox" bind:checked={compact} />
+    <input type="checkbox" bind:checked={compact} disabled={bundleBusy} />
     <span>Compact (smaller, for sharing)</span>
   </label>
   <p class="muted small">

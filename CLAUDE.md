@@ -348,8 +348,11 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   and one is inserted only when none exists — a receipt that failed while
   paused used to get a second job and resume read it twice at once; a run
   ends by RETIRING its job (`repo.retireJob`: a row a Retry re-armed —
-  attempts 0, every claim leaves ≥ 1 — is kept, unlocked; a blind delete
-  stranded a Retry that landed as the last attempt wound down). Edited
+  attempts 0, every claim leaves ≥ 1 — whose receipt is back to "queued"
+  and unapproved is kept, unlocked, decided in one receipts+jobs
+  transaction; a blind delete stranded a Retry that landed as the last
+  attempt wound down, and keeping every attempts-0 row re-read a receipt the
+  run had just finished). Edited
   fields stay the human's via `touchedBeforeClaim`, and `friendlyError`
   maps a text-reader load failure (worker/wasm/traineddata fetch) to copy
   that points at it. The workspace sync chip shows error/syncing/synced
@@ -429,8 +432,11 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   correct AI answer against an OCR garble). An AI total `locateValue` can't
   find is a `total_suspect` warn only against a confident rules total
   (≥ `CORROBORATE_MIN_RULES_CONFIDENCE` 0.75) that the rules don't
-  themselves question (no total_suspect/total_mismatch — footing's window
-  recovery stamps a synthetic confidence). An AI date the OCR can't find is
+  themselves question: no total_suspect, no WARN total_mismatch, and not
+  footing's window recovery (an unverified pick stamped a synthetic 0.9,
+  marked by `WINDOW_RECOVERY_NOTE`) — the info total_mismatch of an
+  arithmetic-VERIFIED correction (the printed sum, pump math) vouches for
+  the total instead, as extract.ts already reads it. An AI date the OCR can't find is
   a `date_suspect` warn only against a clean rules date: ≥ 0.8, NOT a
   last-resort pick (rank 3: a return-policy expiry or due date — an
   unambiguous one keeps 0.8), on a line OCR read at ≥
@@ -770,7 +776,7 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   `methodUsed === "paid"` row's ocrText (an old-build tab can still write
   JSON there) — it rebuilds the text from `ocrLines` at their mean
   confidence, and lends nothing without lines. The answer lives in
-  `Receipt.assist.rawAnswer` (tail-capped at `ASSIST_RAW_MAX` on a code-point boundary and `wellFormed` — a lone UTF-16 surrogate in the sync payload makes Postgres jsonb refuse the WHOLE receipts upsert, on every push after; agentic `clip()` and the model's vendor (cut at 80 code points) never keep half an emoji either) beside the
+  `Receipt.assist.rawAnswer` (tail-capped at `ASSIST_RAW_MAX` on a code-point boundary and `wellFormed` — a lone UTF-16 surrogate or a NUL in the sync payload makes Postgres jsonb refuse the WHOLE receipts upsert, on every push after; agentic `clip()` and the model's vendor (cut at 80 code points) never keep half an emoji either) beside the
   rules read it replaced (`assist.rules`, copied into each
   `CorrectionRecord.rules`). The endpoint URL, API key and the proxy's
   session token are deliberately NOT recorded (internal host names would
@@ -877,10 +883,15 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   survivor's warning is re-pointed at the keeper
   (`dedup.retargetDuplicateFlags`, message rebuilt from the pair's current
   tier via `duplicateMessage`); a third copy used to point at a deleted
-  receipt while its real twin sat in the TOTAL. Keep both is REMEMBERED:
-  the same write records the verdict on both rows (`Receipt.notDuplicateOf`)
-  and `dedup.keptApart` (either side's record counts) keeps the couple out
-  of every tier — at read time and in the re-check. Focus parks on Approve (on the dialog after deleting
+  receipt while its real twin sat in the TOTAL — except onto a couple a
+  human kept apart: that warning leaves with the deleted copy. Keep both is
+  REMEMBERED: the write that drops a row's warning also records the verdict
+  on it (`Receipt.notDuplicateOf`); a row that held no warning is never
+  written (rows sync whole, last writer wins — this device's stale copy
+  would beat another device's edit), and when neither stored row still holds
+  one the open receipt records it alone. `dedup.keptApart` (either side's
+  record counts) keeps the couple out of every tier — at read time, in the
+  re-check, and in a delete's re-pointing. Focus parks on Approve (on the dialog after deleting
   the current one) BEFORE the panel unmounts. A save's flag pruning is
   re-derived from the STORED row inside `applyPatchNow`: the board copy can
   be one refresh stale and would resurrect a warning Keep both just
@@ -905,7 +916,10 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   needs_review like a fresh read. Values, ocrText, methodUsed, approval and
   existing flags never change. The bake happens BEFORE the CAS write and is
   deleted if the write loses (skipped, never retried blindly); a landed
-  write deletes the replaced annotated blob (no blob GC). Settings disables
+  write deletes the replaced annotated blob (no blob GC). Results count
+  RECEIPTS and sort failures by cause: `skipped` (lost the race — re-check
+  again), `failed` (storage threw — the only "try again"), `unfixable` (no
+  usable image on this device). Settings disables
   the action while this device has jobs (unread rows would be skipped); the
   button is `aria-disabled` while running (disabling the focused button
   dropped focus out of the dialog's Tab trap). On the owner's 67-receipt

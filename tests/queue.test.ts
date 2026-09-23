@@ -22,6 +22,8 @@ type Jobs = QueueDeps["jobs"];
 
 class FakeJobs implements Jobs {
   rows = new Map<string, Job>();
+  /** The receipts' status as retireJob sees it (default: not queued). */
+  receipts = new Map<string, { status: "queued" | "processing" | "done" | "needs_review" | "failed"; approved: boolean }>();
   log: string[] = [];
   claimCalls = 0;
   /** Every fill reads the count (the re-wake check, the announce): a proxy
@@ -62,7 +64,7 @@ class FakeJobs implements Jobs {
   async retireJob(id: string): Promise<void> {
     this.log.push(`retire ${id}`);
     const cur = this.rows.get(id);
-    const keep = cur ? jobRows.retired(cur) : null;
+    const keep = cur ? jobRows.retired(cur, this.receipts.get(cur.receiptId) ?? { status: "done", approved: false }) : null;
     if (keep) this.rows.set(id, keep);
     else this.rows.delete(id);
   }
@@ -462,6 +464,7 @@ test("a Retry that lands while the last failed attempt winds down keeps the rece
   const next = jobRows.requeued({ id: "a", status: "failed", approved: false }, [h.jobs.rows.get("a")!], NOW, "a-new");
   assert.ok(next);
   for (const j of next.jobs) h.jobs.rows.set(j.id, j);
+  h.jobs.receipts.set("a", { status: "queued", approved: false });
   h.live("a").reject(new Error("The source image could not be decoded."));
   await flush();
   // Retired, not deleted: the re-armed row survives, unlocked, and is read again.
@@ -469,11 +472,37 @@ test("a Retry that lands while the last failed attempt winds down keeps the rece
   assert.equal(h.jobs.rows.get("a")?.attempts, 1, "claimed once more");
   assert.deepEqual(h.runs.map((r) => r.id), ["a", "a"]);
   // Without the Retry, the last failed attempt deletes the row as before.
-  assert.equal(jobRows.retired({ id: "x", receiptId: "x", attempts: PROCESSING.maxAttempts, lockedAt: NOW }), null);
-  assert.deepEqual(jobRows.retired({ id: "x", receiptId: "x", attempts: 0, lockedAt: NOW }), {
+  const queued = { status: "queued" as const, approved: false };
+  assert.equal(jobRows.retired({ id: "x", receiptId: "x", attempts: PROCESSING.maxAttempts, lockedAt: NOW }, queued), null);
+  assert.deepEqual(jobRows.retired({ id: "x", receiptId: "x", attempts: 0, lockedAt: NOW }, queued), {
     id: "x",
     receiptId: "x",
     attempts: 0,
     lockedAt: null,
   });
+  // A re-armed row whose receipt the run then finished (done / review /
+  // failed again, or approved) is NOT kept: that would read it twice.
+  for (const r of [
+    { status: "done" as const, approved: false },
+    { status: "needs_review" as const, approved: false },
+    { status: "failed" as const, approved: false },
+    { status: "queued" as const, approved: true },
+  ]) {
+    assert.equal(jobRows.retired({ id: "x", receiptId: "x", attempts: 0, lockedAt: NOW }, r), null, JSON.stringify(r));
+  }
+});
+
+test("a Retry that landed before the claim's stamp, on a run that then SUCCEEDS, reads the receipt once", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const h = harness(["a"]);
+  await h.q.wake();
+  await flush();
+  // The Retry re-armed the row (attempts 0) just before the run stamped the
+  // receipt "processing"; the run then lands "done".
+  h.jobs.rows.set("a", { ...h.jobs.rows.get("a")!, attempts: 0 });
+  h.jobs.receipts.set("a", { status: "done", approved: false });
+  h.live("a").resolve();
+  await flush();
+  assert.equal(h.jobs.rows.size, 0, "no second read of a finished receipt");
+  assert.deepEqual(h.runs.map((r) => r.id), ["a"]);
 });
