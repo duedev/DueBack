@@ -4,8 +4,10 @@
 //
 // Every receipt-image EXPORT goes through `thumbnail`/`stripThumbnail`, which
 // also trim a receipt stored as a whole blank page (see `contentRect`). The
-// tuning bundle must NOT: it ships the stored blobs verbatim so the
-// normalized boxes in its extraction.json stay aligned with its images.
+// tuning bundle must NOT trim: the normalized boxes in its extraction.json
+// have to stay aligned with its images, so the full bundle ships the stored
+// blobs verbatim and the compact one calls `thumbnail(…, trim = false)` — a
+// uniform downscale moves no box.
 
 import {
   ANALYSIS_MAX_EDGE,

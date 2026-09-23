@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtemp, access, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { deflateRawSync, crc32 } from "node:zlib";
+import { deflateRawSync, inflateRawSync, crc32 } from "node:zlib";
 import sharp from "sharp";
 import ExcelJS from "exceljs";
 
@@ -269,6 +269,30 @@ function makeZip(entries) {
   eocd.writeUInt32LE(centralBuf.length, 12);
   eocd.writeUInt32LE(offset, 16);
   return Buffer.concat([...parts, centralBuf, eocd]);
+}
+
+// A downloaded ZIP's entries, read from its central directory (stored or
+// deflated) — enough to inspect the tuning bundle.
+function readZipEntries(buf) {
+  let eocd = buf.length - 22;
+  while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054b50) eocd--;
+  const count = buf.readUInt16LE(eocd + 10);
+  let p = buf.readUInt32LE(eocd + 16);
+  const out = [];
+  for (let n = 0; n < count; n++) {
+    const method = buf.readUInt16LE(p + 10);
+    const size = buf.readUInt32LE(p + 20);
+    const nameLen = buf.readUInt16LE(p + 28);
+    const extra = buf.readUInt16LE(p + 30);
+    const comment = buf.readUInt16LE(p + 32);
+    const local = buf.readUInt32LE(p + 42);
+    const name = buf.subarray(p + 46, p + 46 + nameLen).toString("utf8");
+    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+    const raw = buf.subarray(start, start + size);
+    out.push({ name, data: method === 8 ? inflateRawSync(raw) : raw });
+    p += 46 + nameLen + extra + comment;
+  }
+  return out;
 }
 
 // Natural size of an embedded image — the aspect ratio the sheet is supposed
@@ -1021,6 +1045,55 @@ async function main() {
         afterDup.length === 7 && !afterDup.some((r) => r.file === "coffee-again.png"),
         `deleting the copy leaves the original (${afterDup.length} receipts)`,
       );
+    }
+
+    // 7f. The tuning bundle is COMPACT by default (for sharing: no
+    // originals, each highlighted copy re-encoded at ≤ 1100 px through the
+    // real canvas path) and full on request (every original verbatim).
+    {
+      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      const tuneDialog = page.getByRole("dialog", { name: "Settings" });
+      await tuneDialog.waitFor({ timeout: 5000 });
+      const compactOpt = tuneDialog.getByLabel("Compact (smaller, for sharing)");
+      check(await compactOpt.isChecked(), "the tuning bundle defaults to compact");
+      const grabBundle = async () => {
+        const [dl] = await Promise.all([
+          page.waitForEvent("download", { timeout: 60000 }),
+          tuneDialog.getByRole("button", { name: "Download tuning bundle" }).click(),
+        ]);
+        const path = join(dlDir, dl.suggestedFilename());
+        await dl.saveAs(path);
+        const buf = await readFile(path);
+        return { name: dl.suggestedFilename(), size: buf.length, entries: readZipEntries(buf) };
+      };
+      const small = await grabBundle();
+      const smallImgs = small.entries.filter((e) => e.name.startsWith("images/"));
+      const edges = smallImgs.map((e) => {
+        const d = jpegSize(e.data);
+        return d ? Math.max(d.w, d.h) : Infinity;
+      });
+      const rows = JSON.parse(small.entries.find((e) => e.name === "extraction.json")?.data.toString("utf8") ?? "[]");
+      check(
+        /^dueback_tuning_compact_\d{8}\.zip$/.test(small.name) &&
+          ["corrections.json", "extraction.json", "report.csv"].every((n) => small.entries.some((e) => e.name === n)) &&
+          smallImgs.length === 7 &&
+          smallImgs.every((e) => e.name.startsWith("images/annotated/")) &&
+          edges.every((px) => px <= 1100) &&
+          rows.length === 7 &&
+          rows.every((r) => r.originalOmitted === true),
+        `compact bundle: data files + ${smallImgs.length} highlighted images ≤ 1100 px, no originals, every row marked (${small.name}, edges ${edges.join("/")})`,
+      );
+      await compactOpt.uncheck();
+      const full = await grabBundle();
+      check(
+        /^dueback_tuning_\d{8}\.zip$/.test(full.name) &&
+          full.entries.some((e) => e.name.startsWith("images/original/")) &&
+          full.size > small.size,
+        `full bundle carries the originals and is the bigger one (${full.size} vs ${small.size} bytes)`,
+      );
+      await compactOpt.check();
+      await page.keyboard.press("Escape");
+      await tuneDialog.waitFor({ state: "hidden", timeout: 5000 });
     }
 
     // 8. Header brand navigates home; the hero offers the way back.
