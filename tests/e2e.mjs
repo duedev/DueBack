@@ -664,6 +664,94 @@ async function main() {
       `Tesla: kWh quantity doesn't flag the total (got "${tesla.flags}")`,
     );
 
+    // 7e. A suspected duplicate reviews side by side. Re-upload coffee.png
+    // under another name: the read flags it and names its twin by id
+    // (Flag.ref), review shows both, Keep both clears the warning on BOTH
+    // rows, and deleting the copy leaves the board as step 8 expects.
+    // (A local reader, not readRows: it needs ids and the flags themselves.)
+    const readDupRows = () =>
+      page.evaluate(async () => {
+        const open = indexedDB.open("reimbursements-f5");
+        const db = await new Promise((res, rej) => {
+          open.onsuccess = () => res(open.result);
+          open.onerror = () => rej(open.error);
+        });
+        const tx = db.transaction("receipts", "readonly");
+        const all = await new Promise((res) => {
+          const req = tx.objectStore("receipts").getAll();
+          req.onsuccess = () => res(req.result);
+        });
+        db.close();
+        return all.map((r) => ({
+          id: r.id,
+          file: r.originalFileName ?? r.fileName,
+          status: r.status,
+          dups: (r.flags || [])
+            .filter((f) => f.code === "duplicate")
+            .map((f) => ({ message: f.message, ref: f.ref ?? null })),
+        }));
+      });
+    log("re-uploading coffee.png as a duplicate…");
+    await page
+      .locator("input[type=file][multiple]")
+      .first()
+      .setInputFiles([
+        { name: "coffee-again.png", mimeType: "image/png", buffer: await makeReceiptPng() },
+      ]);
+    let dupRows = [];
+    const dupDeadline = Date.now() + 180000;
+    while (Date.now() < dupDeadline) {
+      dupRows = await readDupRows();
+      const again = dupRows.find((r) => r.file === "coffee-again.png");
+      if (again && ["done", "needs_review", "failed"].includes(again.status)) break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    const coffeeRow = dupRows.find((r) => r.file === "coffee.png") ?? {};
+    const againRow = dupRows.find((r) => r.file === "coffee-again.png") ?? {};
+    const againFlag = againRow.dups?.[0] ?? {};
+    log(`duplicate → ${againRow.file}: [${againRow.status}] ${againFlag.message ?? "no duplicate flag"}`);
+    check(againRow.status === "needs_review", `re-uploaded copy is held for review (got ${againRow.status})`);
+    check(
+      !!coffeeRow.id && againFlag.ref === coffeeRow.id,
+      `duplicate flag names its twin by id (ref ${againFlag.ref}, twin ${coffeeRow.id})`,
+    );
+    check(
+      /"coffee\.png"/.test(againFlag.message ?? ""),
+      `duplicate flag quotes the twin's upload name (got "${againFlag.message}")`,
+    );
+    await page.locator(".rc", { hasText: /Looks identical|possible duplicate/ }).first().click();
+    const dupDialog = page.getByRole("dialog", { name: /Review receipt/ });
+    await dupDialog.waitFor({ timeout: 10000 });
+    const peerRegion = page.getByRole("region", { name: /Possible duplicate/ });
+    await peerRegion.waitFor({ timeout: 10000 });
+    await peerRegion.locator("img").waitFor({ timeout: 10000 });
+    check(
+      ((await peerRegion.textContent()) ?? "").includes("coffee.png"),
+      "review shows the twin side by side, named by its upload",
+    );
+    check((await peerRegion.locator("img").count()) === 1, "the twin panel shows the twin's image");
+    await page.getByRole("button", { name: "Keep both" }).click();
+    await peerRegion.waitFor({ state: "detached", timeout: 10000 });
+    const keptRows = await readDupRows();
+    check(
+      keptRows.length === 8 && keptRows.every((r) => r.dups.length === 0),
+      "Keep both clears the duplicate warning on both copies",
+    );
+    check(
+      await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')),
+      "focus stays inside the review dialog after Keep both",
+    );
+    // Delete the copy (the footer Delete), then close: back to 7 receipts.
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".rc").length === 7, { timeout: 15000 });
+    await page.keyboard.press("Escape");
+    await dupDialog.waitFor({ state: "hidden", timeout: 5000 });
+    const afterDup = await readDupRows();
+    check(
+      afterDup.length === 7 && !afterDup.some((r) => r.file === "coffee-again.png"),
+      `deleting the copy leaves the original (${afterDup.length} receipts)`,
+    );
+
     // 8. Header brand navigates home; the hero offers the way back.
     await page.locator("header.ws-head .brand").click();
     await page.getByRole("heading", { name: /Receipts in/ }).waitFor({ timeout: 10000 });

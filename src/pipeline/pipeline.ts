@@ -7,7 +7,7 @@ import {
   matchKnownVendor,
   type Extraction,
 } from "./extract.ts";
-import { findSemanticDuplicate, type DupRecord } from "./dedup.ts";
+import { duplicateFlag } from "./dedup.ts";
 import { getOcrEngine, type OcrEngine } from "./ocr.ts";
 import { runVisionAssist, shouldAssist, type VisionAssist } from "./vision/index.ts";
 import { assistMethodDetail, reusableOcr } from "./vision/provenance.ts";
@@ -231,45 +231,24 @@ export async function processReceipt(
     //    match (byte-identical re-upload); failing that, a semantic match on
     //    vendor + date + amount (the same receipt photographed twice).
     const flags: Flag[] = [...ex.flags];
-    let duplicateOf: string | null = null;
-    const dupInBatch = sameHash.find((r) => r.batchId === receipt.batchId);
-    if (dupInBatch) {
-      duplicateOf = dupInBatch.fileName;
-      flags.unshift({
-        code: "duplicate",
-        severity: "warn",
-        message: `Looks identical to "${dupInBatch.fileName}".`,
-      });
-    } else {
-      const siblings = await repo.listReceipts(receipt.batchId);
-      const others: DupRecord[] = siblings
-        .filter((r) => r.id !== receiptId)
-        .map((r) => ({
-          id: r.id,
-          label: r.fileName,
-          vendor: r.vendor.value,
-          date: r.date.value,
-          amount: r.amount.value,
-        }));
-      const semDup = findSemanticDuplicate(
-        {
-          id: receiptId,
-          label: receipt.fileName,
-          vendor: ex.vendor.value,
-          date: ex.date.value,
-          amount: ex.amount.value,
-        },
-        others,
-      );
-      if (semDup) {
-        duplicateOf = semDup.label;
-        flags.unshift({
-          code: "duplicate",
-          severity: "warn",
-          message: `Same vendor, date and amount as "${semDup.label}" — possible duplicate.`,
-        });
-      }
-    }
+    // Last tier: the same amount plus a shared approval/invoice/reference
+    // code (a card slip and its invoice, whose vendor and date reads
+    // differ). The flag names its twin by id (Flag.ref) so review can show
+    // both side by side — dedup.duplicateFlag.
+    const hashTwin = sameHash.find((r) => r.batchId === receipt.batchId);
+    const duplicateOf = duplicateFlag(
+      {
+        id: receiptId,
+        vendor: ex.vendor.value,
+        date: ex.date.value,
+        amount: ex.amount.value,
+        lines: ocrLines,
+      },
+      hashTwin,
+      // The batch is only needed when no byte-identical twin answered.
+      hashTwin ? [] : await repo.listReceipts(receipt.batchId),
+    );
+    if (duplicateOf) flags.unshift(duplicateOf);
 
     const needsReview =
       forcesManualReview(flags) ||

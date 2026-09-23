@@ -62,6 +62,14 @@ export interface Flag {
   code: FlagCode;
   message: string;
   severity: "info" | "warn" | "error";
+  /** On a `duplicate` flag only: the id of the receipt this one appears to
+   *  duplicate, so review can show the two side by side. File names are
+   *  labels — renamed on every edit, and twins COLLIDE — so the message's
+   *  quoted name is never the lookup key. Absent on flags stored before it
+   *  existed; review resolves those from the message
+   *  (dedup.resolveDuplicateFlag). Rides the sync payload jsonb — no
+   *  migration. */
+  ref?: string;
 }
 
 /** A single extracted field plus where on the image it came from and how
