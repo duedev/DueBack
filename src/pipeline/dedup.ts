@@ -479,8 +479,11 @@ export function flagsWithoutDuplicate<F extends Pick<Flag, "code" | "message" | 
  *  left to resolve to) re-pointed at `keeper`: `ref` becomes the keeper's
  *  id and the message is rebuilt from the holder–keeper pair as it is now,
  *  quoting the keeper's upload name. Never adds a warning and never drops a
- *  live one: a re-pointed warning that would repeat one the holder already
- *  carries about the keeper folds into it (one pair, one warning). The
+ *  live one — except onto a couple a human kept apart ("Keep both",
+ *  `keptApart`): that warning leaves with the deleted copy rather than
+ *  re-pair what the human cleared. A re-pointed warning that would repeat
+ *  one the holder already carries about the keeper folds into it (one
+ *  pair, one warning). The
  *  keeper itself (and the deleted copy) pass through untouched — a receipt
  *  is never its own duplicate. Untouched flags keep their identity. Pure. */
 export function retargetDuplicateFlags<F extends Pick<Flag, "code" | "message" | "ref">>(
@@ -500,6 +503,7 @@ export function retargetDuplicateFlags<F extends Pick<Flag, "code" | "message" |
       continue;
     }
     if (keeperWarned) continue; // already flagged against the keeper
+    if (keptApart(holder, keeper)) continue; // a human kept this couple apart
     keeperWarned = true;
     out.push({ ...f, ref: keeper.id, message: duplicateMessage(pairTie(holder, keeper), shownName(keeper)) });
   }

@@ -546,3 +546,32 @@ test("duplicateFlag never re-pairs a kept-apart couple — on any tier", () => {
     "another-copy",
   );
 });
+
+test("a delete never re-points a warning onto a couple the human kept apart", () => {
+  // A original; B a re-photo (→A); C a separate purchase the human kept apart
+  // from A, later re-checked against B (→B). Deleting B must not re-pair C
+  // with A — that warning leaves with B.
+  const a = { ...cand({ id: "a", originalFileName: "IMG_A.jpg", notDuplicateOf: ["c"] }), createdAt: 1 };
+  const b = {
+    ...cand({ id: "b", originalFileName: "IMG_B.jpg" }),
+    createdAt: 2,
+    flags: [dupFlag("a", 'Same vendor, date and amount as "IMG_A.jpg" — possible duplicate.')],
+  };
+  const c = {
+    ...cand({ id: "c", originalFileName: "IMG_C.jpg", notDuplicateOf: ["a"] }),
+    createdAt: 3,
+    flags: [dupFlag("b", 'Same vendor, date and amount as "IMG_B.jpg" — possible duplicate.')],
+  };
+  const before = [a, b, c];
+  const plan = planDuplicateDelete(b, before);
+  assert.equal(plan?.keeper.id, "a");
+  assert.deepEqual(retargetDuplicateFlags(c, "b", a, before), [], "C's warning goes with B");
+  // The onward shape: the keeper's own warning would move on to a kept-apart copy.
+  const a2 = { ...a, flags: [dupFlag("b", 'Same vendor, date and amount as "IMG_B.jpg" — possible duplicate.')] };
+  const b2 = { ...b, flags: [dupFlag("c", 'Same vendor, date and amount as "IMG_C.jpg" — possible duplicate.')] };
+  assert.deepEqual(retargetDuplicateFlags(a2, "b", c, [a2, b2, c]), [], "A's warning isn't moved onward to C");
+  // Without the verdict, the same delete still re-points (as before).
+  const cOpen = { ...c, notDuplicateOf: undefined };
+  const aOpen = { ...a, notDuplicateOf: undefined };
+  assert.equal(retargetDuplicateFlags(cOpen, "b", aOpen, [aOpen, b, cOpen])[0]?.ref, "a");
+});

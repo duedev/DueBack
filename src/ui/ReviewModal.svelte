@@ -622,23 +622,32 @@
 
   /** "Keep both" on receipt `id` about `otherId`: drop its warnings about
    *  the twin AND record the verdict (`notDuplicateOf`), in ONE serialized,
-   *  CAS-guarded write. Clearing the flags alone left no trace, so the next
-   *  read or "Re-check this batch" paired the two again. */
-  function keepApart(id: string, otherId: string): Promise<void> {
+   *  CAS-guarded write — but only on a row that is written anyway (it held a
+   *  warning), unless `force`: rows sync whole, last-writer-wins, so touching
+   *  a row that held none would let this device's stale copy of it beat
+   *  another device's edit. Clearing the flags alone left no trace, so the
+   *  next read or "Re-check this batch" paired the two again (`keptApart`
+   *  reads either side's record). Resolves whether it wrote. */
+  function keepApart(id: string, otherId: string, force = false): Promise<boolean> {
+    let wrote = false;
     return serialized(async () => {
       for (let attempt = 0; attempt < 3; attempt++) {
         const stored = await repo.getReceipt(id);
         if (!stored) return;
         const flags = flagsWithoutDuplicate(stored, otherId, list);
+        const dropping = flags.length !== stored.flags.length;
         const recorded = stored.notDuplicateOf?.includes(otherId) ?? false;
-        if (flags.length === stored.flags.length && recorded) return;
+        if ((!dropping && !force) || (!dropping && recorded)) return;
         const patch: Partial<Receipt> = {
-          ...(flags.length !== stored.flags.length ? { flags } : {}),
+          ...(dropping ? { flags } : {}),
           ...(recorded ? {} : { notDuplicateOf: [...(stored.notDuplicateOf ?? []), otherId] }),
         };
-        if ((await repo.updateReceipt(id, patch, { updatedAt: stored.updatedAt })) !== null) return;
+        if ((await repo.updateReceipt(id, patch, { updatedAt: stored.updatedAt })) !== null) {
+          wrote = true;
+          return;
+        }
       }
-    });
+    }).then(() => wrote);
   }
 
   async function keepBoth(): Promise<void> {
@@ -647,8 +656,12 @@
     if (!d || !r) return;
     parkFocus();
     // Either copy may hold a warning about the other (or both do): clear
-    // both, and remember the verdict on both.
-    await Promise.all([keepApart(r.id, d.peer.id), keepApart(d.peer.id, r.id)]);
+    // and record on each row that holds one. When neither stored row still
+    // does (a stale board), the open receipt records the verdict alone — one
+    // side is enough for `keptApart`.
+    const here = await keepApart(r.id, d.peer.id);
+    const there = await keepApart(d.peer.id, r.id);
+    if (!here && !there) await keepApart(r.id, d.peer.id, true);
     app.toast("Kept both — the duplicate warning is cleared.", "ok");
   }
   /** Delete the open receipt. While it is part of a suspected pair (or

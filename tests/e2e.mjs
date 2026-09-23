@@ -1054,13 +1054,14 @@ async function main() {
         keptRows.length === 8 && keptRows.every((r) => r.dups.length === 0),
         "Keep both clears the duplicate warning on both copies",
       );
-      // …and remembers the verdict on both, so no later read or re-check
-      // pairs them again.
+      // …and remembers the verdict so no later read or re-check pairs them
+      // again — on the row that held the warning; the original, which held
+      // none, isn't rewritten (rows sync whole, last writer wins).
       const keptA = keptRows.find((r) => r.file === "coffee.png");
       const keptB = keptRows.find((r) => r.file === "coffee-again.png");
       check(
-        !!keptA && !!keptB && keptA.apart.includes(keptB.id) && keptB.apart.includes(keptA.id),
-        "Keep both records the pair as not-duplicates on both rows",
+        !!keptA && !!keptB && keptB.apart.includes(keptA.id) && keptA.apart.length === 0,
+        "Keep both records the verdict on the copy that held the warning, and leaves the original alone",
       );
       check(
         await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')),
