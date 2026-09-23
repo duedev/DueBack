@@ -701,7 +701,11 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   every proxied header is on `CORS_ALLOWED_REQUEST_HEADERS`.
   Every provider call goes through `visionFetch` (a TimeoutError reads
   "<label> timed out after N s"; a network TypeError on a local server
-  reads as a CORS/OLLAMA_ORIGINS hint), and `ai-extract`
+  reads as `unreachableHint` — fetch() hides WHICH wall stopped it (server
+  down, CORS, an extension's ERR_BLOCKED_BY_CLIENT — uBlock's "Block
+  Outsider Intrusion into LAN" list stops public sites calling 10.x/
+  192.168.x — local-network permission, mixed content), so the hint names
+  them all and points at the console), and `ai-extract`
   caps its upstream call at 85 s so the browser gets a clean JSON 504
   before its own deadline instead of a network error.
   Anthropic pricing (`priceFor`, Node-tested) resolves dated snapshot ids

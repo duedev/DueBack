@@ -17,7 +17,7 @@ import {
 import { openAiBody, openAiHeaders, parseOpenAiReply } from "../src/pipeline/vision/clients/openai.ts";
 import { anthropicBody, parseAnthropicReply } from "../src/pipeline/vision/clients/anthropic.ts";
 import { geminiBody, parseGeminiReply, toGeminiSchema } from "../src/pipeline/vision/clients/gemini.ts";
-import { toolArgs } from "../src/pipeline/vision/clients/shared.ts";
+import { toolArgs, unreachableHint } from "../src/pipeline/vision/clients/shared.ts";
 import { RECEIPT_JSON_SCHEMA, visionToExtraction } from "../src/pipeline/vision/schema.ts";
 import {
   AGENT_TOOLS,
@@ -489,4 +489,26 @@ test("one-shot reports its cost even when the answer is unparseable", async () =
   const ok = await runOneShot(scripted([{ text: JSON.stringify(SUBMITTED) }]), IMAGE);
   assert.deepEqual(ok.fields, SUBMITTED);
   assert.equal(ok.calls, 1);
+});
+
+// ── Unreachable-server hint ──────────────────────────────────────────────────
+
+test("an unreachable local server's hint names every cause fetch() hides, and points at the console", () => {
+  const lan = resolveEndpoint(
+    cfg({ backend: "selfhosted", selfhosted: { url: "http://10.0.0.167:1234/v1", model: "m" } }),
+    "",
+  );
+  const onHttps = unreachableHint(lan, "https:");
+  assert.match(onHttps, /^couldn't reach http:\/\/10\.0\.0\.167:1234\/v1\./, "the label isn't repeated");
+  assert.match(onHttps, /CORS/);
+  assert.match(onHttps, /ERR_BLOCKED_BY_CLIENT is an extension/);
+  assert.match(onHttps, /local network access/);
+  assert.match(onHttps, /Mixed Content/, "an https page calling http:// on the LAN");
+  // Loopback is exempt from mixed content everywhere, and an http page never mixes.
+  const loopback = resolveEndpoint(cfg({ backend: "local" }), "");
+  assert.doesNotMatch(unreachableHint(loopback, "https:"), /Mixed Content/);
+  assert.match(unreachableHint(loopback, "https:"), /OLLAMA_ORIGINS=/);
+  assert.doesNotMatch(unreachableHint(lan, "http:"), /Mixed Content/);
+  // Cloud stays terse: none of these causes apply to a public API.
+  assert.equal(unreachableHint(resolveEndpoint(cfg(), "k")), "couldn't reach https://openrouter.ai/api/v1.");
 });

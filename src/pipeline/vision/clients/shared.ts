@@ -29,19 +29,47 @@ export function appOrigin(): string {
   return typeof location !== "undefined" ? location.origin : APP_URL;
 }
 
-/** What to try when a server on this machine or network can't be reached:
- *  a browser reports a CORS refusal, a stopped server and a blocked
- *  local-network request all as the same bare "Failed to fetch". */
-export function unreachableHint(ep: Pick<Endpoint, "backend" | "label" | "baseUrl">): string {
-  const where = `${ep.label} at ${ep.baseUrl}`;
-  if (ep.backend === "cloud") return `couldn't reach ${where}.`;
+function isLoopback(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === "localhost" || host === "[::1]" || /^127\./.test(host);
+  } catch {
+    return false;
+  }
+}
+
+/** What to try when a server on this machine or network can't be reached.
+ *  fetch() rejects with the SAME bare TypeError whether the server is down,
+ *  refused CORS, an extension blocked the request (ERR_BLOCKED_BY_CLIENT —
+ *  e.g. uBlock Origin's "Block Outsider Intrusion into LAN" list, which
+ *  stops public sites calling 10.x / 192.168.x addresses), local-network
+ *  permission was denied, or mixed content was blocked: browsers hide which
+ *  on purpose, so a page can't map the network. Only the console says, so
+ *  the hint names the causes and points there. `pageProtocol` is injectable
+ *  for tests. */
+export function unreachableHint(
+  ep: Pick<Endpoint, "backend" | "label" | "baseUrl">,
+  pageProtocol: string = typeof location !== "undefined" ? location.protocol : "https:",
+): string {
+  if (ep.backend === "cloud") return `couldn't reach ${ep.baseUrl}.`;
   const allow =
     ep.label === "Ollama"
-      ? `start it with OLLAMA_ORIGINS=${appOrigin()}`
-      : "allow cross-origin requests (CORS) from this page";
+      ? `was started with OLLAMA_ORIGINS=${appOrigin()}`
+      : "allows cross-origin requests (CORS) from this page";
+  // An https page calling http:// beyond this machine: Chrome lets private
+  // IPs and .local names through once local-network access is allowed;
+  // Safari and Firefox block it outright.
+  const mixed =
+    pageProtocol === "https:" && /^http:\/\//i.test(ep.baseUrl) && !isLoopback(ep.baseUrl);
   return (
-    `couldn't reach ${where}. Is it running? It must also ${allow}` +
-    `, and the browser may ask to allow local-network access.`
+    `couldn't reach ${ep.baseUrl}. Check that it's running and ${allow}. ` +
+    `If it is, the browser stopped the request, and its console (F12) says why: ` +
+    `ERR_BLOCKED_BY_CLIENT is an extension such as an ad blocker (allow this site in it); ` +
+    `a local-network permission error needs local network access allowed for this site` +
+    (mixed
+      ? `; blocked "Mixed Content" means this https page can't call an http address in ` +
+        `this browser (Chrome allows private IPs; otherwise serve it over https or reach it via http://localhost).`
+      : ".")
   );
 }
 
