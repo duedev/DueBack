@@ -2,10 +2,13 @@ import { repo } from "../store/repo.ts";
 import { getCorrections } from "./corrections.ts";
 import { buildZip } from "../export/zip.ts";
 import { toCsvBytes } from "../export/csv.ts";
+import { isLegacyAiRead, ocrLinesText, parseLegacyMethod, tailCap } from "../pipeline/vision/provenance.ts";
 import type { Receipt } from "../types.ts";
 
 // One ZIP with everything a tuning session needs: the corrections log, every
-// receipt's full extraction (fields, flags, OCR text + line geometry), the
+// receipt's full extraction (fields, flags, OCR text + line geometry, cost,
+// and — for an AI read — its provenance: backend, model, one-shot vs
+// agentic, the model's own answer and the rules read it replaced), the
 // report CSV, and the original + highlighted images — so failures can be
 // reproduced from the exact inputs. Used by Settings ("Download tuning
 // bundle") and the contact form's attach checkbox.
@@ -42,6 +45,47 @@ export function originalEntryName(r: Pick<Receipt, "fileName" | "originalFileNam
           ? ".heic"
           : ".jpg";
   return raw + ext;
+}
+
+/** One receipt's extraction.json row. An AI read carries its `assist`
+ *  provenance; a row stored before provenance existed (`isLegacyAiRead`)
+ *  held the MODEL'S answer in `ocrText`, so its old `methodDetail` is parsed
+ *  into provider/model/strategy, the answer moves to `assist.rawAnswer`, and
+ *  `ocrText` is rebuilt from the OCR lines. Pure; Node-tested. */
+export function extractionEntry(r: Receipt, originalOmitted = false): Record<string, unknown> {
+  const legacy = isLegacyAiRead(r);
+  return {
+    id: r.id,
+    fileName: r.fileName,
+    originalFileName: r.originalFileName,
+    ...(originalOmitted ? { originalOmitted: true } : {}),
+    status: r.status,
+    approved: r.approved,
+    reviewRequired: r.reviewRequired,
+    vendor: r.vendor,
+    date: r.date,
+    amount: r.amount,
+    tax: r.tax,
+    category: r.category,
+    currency: r.currency,
+    confidence: r.confidence,
+    flags: r.flags,
+    method: r.methodDetail ?? r.methodUsed,
+    ...(r.assist
+      ? { assist: r.assist }
+      : legacy
+        ? {
+            assist: {
+              legacy: true,
+              ...parseLegacyMethod(r.methodDetail),
+              rawAnswer: tailCap(r.ocrText ?? ""),
+            },
+          }
+        : {}),
+    cost: r.cost,
+    ocrText: legacy ? ocrLinesText(r.ocrLines) : r.ocrText,
+    ocrLines: r.ocrLines,
+  };
 }
 
 export async function buildTuningBundle(receipts: Receipt[]): Promise<TuningBundle> {
@@ -94,26 +138,7 @@ export async function buildTuningBundle(receipts: Receipt[]): Promise<TuningBund
       name: "extraction.json",
       data: enc.encode(
         JSON.stringify(
-          receipts.map((r) => ({
-            id: r.id,
-            fileName: r.fileName,
-            originalFileName: r.originalFileName,
-            ...(omitted.has(r.id) ? { originalOmitted: true } : {}),
-            status: r.status,
-            approved: r.approved,
-            reviewRequired: r.reviewRequired,
-            vendor: r.vendor,
-            date: r.date,
-            amount: r.amount,
-            tax: r.tax,
-            category: r.category,
-            currency: r.currency,
-            confidence: r.confidence,
-            flags: r.flags,
-            method: r.methodDetail ?? r.methodUsed,
-            ocrText: r.ocrText,
-            ocrLines: r.ocrLines,
-          })),
+          receipts.map((r) => extractionEntry(r, omitted.has(r.id))),
           null,
           2,
         ),

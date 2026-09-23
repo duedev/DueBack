@@ -1,0 +1,526 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  ASSIST_RAW_MAX,
+  anchorAssistBoxes,
+  assistHost,
+  assistKeySource,
+  assistMethodDetail,
+  assistProvenance,
+  corroborate,
+  isLegacyAiRead,
+  parseLegacyMethod,
+  reusableOcr,
+  settleAssistExtraction,
+  tailCap,
+} from "../src/pipeline/vision/provenance.ts";
+import { visionToExtraction } from "../src/pipeline/vision/schema.ts";
+import { defaultVisionConfig, mergeVisionConfig } from "../src/pipeline/vision/config.ts";
+import { resolveEndpoint } from "../src/pipeline/vision/endpoint.ts";
+import { forcesManualReview, type Extraction } from "../src/pipeline/extract.ts";
+import type { AssistProvenance, BBox, OcrLine } from "../src/types.ts";
+
+// The AI assist's answer is values only: vision/provenance.ts anchors them
+// on the on-device OCR lines (the model says WHAT, the OCR says WHERE),
+// flags the values the OCR contradicts, and records who read the receipt
+// and how — without the endpoint's URL or key.
+
+function lines(texts: string[]): OcrLine[] {
+  return texts.map((text, i) => ({
+    text,
+    confidence: 90,
+    bbox: { x: 0, y: i / texts.length, w: 1, h: 1 / texts.length },
+    words: [],
+  }));
+}
+
+/** A real OCR line from the owner's uploaded batch (text, confidence, box). */
+type Raw = [string, number, number, number, number, number];
+const real = (rows: Raw[]): OcrLine[] =>
+  rows.map(([text, confidence, x, y, w, h]) => ({ text, confidence, bbox: { x, y, w, h }, words: [] }));
+
+const L = lines([
+  "MOBIL MART",
+  "123 MAIN ST",
+  "DATE 4/21/26 8:25",
+  "FUEL TOTAL $ 113.61",
+  "CREDIT 113.61",
+  "AMERICAN EXPRESS",
+]);
+
+const D: BBox = { x: 0.11, y: 0.52, w: 0.33, h: 0.04 };
+const D2: BBox = { x: 0.2, y: 0.36, w: 0.4, h: 0.05 };
+
+/** A hand-built rules draft: explicit values and boxes. */
+function draft(p: {
+  vendor?: string;
+  vendorBox?: BBox;
+  date?: string;
+  dateBox?: BBox;
+  amount?: number;
+  amountBox?: BBox;
+}): Extraction {
+  return {
+    vendor: { value: p.vendor ?? "", confidence: 0.7, ...(p.vendorBox ? { bbox: p.vendorBox } : {}) },
+    date: { value: p.date ?? "", confidence: 0.7, ...(p.dateBox ? { bbox: p.dateBox } : {}) },
+    amount: { value: p.amount ?? 0, confidence: 0.7, ...(p.amountBox ? { bbox: p.amountBox } : {}) },
+    tax: { value: 1.5, confidence: 0.6 },
+    currency: "USD",
+    category: { value: "Fuel", confidence: 0.85 },
+    confidence: 0.66,
+    flags: [{ code: "no_date", severity: "warn", message: "No date found." }],
+  };
+}
+
+const ai = (vendor: string, date: string, amount: number): Extraction =>
+  visionToExtraction({ vendor, date, amount, tax: 0, category: "Fuel" });
+
+// ── Boxes ────────────────────────────────────────────────────────────────────
+
+test("the model reading the rules' own amount/date reuses the draft's box, not the first line holding it", () => {
+  const out = anchorAssistBoxes(
+    ai("MOBIL MART", "2026-04-21", 113.61),
+    draft({ vendor: "Mobil", amount: 113.61, amountBox: D, date: "2026-04-21", dateBox: D2 }),
+    L,
+  );
+  assert.deepEqual(out.amount.bbox, D);
+  assert.deepEqual(out.date.bbox, D2);
+});
+
+test("same-brand vendors are the same read — the draft's box is reused when its line names the brand", () => {
+  // The receipt prints only the slogan: the model's "Home Depot" is nowhere
+  // verbatim, but the rules read the brand off that slogan line.
+  const slogan = lines(["HOW DOERS GET MORE DONE", "TOTAL 9.99"]);
+  const sBox: BBox = { x: 0.1, y: 0.1, w: 0.5, h: 0.3 };
+  const hd = anchorAssistBoxes(ai("Home Depot", "", 9.99), draft({ vendor: "The Home Depot", vendorBox: sBox }), slogan);
+  assert.deepEqual(hd.vendor.bbox, sBox);
+
+  // "MOBIL MART" vs a fuzzy-read "Mobil" on a garbled "MOBTL" line.
+  const garbled = lines(["MOBTL", "TOTAL 9.99"]);
+  const gBox: BBox = { x: 0.2, y: 0.1, w: 0.3, h: 0.2 };
+  const mobil = anchorAssistBoxes(ai("MOBIL MART", "", 9.99), draft({ vendor: "Mobil", vendorBox: gBox }), garbled);
+  assert.deepEqual(mobil.vendor.bbox, gBox);
+
+  // "sam's club" vs a line printing "SAMS CLUB": same text once folded.
+  const sams = lines(["SAMS CLUB", "TOTAL 9.99"]);
+  const cBox: BBox = { x: 0.05, y: 0.05, w: 0.6, h: 0.3 };
+  const sc = anchorAssistBoxes(ai("sam's club", "", 9.99), draft({ vendor: "Sam's Club", vendorBox: cBox }), sams);
+  assert.deepEqual(sc.vendor.bbox, cBox);
+});
+
+test("the model's full vendor string printed verbatim is boxed whole, not the rules' alias slice", () => {
+  // Real lines (fuel_03-02-26_chevron_station_inc): the rules box is the
+  // "chevron" slice of the line; the model named the whole line.
+  const chevron = real([
+    ["3390 La Slerra Ave.", 92, 0.0891, 0.1827, 0.6343, 0.0198],
+    ["chevron Station Inc.", 91, 0.0891, 0.1993, 0.6701, 0.0198],
+    ["00200734", 97, 0.0891, 0.2179, 0.265, 0.0214],
+    ["Riverside, CA", 96, 0.088, 0.2353, 0.4363, 0.0182],
+    ["03/02/2026 694565975", 95, 0.0891, 0.2835, 0.9109, 0.021],
+    ["FUEL TOTAL $¢ 83.44", 68, 0.1076, 0.6342, 0.8009, 0.0245],
+  ]);
+  const slice: BBox = { x: 0.0891, y: 0.1993, w: (0.6701 * 7) / 20, h: 0.0198 };
+  const out = anchorAssistBoxes(
+    ai("Chevron Station Inc.", "2026-03-02", 83.44),
+    draft({ vendor: "Chevron", vendorBox: slice }),
+    chevron,
+  );
+  assert.ok(out.vendor.bbox);
+  assert.ok(Math.abs(out.vendor.bbox!.w - 0.6701) < 1e-6, "spans the whole name");
+  assert.ok(Math.abs(out.vendor.bbox!.y - 0.1993) < 1e-6);
+});
+
+test("a rules vendor line sharing a distinctive word lends its box; generic words never do", () => {
+  // Real lines (misc_07-01-25_costco_wholesale): the rules read "WHOLESALE"
+  // off the logo line; the model read "Costco Wholesale".
+  const costco = real([
+    ["—— WHOLESALE", 0, 0.1626, 0.1108, 0.7276, 0.0204],
+    ["Corona #432", 94, 0.3094, 0.1469, 0.4496, 0.0112],
+    ["480 McKinley St.’", 77, 0.333, 0.1642, 0.3879, 0.015],
+    ["Corona, CA 92879", 95, 0.333, 0.1827, 0.3789, 0.0135],
+    ["Visa 38.05", 93, 0.2702, 0.6058, 0.6312, 0.0262],
+  ]);
+  const logoLine: BBox = { x: 0.1626, y: 0.1108, w: 0.7276, h: 0.0204 };
+  const out = anchorAssistBoxes(
+    ai("Costco Wholesale", "2025-07-01", 38.05),
+    draft({ vendor: "WHOLESALE", vendorBox: logoLine }),
+    costco,
+  );
+  assert.deepEqual(out.vendor.bbox, logoLine);
+
+  // "station" and "inc" tie nothing together: a Shell station's line never
+  // lends its box to a model that read "Chevron Station Inc.".
+  const shell = lines(["SHELL STATION", "TOTAL 9.99"]);
+  const none = anchorAssistBoxes(
+    ai("Chevron Station Inc.", "", 9.99),
+    draft({ vendor: "SHELL STATION", vendorBox: { x: 0, y: 0, w: 1, h: 0.5 } }),
+    shell,
+  );
+  assert.equal(none.vendor.bbox, undefined);
+});
+
+test("a logo-fused draft vendor's leftover box is not reused when its line doesn't name the brand", () => {
+  // Logo fusion renames the vendor but keeps the previous OCR line's box.
+  const ls = lines(["JOE'S PLACE", "TOTAL 9.99"]);
+  const out = anchorAssistBoxes(
+    ai("Costco", "", 9.99),
+    draft({ vendor: "Costco Wholesale", vendorBox: { x: 0, y: 0, w: 1, h: 0.5 } }),
+    ls,
+  );
+  assert.equal(out.vendor.bbox, undefined);
+});
+
+test("a value the rules missed is located on the OCR lines", () => {
+  const out = anchorAssistBoxes(
+    ai("MOBIL MART", "2026-04-21", 113.61),
+    draft({ vendor: "Mobil", amount: 61, amountBox: D }),
+    L,
+  );
+  // The FUEL TOTAL line (y = 3/6), not the CREDIT tender and not the
+  // garbled 61's box.
+  assert.ok(out.amount.bbox);
+  assert.equal(out.amount.bbox!.y, 0.5);
+  assert.notDeepEqual(out.amount.bbox, D);
+  assert.ok(out.date.bbox);
+  assert.equal(out.date.bbox!.y, 2 / 6);
+});
+
+test("a box is never invented or transferred to a different value", () => {
+  const out = anchorAssistBoxes(
+    ai("", "", 107.38),
+    draft({ vendor: "Chevron", vendorBox: D, date: "2026-03-13", dateBox: D2, amount: 187.38, amountBox: D }),
+    L,
+  );
+  assert.equal(out.amount.bbox, undefined, "107.38 is printed nowhere; the 187.38 box stays put");
+  assert.equal(out.vendor.bbox, undefined, "a blank vendor gets no box");
+  assert.equal(out.date.bbox, undefined, "a blank date gets no box");
+  const bare = anchorAssistBoxes(ai("Nowhere Cafe", "2026-01-02", 4.2), draft({}), []);
+  assert.equal(bare.vendor.bbox, undefined);
+  assert.equal(bare.date.bbox, undefined);
+  assert.equal(bare.amount.bbox, undefined);
+});
+
+test("a wrong-but-printed vendor gets an honest box on the line it was read from", () => {
+  const out = anchorAssistBoxes(ai("AMERICAN EXPRESS", "", 113.61), draft({ vendor: "Chevron", vendorBox: D }), L);
+  assert.ok(out.vendor.bbox);
+  assert.ok(Math.abs(out.vendor.bbox!.y - 5 / 6) < 1e-9);
+});
+
+test("a box the field already carries (a value taken from the OCR) is kept; a malformed one is re-found", () => {
+  const kept: BBox = { x: 0.3, y: 0.01, w: 0.2, h: 0.05 };
+  const fromOcr = { ...ai("MOBIL MART", "", 113.61) };
+  fromOcr.vendor = { ...fromOcr.vendor, bbox: kept };
+  fromOcr.amount = { ...fromOcr.amount, bbox: { x: 0, y: 0, w: 0, h: 0 } };
+  const out = anchorAssistBoxes(fromOcr, draft({}), L);
+  assert.deepEqual(out.vendor.bbox, kept);
+  assert.equal(out.amount.bbox!.y, 0.5, "a zero-area box is stripped and the value located");
+  // A blank value never carries a box, whatever it came with.
+  const blank = ai("", "", 0);
+  blank.vendor = { ...blank.vendor, bbox: kept };
+  assert.equal(anchorAssistBoxes(blank, draft({}), L).vendor.bbox, undefined);
+});
+
+test("anchoring touches boxes only and never mutates the model's read", () => {
+  const input = ai("MOBIL MART", "2026-04-21", 113.61);
+  const before = structuredClone(input);
+  const out = anchorAssistBoxes(input, draft({ vendor: "Mobil", amount: 61, amountBox: D }), L);
+  assert.deepEqual(input, before);
+  assert.deepEqual(out.tax, input.tax);
+  assert.deepEqual(out.category, input.category);
+  assert.deepEqual(out.flags, input.flags);
+  assert.equal(out.confidence, input.confidence);
+  assert.equal(out.vendor.value, "MOBIL MART");
+  assert.equal(out.amount.value, 113.61);
+  assert.equal(out.date.value, "2026-04-21");
+});
+
+// ── Corroboration ────────────────────────────────────────────────────────────
+
+// Real lines (fuel_03-13-26_american_express): FUEL TOTAL and CREDIT both
+// print 187.38; the model answered 107.38 and named the card network.
+const AMEX = real([
+  ["5. Hg Springs hee", 52, 0.2741, 0.1312, 0.4332, 0.0238],
+  ["Baring op gpg", 24, 0.3608, 0.1523, 0.2543, 0.0192],
+  ["308 g, HIGHLAND SPRI", 69, 0.1662, 0.1988, 0.6506, 0.0277],
+  ["SOBHy YOUSEF", 73, 0.169, 0.2177, 0.3963, 0.0231],
+  ["BANNING , CA", 81, 0.1733, 0.255, 0.527, 0.0262],
+  ["83/13/2028 78883184", 72, 0.1776, 0.2927, 0.6236, 0.0254],
+  ["05:31:99 AM", 73, 0.179, 0.3112, 0.3679, 0.0196],
+  ["AM Express", 88, 0.1889, 0.3669, 0.3239, 0.0173],
+  ["INVOICE 879212", 87, 0.1932, 0.3858, 0.4517, 0.0169],
+  ["PUMP# 14", 75, 0.1861, 0.4412, 0.7784, 0.0212],
+  ["Regular 18.842G", 72, 0.1491, 0.4673, 0.7045, 0.0281],
+  ["PRICE/GAL . $5.899", 47, 0.1747, 0.4935, 0.6804, 0.0208],
+  ["= FUEL TOTAL $ 187.38", 64, 0.1108, 0.5277, 0.7457, 0.0215],
+  ["TS TOTAL S & pr", 0, 0.0227, 0.5742, 0.8224, 0.0254],
+  ["CREDIT $ 187.38", 80, 0.1634, 0.6173, 0.6761, 0.0169],
+  ["Contactless N", 61, 0.1591, 0.7396, 0.5781, 0.0181],
+  ["AMERICAN EXPRESS", 67, 0.1605, 0.7585, 0.2699, 0.0115],
+]);
+
+// Real lines (mats_03-26-24_lowes): the date prints as 03/24/26 three times;
+// the model answered 2024-03-26.
+const LOWES = real([
+  ["LOVE'S HOME CENTERS, ILL", 75, 0.325, 0.235, 0.3732, 0.0062],
+  ["PALM DESERT, CA 92211 (760) 449-9000", 58, 0.2125, 0.2573, 0.6054, 0.0065],
+  ["SALESKS S25H50n0 5376128  TRANSR: 7785376710 3 24-20", 16, 0.1054, 0.2915, 0.8268, 0.0062],
+  ["SUBTUTAL: 02.00", 35, 0.4643, 0.4365, 0.4089, 0.0062],
+  ["TOTAL TAX: 26.40", 82, 0.45, 0.4465, 0.425, 0.0065],
+  ["THUOTCE 77° 5 TOTAL: 329.00", 53, 0.2875, 0.4573, 0.5875, 0.0065],
+  ["MEX: 329.00", 58, 0.5446, 0.4677, 0.3321, 0.0065],
+  ["HHEX OUCKRKXAXXKZ00 7 AMOUNT: 329.00 RUTHIE: 827507", 28, 0.1089, 0.5758, 0.8161, 0.0062],
+  ["CEP REF 10: 256306000321 03/24/26 11:44:70", 17, 0.1911, 0.5865, 0.6571, 0.0062],
+  ["STONE: 2563 TERMINAL: 06 03/24/26 11:44:31", 45, 0.1357, 0.6292, 0.7196, 0.0069],
+  ["THANK YOU FOR SHOPPING LOWES", 60, 0.2821, 0.7085, 0.4554, 0.0062],
+  ["STORE: 2563 TERKINAL 6 03/24/26 11:44:31", 59, 0.1179, 0.9712, 0.7554, 0.0062],
+]);
+
+test("an AI total the OCR can't find, differing from the rules total, is a review-forcing warn", () => {
+  const flags = corroborate(ai("AMERICAN EXPRESS", "2026-03-13", 107.38), draft({ amount: 187.38 }), AMEX);
+  assert.deepEqual(flags, [
+    {
+      code: "total_suspect",
+      severity: "warn",
+      message:
+        "The AI read $107.38, but that total isn't printed where the on-device reader could see it (it read $187.38) — check the total.",
+    },
+  ]);
+  assert.equal(forcesManualReview(flags), true);
+});
+
+test("an AI date the receipt doesn't print, where the rules date IS printed, is a review-forcing warn", () => {
+  const flags = corroborate(ai("LOWES", "2024-03-26", 329), draft({ date: "2026-03-24", amount: 329 }), LOWES);
+  assert.deepEqual(flags, [
+    {
+      code: "date_suspect",
+      severity: "warn",
+      message: "The AI read 2024-03-26, but the receipt prints 2026-03-24 — check the date.",
+    },
+  ]);
+  assert.equal(forcesManualReview(flags), true);
+});
+
+test("corroboration stays quiet when the OCR backs the AI, or has nothing to say", () => {
+  // The AI total is printed (the rules read a garbled 61): no flag.
+  assert.deepEqual(corroborate(ai("MOBIL MART", "2026-04-21", 113.61), draft({ amount: 61 }), L), []);
+  // Agreement, a missing rules value, or no lines at all: no flag.
+  assert.deepEqual(corroborate(ai("X", "2026-03-13", 187.38), draft({ amount: 187.38 }), AMEX), []);
+  assert.deepEqual(corroborate(ai("X", "2026-03-13", 107.38), draft({ amount: 0 }), AMEX), []);
+  assert.deepEqual(corroborate(ai("X", "2026-03-13", 107.38), draft({ amount: 187.38 }), []), []);
+  // The rules had no date (AMEX): a date the AI alone read isn't contradicted.
+  assert.deepEqual(corroborate(ai("X", "2026-03-13", 187.38), draft({ amount: 187.38 }), AMEX), []);
+  // Both dates printed somewhere, or the AI's is: no flag.
+  assert.deepEqual(corroborate(ai("X", "2026-03-24", 329), draft({ date: "2026-03-24", amount: 329 }), LOWES), []);
+  // A rules date the OCR can't place either is no evidence against the AI.
+  assert.deepEqual(corroborate(ai("X", "2024-03-26", 329), draft({ date: "2025-01-01", amount: 329 }), LOWES), []);
+});
+
+test("settling anchors, puts corroboration flags first, and never throws away a billed answer", () => {
+  const settled = settleAssistExtraction(ai("AMERICAN EXPRESS", "2026-03-13", 107.38), draft({ amount: 187.38 }), AMEX);
+  assert.equal(settled.flags[0]!.code, "total_suspect", "the review reason leads (the card shows flags[0])");
+  assert.equal(settled.amount.value, 107.38, "values never change — the human decides");
+  assert.equal(settled.amount.bbox, undefined);
+  assert.ok(settled.vendor.bbox, "the printed card network is boxed, visibly wrong");
+
+  // A poisoned draft makes both steps throw: the bare answer survives.
+  const poisoned = new Proxy({} as Extraction, {
+    get() {
+      throw new Error("boom");
+    },
+  });
+  const answer = ai("Shell", "2026-03-14", 43.2);
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    assert.deepEqual(settleAssistExtraction(answer, poisoned, L), answer);
+  } finally {
+    console.warn = warn;
+  }
+});
+
+// ── Provenance ───────────────────────────────────────────────────────────────
+
+const cfg = (patch: Parameters<typeof mergeVisionConfig>[1] = {}) => mergeVisionConfig(defaultVisionConfig(""), patch);
+
+test("where the model ran is recorded as a kind, never the URL", () => {
+  assert.equal(assistHost("http://localhost:11434/v1"), "this-device");
+  assert.equal(assistHost("http://127.0.0.1:1234/v1"), "this-device");
+  assert.equal(assistHost("http://[::1]:8080/v1"), "this-device");
+  assert.equal(assistHost("http://10.0.0.167:1234/v1"), "private-network");
+  assert.equal(assistHost("http://192.168.1.20:8000/v1"), "private-network");
+  assert.equal(assistHost("http://172.20.0.2/v1"), "private-network");
+  assert.equal(assistHost("http://100.101.102.103:8000/v1"), "private-network");
+  assert.equal(assistHost("http://[fd12:3456::1]:8000/v1"), "private-network");
+  assert.equal(assistHost("http://gpu-box:8000/v1"), "private-network");
+  assert.equal(assistHost("http://studio.local:1234/v1"), "private-network");
+  assert.equal(assistHost("http://172.32.0.2/v1"), "internet");
+  assert.equal(assistHost("https://llm.example.com/v1"), "internet");
+  assert.equal(assistHost("https://openrouter.ai/api/v1"), "internet");
+  assert.equal(assistHost("not a url"), "internet");
+});
+
+test("whose credential the call used is recorded as a kind, never the key", () => {
+  const free = resolveEndpoint(cfg({ cloud: { provider: "openrouter", model: "openrouter/free", apiKey: "" } }), "sk-built");
+  assert.equal(assistKeySource(free, "sk-built"), "builtin");
+  const own = resolveEndpoint(cfg({ cloud: { provider: "openrouter", model: "openrouter/free", apiKey: "sk-mine" } }), "sk-built");
+  assert.equal(assistKeySource(own, "sk-built"), "own");
+  assert.equal(assistKeySource({ ...free, apiKey: "jwt", viaProxy: true }, "sk-built"), "account");
+  const keyless = resolveEndpoint(cfg({ backend: "local" }), "");
+  assert.equal(assistKeySource(keyless, ""), "none");
+  const lan = resolveEndpoint(cfg({ backend: "selfhosted", selfhosted: { url: "http://10.0.0.167:1234/v1", model: "m", apiKey: "t0k" } }), "");
+  assert.equal(assistKeySource(lan, ""), "own");
+  // A keyless build: an empty key is never "the built-in key".
+  assert.equal(assistKeySource(resolveEndpoint(cfg(), ""), ""), "none");
+});
+
+test("the provenance record keeps the proxy downgrade, calls and the rules read — and neither URL nor key", () => {
+  const lan = resolveEndpoint(
+    cfg({ backend: "selfhosted", selfhosted: { url: "http://10.0.0.167:1234/v1", model: "bonsai-27b", apiKey: "sk-secret-123" } }),
+    "",
+  );
+  const rules = draft({ vendor: "WHOLESALE", date: "2025-01-01", amount: 38.05 });
+  const p = assistProvenance({
+    endpoint: lan,
+    requested: "oneshot",
+    strategy: "oneshot",
+    result: { model: "bonsai-27b", servedModel: "bonsai-27b", calls: 1, rawText: '{"vendor":"Costco"}' },
+    draft: rules,
+  });
+  assert.deepEqual(p, {
+    backend: "selfhosted",
+    provider: "Self-hosted",
+    model: "bonsai-27b",
+    host: "private-network",
+    keySource: "own",
+    requestedStrategy: "oneshot",
+    strategy: "oneshot",
+    viaProxy: false,
+    calls: 1,
+    rawAnswer: '{"vendor":"Costco"}',
+    rules: { vendor: "WHOLESALE", date: "2025-01-01", amount: 38.05, tax: 1.5, category: "Fuel", confidence: 0.66 },
+  });
+  assert.equal("servedModel" in p, false, "a served model equal to the configured one is not repeated");
+  const json = JSON.stringify(p);
+  for (const secret of ["10.0.0.167", "1234", "sk-secret-123"]) assert.equal(json.includes(secret), false, secret);
+
+  // Signed in: the proxy forced one-shot and its bearer is the session token.
+  const proxied = {
+    ...resolveEndpoint(cfg({ cloud: { provider: "openrouter", model: "openrouter/free", apiKey: "" } }), "sk-built"),
+    baseUrl: "https://proj.supabase.co/functions/v1/ai-extract",
+    apiKey: "eyJ.session.token",
+    viaProxy: true,
+  };
+  const viaAccount = assistProvenance({
+    endpoint: proxied,
+    requested: "agentic",
+    strategy: "oneshot",
+    result: { model: "openrouter/free", servedModel: "qwen/qwen2.5-vl-72b-instruct:free", calls: 1, rawText: "{}" },
+    draft: rules,
+    builtIn: "sk-built",
+  });
+  assert.equal(viaAccount.requestedStrategy, "agentic");
+  assert.equal(viaAccount.strategy, "oneshot");
+  assert.equal(viaAccount.viaProxy, true);
+  assert.equal(viaAccount.keySource, "account");
+  assert.equal(viaAccount.host, "internet");
+  assert.equal(viaAccount.servedModel, "qwen/qwen2.5-vl-72b-instruct:free");
+  const pj = JSON.stringify(viaAccount);
+  assert.equal(pj.includes("eyJ.session.token") || pj.includes("supabase.co") || pj.includes("sk-built"), false);
+});
+
+test("the raw answer keeps its tail: the submit line and a reasoning JSON come last", () => {
+  const long = "x".repeat(10_000) + '{"amount":1}';
+  const capped = tailCap(long);
+  assert.equal(capped.length, ASSIST_RAW_MAX + 1);
+  assert.ok(capped.startsWith("…"));
+  assert.ok(capped.endsWith('{"amount":1}'));
+  assert.equal(tailCap("short"), "short");
+  const p = assistProvenance({
+    endpoint: resolveEndpoint(cfg({ backend: "local" }), ""),
+    requested: "oneshot",
+    strategy: "oneshot",
+    result: { model: "m", calls: 1, rawText: long },
+    draft: draft({}),
+  });
+  assert.equal(p.rawAnswer, capped);
+});
+
+const PROV: AssistProvenance = {
+  backend: "selfhosted",
+  provider: "Self-hosted",
+  model: "bonsai-27b",
+  host: "private-network",
+  keySource: "none",
+  requestedStrategy: "oneshot",
+  strategy: "oneshot",
+  viaProxy: false,
+  calls: 1,
+  rawAnswer: "{}",
+  rules: { vendor: "", date: "", amount: 0, tax: 0, category: "Other", confidence: 0.5 },
+};
+
+test("methodDetail always names the strategy (absence no longer implies one-shot)", () => {
+  assert.equal(assistMethodDetail(PROV), "Self-hosted · bonsai-27b · one-shot");
+  assert.equal(
+    assistMethodDetail({ ...PROV, strategy: "agentic", requestedStrategy: "agentic", calls: 3 }),
+    "Self-hosted · bonsai-27b · agentic, 3 calls",
+  );
+  assert.equal(
+    assistMethodDetail({ ...PROV, strategy: "agentic", requestedStrategy: "agentic", calls: 1 }),
+    "Self-hosted · bonsai-27b · agentic, 1 call",
+  );
+  assert.equal(
+    assistMethodDetail({
+      ...PROV,
+      backend: "cloud",
+      provider: "OpenRouter",
+      model: "openrouter/free",
+      servedModel: "qwen/x:free",
+      requestedStrategy: "agentic",
+      viaProxy: true,
+    }),
+    "OpenRouter · openrouter/free → qwen/x:free · one-shot (agentic requested) · via your account",
+  );
+});
+
+test("rows stored before provenance: detected, and their old methodDetail parsed", () => {
+  assert.equal(isLegacyAiRead({ methodUsed: "paid" }), true);
+  assert.equal(isLegacyAiRead({ methodUsed: "paid", assist: PROV }), false);
+  assert.equal(isLegacyAiRead({ methodUsed: "rules" }), false);
+  assert.deepEqual(parseLegacyMethod("Self-hosted · bonsai-27b"), {
+    provider: "Self-hosted",
+    model: "bonsai-27b",
+    strategy: "oneshot",
+  });
+  assert.deepEqual(parseLegacyMethod("OpenRouter · openrouter/free · agentic"), {
+    provider: "OpenRouter",
+    model: "openrouter/free",
+    strategy: "agentic",
+  });
+  assert.deepEqual(parseLegacyMethod(undefined), { provider: "", model: "", strategy: "oneshot" });
+});
+
+// ── The image-hash cache ─────────────────────────────────────────────────────
+
+test("the hash cache never lends an AI row's answer as if it were printed", () => {
+  const ocrLines = [
+    { text: "COSTCO", confidence: 80, bbox: { x: 0, y: 0, w: 1, h: 0.1 }, words: [] },
+    { text: "TOTAL 9.99", confidence: 60, bbox: { x: 0, y: 0.5, w: 1, h: 0.1 }, words: [] },
+  ];
+  // A rules row lends its OCR text and lines (and its stored confidence).
+  assert.deepEqual(reusableOcr({ methodUsed: "rules", ocrText: "COSTCO\n\nTOTAL 9.99", ocrLines, confidence: 0.77 }), {
+    text: "COSTCO\n\nTOTAL 9.99",
+    lines: ocrLines,
+    confidence: 77,
+  });
+  assert.deepEqual(reusableOcr({ methodUsed: "rules", ocrText: "TOTAL 1.00", confidence: 0.5 })?.lines, []);
+  assert.equal(reusableOcr({ methodUsed: "rules", ocrText: "", ocrLines, confidence: 0.9 }), null);
+  // An AI row (legacy or not) lends its LINES, rebuilt as text, with their
+  // mean OCR confidence — never its ocrText or the model's 0.92.
+  const json = '{"vendor": "Costco Wholesale", "amount": 9.99}';
+  for (const assist of [undefined, PROV]) {
+    const lent = reusableOcr({ methodUsed: "paid", ocrText: json, ocrLines, confidence: 0.92, ...(assist ? { assist } : {}) });
+    assert.deepEqual(lent, { text: "COSTCO\nTOTAL 9.99", lines: ocrLines, confidence: 70 });
+  }
+  assert.equal(reusableOcr({ methodUsed: "paid", ocrText: json, confidence: 0.92 }), null, "no lines, nothing honest to lend");
+});

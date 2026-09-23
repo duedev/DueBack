@@ -250,6 +250,24 @@ test("OpenAI replies parse tool calls, synthesize missing ids, and surface 200-w
   assert.throws(() => parseOpenAiReply({ error: { message: "no free provider" } }, or), /no free provider/);
 });
 
+test("every dialect surfaces the model the server says answered", () => {
+  // OpenRouter's free router names its pick per request.
+  const or = resolveEndpoint(cfg(), "k");
+  const routed = parseOpenAiReply(
+    { model: "meta-llama/llama-3.2-11b-vision-instruct:free", choices: [{ message: { content: "{}" } }] },
+    or,
+  );
+  assert.equal(routed.model, "meta-llama/llama-3.2-11b-vision-instruct:free");
+  assert.equal("model" in parseOpenAiReply({ choices: [{ message: { content: "{}" } }] }, or), false);
+  assert.equal("model" in parseOpenAiReply({ model: "", choices: [{ message: { content: "{}" } }] }, or), false);
+  // Anthropic answers an alias with its dated snapshot; Gemini reports its version.
+  const an = resolveEndpoint(cfg({ cloud: { provider: "anthropic", model: "claude-haiku-4-5", apiKey: "k" } }), "");
+  assert.equal(parseAnthropicReply({ model: "claude-haiku-4-5-20251001", content: [] }, an).model, "claude-haiku-4-5-20251001");
+  assert.equal("model" in parseAnthropicReply({ content: [] }, an), false);
+  assert.equal(parseGeminiReply({ modelVersion: "gemini-2.5-flash", candidates: [] }).model, "gemini-2.5-flash");
+  assert.equal("model" in parseGeminiReply({ candidates: [] }), false);
+});
+
 test("toolArgs tolerates strings, objects and junk", () => {
   assert.deepEqual(toolArgs('{"a":1}'), { a: 1 });
   assert.deepEqual(toolArgs({ a: 1 }), { a: 1 });
@@ -493,6 +511,29 @@ test("one-shot reports its cost even when the answer is unparseable", async () =
   assert.equal(ok.calls, 1);
 });
 
+test("a run reports the model(s) that actually answered, not just the configured id", async () => {
+  const one = await runOneShot(scripted([{ text: JSON.stringify(SUBMITTED), model: "qwen/x:free" }]), IMAGE);
+  assert.equal(one.model, "fake-1", "the configured id stays");
+  assert.equal(one.servedModel, "qwen/x:free");
+  const silent = await runOneShot(scripted([{ text: JSON.stringify(SUBMITTED) }]), IMAGE);
+  assert.equal("servedModel" in silent, false);
+  // The router can hand each call of one agent run to a different model.
+  const agent = await runAgentic(
+    scripted([
+      { toolCalls: [{ id: "a", name: "lookup_vendor", args: { name: "Shell" } }], model: "a" },
+      { toolCalls: [{ id: "b", name: SUBMIT_TOOL, args: SUBMITTED }], model: "b" },
+    ]),
+    IMAGE,
+    { draft: null, lines: [] },
+  );
+  assert.equal(agent.servedModel, "a, b");
+  const quiet = await runAgentic(scripted([{ toolCalls: [{ id: "b", name: SUBMIT_TOOL, args: SUBMITTED }] }]), IMAGE, {
+    draft: null,
+    lines: [],
+  });
+  assert.equal("servedModel" in quiet, false);
+});
+
 // ── Unreachable-server hint ──────────────────────────────────────────────────
 
 test("an unreachable local server's hint names every cause fetch() hides, and points at the console", () => {
@@ -589,7 +630,7 @@ test("an answer filed entirely as reasoning is still read (LM Studio + a thinkin
   assert.match(reply.reasoning!, /TEST CAFE/);
   const res = await runOneShot(scripted([reply]), IMAGE);
   assert.deepEqual(res.fields, { vendor: "TEST CAFE", date: "2026-01-02", amount: 4.2, tax: 0, category: "Meals" });
-  assert.match(res.rawText, /TEST CAFE/, "the review panel keeps what the model wrote");
+  assert.match(res.rawText, /TEST CAFE/, "the provenance keeps what the model wrote");
   // vLLM / OpenRouter name the same channel `reasoning`.
   assert.equal(parseOpenAiReply({ choices: [{ message: { content: "", reasoning: "r" } }] }, ep).reasoning, "r");
   // Gemini's thought parts are its reasoning channel.

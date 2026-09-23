@@ -41,13 +41,23 @@ export async function runAgentic(
   const turns: ChatTurn[] = [
     { role: "user", content: [{ type: "text", text: agentBrief(ctx) }, image] },
   ];
-  // A readable trace of the run, kept as the receipt's raw text for review.
+  // A readable trace of the run, kept as the receipt's assist.rawAnswer.
   const trace: string[] = [];
+  // Every model a server reported answering: the free router can route each
+  // call of one run to a different model.
+  const served = new Set<string>();
   let cost = 0;
   let lastReply: ChatReply | null = null;
   const finish = (fields: Record<string, unknown>, calls: number): VisionExtraction => {
     trace.push(`${SUBMIT_TOOL} ${JSON.stringify(fields)}`);
-    return { fields, rawText: trace.join("\n"), costUsd: cost, model: client.model, calls };
+    return {
+      fields,
+      rawText: trace.join("\n"),
+      costUsd: cost,
+      model: client.model,
+      calls,
+      ...(served.size ? { servedModel: [...served].join(", ") } : {}),
+    };
   };
 
   for (let call = 1; call <= maxCalls; call++) {
@@ -65,6 +75,7 @@ export async function runAgentic(
     cost += reply.costUsd;
     opts.onCost?.(reply.costUsd);
     lastReply = reply;
+    if (reply.model) served.add(reply.model);
 
     const submit = reply.toolCalls.find((tc) => tc.name === SUBMIT_TOOL);
     if (submit) return finish(submit.args, call);

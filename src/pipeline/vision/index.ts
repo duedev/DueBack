@@ -1,8 +1,10 @@
 import type { Extraction } from "../extract.ts";
+import type { AssistProvenance, OcrLine } from "../../types.ts";
 import type { Strategy, VisionExtraction } from "./types.ts";
 import { getVisionConfig, withinBudget, recordSpend, type VisionConfig } from "./config.ts";
 import { effectiveStrategy, endpointProblem, resolveEndpoint, type Endpoint } from "./endpoint.ts";
 import { visionToExtraction } from "./schema.ts";
+import { assistProvenance, settleAssistExtraction } from "./provenance.ts";
 import { createClient } from "./clients/index.ts";
 import { blobToBase64 } from "./clients/shared.ts";
 import { runOneShot, type ImagePart } from "./strategies/oneshot.ts";
@@ -62,25 +64,25 @@ function runPlan(plan: AssistPlan, image: ImagePart, ctx: AgentContext): Promise
 }
 
 export interface VisionAssist {
+  /** The model's read, with boxes anchored on the on-device OCR lines and
+   *  corroboration flags where the OCR contradicts it (provenance.ts). */
   extraction: Extraction;
   costUsd: number;
-  /** The endpoint's label ("Ollama", "OpenRouter", "Self-hosted"…). */
-  provider: string;
-  model: string;
-  strategy: Strategy;
-  rawText: string;
+  /** Who read it and how — stored as `Receipt.assist`. */
+  provenance: AssistProvenance;
 }
 
 /**
  * Run the AI assist for a low-confidence receipt, if configured (and, for a
  * metered cloud backend, within budget). Returns null — leaving the rules
  * result untouched — when the tier is off, not triggered, over budget, or
- * the call fails. `lines` is the on-device OCR read the agent can search.
+ * the call fails. `lines` is the on-device OCR read: the agent can search it,
+ * and the answer's boxes are anchored on it (a model returns values only).
  */
 export async function runVisionAssist(
   image: Blob,
   ex: Extraction,
-  lines: AgentContext["lines"] = [],
+  lines: OcrLine[] = [],
 ): Promise<VisionAssist | null> {
   if (!shouldAssist(ex)) return null;
   const cfg = getVisionConfig();
@@ -93,13 +95,21 @@ export async function runVisionAssist(
   }
   try {
     const result = await runPlan(plan, { type: "image", ...(await blobToBase64(image)) }, { draft: ex, lines });
+    // `ex` is the rules draft (after the rescue swap and logo fusion), read
+    // from the same OCR lines, so its boxes share their frame. Any vetting
+    // of the model's values belongs BEFORE the settle step, which anchors
+    // boxes on the values as they stand. Both steps below are total — the
+    // answer is already billed and must never be discarded by bookkeeping.
     return {
-      extraction: visionToExtraction(result.fields),
+      extraction: settleAssistExtraction(visionToExtraction(result.fields), ex, lines),
       costUsd: result.costUsd,
-      provider: plan.endpoint.label,
-      model: result.model,
-      strategy: plan.strategy,
-      rawText: result.rawText,
+      provenance: assistProvenance({
+        endpoint: plan.endpoint,
+        requested: cfg.strategy,
+        strategy: plan.strategy,
+        result,
+        draft: ex,
+      }),
     };
   } catch (err) {
     console.warn("[vision] AI assist failed; keeping the on-device result.", err);
@@ -118,6 +128,8 @@ export async function testVisionConnection(
     const image: ImagePart = { type: "image", ...(await blobToBase64(await tinyTestImage())) };
     const res = await runPlan(plan, image, { draft: null, lines: [] });
     const via = plan.endpoint.viaProxy ? " through your account" : "";
+    // The free router names its pick per request — say which model answered.
+    const served = res.servedModel && res.servedModel !== plan.endpoint.model ? ` → ${res.servedModel}` : "";
     const how =
       plan.strategy === "agentic" ? ` (agentic, ${res.calls} call${res.calls === 1 ? "" : "s"})` : "";
     const downgraded =
@@ -126,7 +138,7 @@ export async function testVisionConnection(
         : "";
     return {
       ok: true,
-      message: `${plan.endpoint.label} · ${plan.endpoint.model} answered${via}${how}.${downgraded}`,
+      message: `${plan.endpoint.label} · ${plan.endpoint.model}${served} answered${via}${how}.${downgraded}`,
     };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) };

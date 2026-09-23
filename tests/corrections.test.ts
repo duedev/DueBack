@@ -83,6 +83,43 @@ test("buildCorrectionRecords diffs a review patch with located provenance", () =
   assert.ok(records.every((r) => r.ts === 123 && r.receiptId === "r1"));
 });
 
+test("an AI read's corrections carry the rules tier's value for the field; a rules read's don't", () => {
+  const aiRead: Receipt = {
+    ...receipt(),
+    vendor: { value: "Costco Wholesale", confidence: 0.9 },
+    amount: { value: 38.5, confidence: 0.92 },
+    methodUsed: "paid",
+    methodDetail: "Self-hosted · bonsai-27b · one-shot",
+    assist: {
+      backend: "selfhosted",
+      provider: "Self-hosted",
+      model: "bonsai-27b",
+      host: "private-network",
+      keySource: "none",
+      requestedStrategy: "oneshot",
+      strategy: "oneshot",
+      viaProxy: false,
+      calls: 1,
+      rawAnswer: "{}",
+      rules: { vendor: "WHOLESALE", date: "2025-01-01", amount: 38.05, tax: 3.06, category: "Other", confidence: 0.77 },
+    },
+  };
+  const records = buildCorrectionRecords(
+    aiRead,
+    {
+      vendor: { value: "Costco", confidence: 1, edited: true },
+      amount: { value: 38.05, confidence: 1, edited: true },
+    },
+    OCR,
+  );
+  const byField = Object.fromEntries(records.map((r) => [r.field, r]));
+  assert.equal(byField.vendor!.rules, "WHOLESALE");
+  assert.equal(byField.amount!.rules, 38.05, "the rules were right and the model broke it");
+  assert.equal(byField.amount!.method, "Self-hosted · bonsai-27b · one-shot");
+  const plain = buildCorrectionRecords(receipt(), { vendor: { value: "Mobil", confidence: 1, edited: true } }, OCR);
+  assert.equal("rules" in plain[0]!, false);
+});
+
 test("unchanged fields produce no correction records", () => {
   const before = receipt();
   const records = buildCorrectionRecords(

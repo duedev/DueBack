@@ -10,6 +10,7 @@ import {
 import { findSemanticDuplicate, type DupRecord } from "./dedup.ts";
 import { getOcrEngine, type OcrEngine } from "./ocr.ts";
 import { runVisionAssist, shouldAssist, type VisionAssist } from "./vision/index.ts";
+import { assistMethodDetail, reusableOcr } from "./vision/provenance.ts";
 import { receiptFileName } from "../util/rename.ts";
 import { annotateReceipt, HIGHLIGHT_COLORS } from "./annotate.ts";
 import { logoIndexAvailable, cropHeaderBand, searchLogo, type LogoHit } from "./logo/index.ts";
@@ -95,16 +96,17 @@ export async function processReceipt(
     const sameHash = (await repo.findByHash(imageHash)).filter(
       (r) => r.id !== receiptId,
     );
-    const cached = sameHash.find((r) => r.ocrText && r.ocrText.length > 0);
+    const cached = sameHash.map(reusableOcr).find((c) => c !== null) ?? null;
 
     let ocr: OcrResult;
-    if (cached?.ocrText) {
+    if (cached) {
       ocr = {
-        text: cached.ocrText,
-        confidence: cached.confidence * 100,
+        text: cached.text,
+        confidence: cached.confidence,
         // Reuse the cached geometry too — without it, a re-uploaded duplicate
-        // can never locate corrections or heal its highlights.
-        lines: cached.ocrLines ?? [],
+        // can never locate corrections or heal its highlights. An AI row's
+        // own answer and confidence are never lent (vision/provenance.ts).
+        lines: cached.lines,
         words: [],
       };
     } else {
@@ -127,7 +129,7 @@ export async function processReceipt(
     //     strictly retry-only — never the first pass. Best-effort: any
     //     failure keeps the original read.
     if (
-      !cached?.ocrText &&
+      !cached &&
       OCR_RESCUE.binarize &&
       (ocr.confidence < OCR_RESCUE.minConfidence || ex.amount.value <= 0)
     ) {
@@ -156,7 +158,6 @@ export async function processReceipt(
     let methodUsed: ExtractionMethod = "rules";
     let methodDetail: string | undefined;
     let cost = 0;
-    let ocrTextOut = ocr.text;
     // Pruned per-line geometry is persisted so a later human correction can
     // be located on the image, re-highlighted, and logged for training.
     const ocrLines = ocr.lines.map((l) => ({
@@ -203,8 +204,8 @@ export async function processReceipt(
     //     only when the user has opted in and configured a backend (local,
     //     self-hosted or cloud), get a vision-model second opinion — one-shot,
     //     or an agent that can also search this OCR read. It returns the same
-    //     Extraction shape, so everything below is identical. Any failure
-    //     silently keeps the free result.
+    //     Extraction shape — boxes anchored on these OCR lines — so everything
+    //     below is identical. Any failure silently keeps the free result.
     let assist: VisionAssist | null = null;
     if (shouldAssist(ex)) {
       // Never spend an AI call on a result that could not land: a receipt
@@ -218,11 +219,12 @@ export async function processReceipt(
     if (assist) {
       ex = assist.extraction;
       methodUsed = "paid";
-      methodDetail = [assist.provider, assist.model, assist.strategy === "agentic" ? "agentic" : ""]
-        .filter(Boolean)
-        .join(" · ");
+      methodDetail = assistMethodDetail(assist.provenance);
       cost = assist.costUsd;
-      if (assist.rawText) ocrTextOut = assist.rawText;
+      // The model's answer lives in `assist.rawAnswer`; ocrText stays the
+      // OCR read — the hash cache and the tuning bundle depend on it (it
+      // used to become the model's JSON, which the cache re-parsed as if
+      // it were printed on the receipt).
     }
 
     // 5. Duplicate detection within the same batch. First an exact image-hash
@@ -325,7 +327,7 @@ export async function processReceipt(
         imageHash,
         imageWidth: cleaned.width,
         imageHeight: cleaned.height,
-        ocrText: ocrTextOut,
+        ocrText: ocr.text,
         ocrLines,
         // A mid-flight save doesn't set status, which would strand the receipt
         // in "processing" — hand it to review. An approval's "done" stays, and
@@ -353,6 +355,10 @@ export async function processReceipt(
         logoMatch,
         methodUsed,
         methodDetail,
+        // Full patch only: when a human touched the receipt mid-flight the
+        // AI values are discarded, and so is their provenance. Undefined on
+        // a rules read clears a stale record, like methodDetail.
+        assist: assist?.provenance,
         cost,
         reviewRequired: needsReview,
         status: needsReview ? "needs_review" : "done",

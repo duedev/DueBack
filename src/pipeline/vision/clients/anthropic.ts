@@ -17,6 +17,8 @@ interface AnthropicBlock {
 }
 
 interface AnthropicResponse {
+  /** The model that answered (a dated snapshot for an alias id). */
+  model?: string;
   content?: AnthropicBlock[];
   stop_reason?: string | null;
   usage?: { input_tokens?: number; output_tokens?: number };
@@ -148,6 +150,7 @@ export function parseAnthropicReply(data: AnthropicResponse, ep: Endpoint): Chat
       })),
     costUsd: priceCall(ep.model, data.usage),
     truncated: data.stop_reason === "max_tokens",
+    ...(typeof data.model === "string" && data.model ? { model: data.model } : {}),
     raw: { dialect: "anthropic", message: blocks },
   };
 }

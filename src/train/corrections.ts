@@ -26,6 +26,9 @@ export interface CorrectionRecord {
   /** What the pipeline believed: overall confidence + extraction method. */
   confidence: number;
   method: string;
+  /** The free rules tier's value for this field when an AI assist replaced
+   *  it (`Receipt.assist.rules`) — rules-right-model-wrong vs both-missed. */
+  rules?: string | number;
 }
 
 const KEY = "training.log";
@@ -54,7 +57,14 @@ export function buildCorrectionRecords(
     locatable: "amount" | "vendor" | "date" | null,
   ): void => {
     if (from === to) return;
-    const rec: CorrectionRecord = { ...base, field, from, to, located: false };
+    const rec: CorrectionRecord = {
+      ...base,
+      field,
+      from,
+      to,
+      located: false,
+      ...(before.assist ? { rules: before.assist.rules[field] } : {}),
+    };
     if (locatable) {
       const hit = locateValue(lines, locatable, to);
       if (hit) {

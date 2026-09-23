@@ -65,5 +65,12 @@ export async function runOneShot(
     throw new Error(`${client.label} returned no parseable JSON.${unusableReply(reply, maxTokens)}`);
   }
   const rawText = answered ? reply.text : (reply.reasoning ?? "");
-  return { fields, rawText, costUsd: reply.costUsd, model: client.model, calls: 1 };
+  return {
+    fields,
+    rawText,
+    costUsd: reply.costUsd,
+    model: client.model,
+    calls: 1,
+    ...(reply.model ? { servedModel: reply.model } : {}),
+  };
 }

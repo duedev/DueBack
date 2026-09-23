@@ -85,6 +85,10 @@ export interface ChatReply {
    *  (reasoning_content / reasoning / Gemini thought parts). Not the answer —
    *  see schema.answerFromReasoning for the one exception. */
   reasoning?: string;
+  /** The model the server says answered. OpenRouter's router picks one per
+   *  request, so the configured "openrouter/free" alone never said which
+   *  model read the receipt. */
+  model?: string;
   raw?: { dialect: Dialect; message: unknown };
 }
 
@@ -97,12 +101,16 @@ export interface ChatClient {
 }
 
 /** A strategy's result: the model's raw JSON (validated/normalized later by
- *  schema.ts), the raw text kept for the review panel, and the total cost. */
+ *  schema.ts), the raw text (kept as the receipt's `assist.rawAnswer` —
+ *  never as its OCR text), and the total cost. */
 export interface VisionExtraction {
   fields: Record<string, unknown>;
   rawText: string;
   costUsd: number;
+  /** The configured model id. */
   model: string;
+  /** The model(s) the server reported answering, when it said. */
+  servedModel?: string;
   /** Model calls it took (1 for one-shot). */
   calls: number;
 }

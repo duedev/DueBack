@@ -14,6 +14,8 @@ interface GeminiPart {
 
 interface GeminiResponse {
   candidates?: { content?: { role?: string; parts?: GeminiPart[] }; finishReason?: string }[];
+  /** The model version that answered. */
+  modelVersion?: string;
 }
 
 /** Ids this adapter invented for calls that came without one; they are
@@ -152,6 +154,7 @@ export function parseGeminiReply(data: GeminiResponse): ChatReply {
     // at 0 because the free tier is the intended path here.
     costUsd: 0,
     truncated: data.candidates?.[0]?.finishReason === "MAX_TOKENS",
+    ...(typeof data.modelVersion === "string" && data.modelVersion ? { model: data.modelVersion } : {}),
     raw: content ? { dialect: "gemini", message: content } : undefined,
   };
 }

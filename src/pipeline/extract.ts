@@ -54,13 +54,15 @@ function overallConfidence(
 
 /** Flags that force a human review even when extraction "succeeded".
  *  Suspicious totals and garbled vendors are accepted as one-offs the rules
- *  can't fix — but they must never ship to a report without a human look. */
+ *  can't fix — but they must never ship to a report without a human look.
+ *  `date_suspect` is the AI tier's date the OCR can't corroborate
+ *  (vision/provenance.ts `corroborate`). */
 export function forcesManualReview(flags: Flag[]): boolean {
   return flags.some(
     (f) =>
       f.severity === "error" ||
       (f.severity === "warn" &&
-        (f.code === "total_suspect" || f.code === "vendor_unclear")),
+        (f.code === "total_suspect" || f.code === "date_suspect" || f.code === "vendor_unclear")),
   );
 }
 
@@ -272,4 +274,4 @@ export function parseReceipt(ocr: OcrResult): Extraction {
 export { TAX_MAX_RATIO } from "./rules/labels.ts";
 export { locateValue, readValueInBox } from "./rules/locate.ts";
 export { looksLikeMoney } from "./rules/money.ts";
-export { matchKnownVendor } from "./rules/vendor.ts";
+export { findAliasOnLines, matchKnownVendor, VENDOR_STOPWORD_RE } from "./rules/vendor.ts";

@@ -36,6 +36,9 @@ interface OpenAiResponse {
     };
   }[];
   usage?: { cost?: number };
+  /** The model that answered (OpenRouter's router names its pick here; the
+   *  ai-extract proxy passes the upstream body through verbatim). */
+  model?: string;
   error?: { message?: string };
 }
 
@@ -162,6 +165,7 @@ export function parseOpenAiReply(data: OpenAiResponse, ep: Endpoint): ChatReply 
     costUsd,
     truncated: data.choices?.[0]?.finish_reason === "length",
     ...(reasoning ? { reasoning } : {}),
+    ...(typeof data.model === "string" && data.model ? { model: data.model } : {}),
   };
 }
 
