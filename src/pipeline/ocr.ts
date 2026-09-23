@@ -145,6 +145,14 @@ class TesseractEngine implements OcrEngine {
     // Checked before the worker too: an aborted rescue read must not spin
     // up a fresh worker right after the pause terminated the old one.
     throwIfAborted(signal);
+    // The bytes are read HERE, never inside tesseract.js: its recognize()
+    // awaits a FileReader for a Blob BEFORE posting the job, and a pause that
+    // terminated the worker inside that window made its (async, unawaited)
+    // send() hit `null.postMessage` — an unhandled rejection the e2e counts
+    // as a page error. Handed bytes, its hop from recognize() to postMessage
+    // is microtasks only, which no click or channel message can interleave.
+    const bytes = new Uint8Array(await abortable(image.arrayBuffer(), signal));
+    throwIfAborted(signal);
     const worker = await abortable(this.getWorker(), signal);
     // A read that waited out the start-up must not OCR once it finishes.
     throwIfAborted(signal);
@@ -152,7 +160,9 @@ class TesseractEngine implements OcrEngine {
     // tesseract.js terminate() never settles the jobs it kills — a plain
     // await here would park the run (and its queue slot) forever.
     const { data } = await abortable(
-      worker.recognize(image, {}, { text: true, blocks: true }),
+      // The browser build takes raw bytes (loadImage passes a Uint8Array
+      // through); the .d.ts lists only Node's Buffer.
+      worker.recognize(bytes as unknown as Parameters<Worker["recognize"]>[0], {}, { text: true, blocks: true }),
       signal,
     );
 
