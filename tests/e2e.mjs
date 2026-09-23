@@ -13,7 +13,8 @@ import sharp from "sharp";
 import ExcelJS from "exceljs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PORT = 5179;
+// E2E_PORT lets parallel checkouts (git worktrees) run the gate side by side.
+const PORT = Number(process.env.E2E_PORT) || 5179;
 const BASE = `http://localhost:${PORT}/`;
 
 const log = (...a) => console.log("•", ...a);
