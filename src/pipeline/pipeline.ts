@@ -16,6 +16,7 @@ import { annotateReceipt, HIGHLIGHT_COLORS } from "./annotate.ts";
 import { logoIndexAvailable, cropHeaderBand, searchLogo, type LogoHit } from "./logo/index.ts";
 import { fuseVendorIdentity } from "./logo/fuse.ts";
 import { CONFIDENCE, OCR_RESCUE } from "../config/constants.ts";
+import { isAbortError, throwIfAborted } from "../util/abort.ts";
 import type { Receipt, Flag, OcrResult, ExtractionMethod, LogoMatch } from "../types.ts";
 
 // The worker's job, end to end (§8 "Process"): clean → hash (cache/dedup) →
@@ -55,10 +56,28 @@ export function completionWriteMode(
   return "full";
 }
 
+/** What a paused run hands its receipt back as. Only a run's own
+ *  "processing" stamp is undone — any other status is a human's (or a
+ *  sync mirror's) and stays. An approval that landed mid-flight un-strands
+ *  to "done", the completion write's rule. Pure; Node-tested. */
+export function pausedStatus(
+  latest: Pick<Receipt, "approved" | "status"> | undefined,
+): "queued" | "done" | null {
+  if (!latest || latest.status !== "processing") return null;
+  return latest.approved ? "done" : "queued";
+}
+
+/** `signal` is the queue's pause: the run checks it between stages and
+ *  unwinds with an AbortError (the receipt back to "queued" — see the
+ *  catch). Stages added before the AI assist should check it too; nothing
+ *  checks it once a metered assist call starts (that answer is billed). */
 export async function processReceipt(
   receiptId: string,
   engine: OcrEngine = getOcrEngine(),
+  signal?: AbortSignal,
 ): Promise<void> {
+  // Before the claim: nothing written yet, the queue just gives the job back.
+  throwIfAborted(signal);
   const receipt = await repo.getReceipt(receiptId);
   if (!receipt) return;
 
@@ -87,6 +106,11 @@ export async function processReceipt(
   try {
     // 1. Clean (auto-rotate, grayscale, auto-crop, downscale).
     const cleaned = await cleanImage(original);
+    // Pause checkpoints run from here to just before the AI assist, never
+    // past it: a run that reached a metered call finishes and lands rather
+    // than bill the same receipt twice on resume. This one sits before the
+    // blob write, so a pause stores nothing just to delete it.
+    throwIfAborted(signal);
     cleanedKey = await repo.putBlob(cleaned.blob, "cleaned");
 
     // 2. Hash the cleaned bytes → cache key + dedup key.
@@ -116,11 +140,13 @@ export async function processReceipt(
         cleaned.ocrBlob,
         cleaned.ocrWidth,
         cleaned.ocrHeight,
+        signal,
       );
     }
 
     // 4. Rules extraction (free, deterministic, on-device).
     let ex: Extraction = parseReceipt(ocr);
+    throwIfAborted(signal);
 
     // 4a. Weak-read rescue: when the grayscale pass reads poorly (or the
     //     rules can't find an amount), retry on an adaptively binarized copy
@@ -135,7 +161,9 @@ export async function processReceipt(
     ) {
       try {
         const bin = await binarizeBlob(cleaned.ocrBlob);
-        const ocr2 = await engine.recognize(bin.blob, bin.width, bin.height);
+        // A pause here is swallowed by the catch below; the checkpoint
+        // after the block unwinds it.
+        const ocr2 = await engine.recognize(bin.blob, bin.width, bin.height, signal);
         const ex2 = parseReceipt(ocr2);
         // Swap only when the retry is strictly safer: it found an amount the
         // first pass missed, or BOTH passes agree on the amount (then it's a
@@ -155,6 +183,7 @@ export async function processReceipt(
         /* rescue is pure upside — never fail the receipt over it */
       }
     }
+    throwIfAborted(signal);
     let methodUsed: ExtractionMethod = "rules";
     let methodDetail: string | undefined;
     let cost = 0;
@@ -199,6 +228,7 @@ export async function processReceipt(
     } catch {
       /* logo layer is pure upside — never fail the receipt over it */
     }
+    throwIfAborted(signal);
 
     // 4c. Optional AI accuracy dial (§5/§9): for a low-confidence receipt, and
     //     only when the user has opted in and configured a backend (local,
@@ -213,7 +243,11 @@ export async function processReceipt(
       // (below), so the assist's answer would be discarded — and billed.
       const pre = await repo.getReceipt(receiptId);
       if (completionWriteMode(pre, claimed.updatedAt, touchedBeforeClaim(receipt)) === "full") {
-        assist = await runVisionAssist(cleaned.blob, ex, ocr.lines);
+        // The LAST pause checkpoint — after the gate's read, right before
+        // anything can be billed. Past it, only a free (local/self-hosted)
+        // call listens to the signal; a metered one finishes and lands.
+        throwIfAborted(signal);
+        assist = await runVisionAssist(cleaned.blob, ex, ocr.lines, { signal });
       }
     }
     if (assist) {
@@ -356,10 +390,15 @@ export async function processReceipt(
       mode = completionWriteMode(latest, claimed.updatedAt, true); // someone wrote
     }
   } catch (err) {
-    // Same human-outranks-machine rule on the failure path: never stamp
-    // "failed" (and its flag overwrite) over a receipt approved mid-flight.
     const latest = await repo.getReceipt(receiptId);
-    if (!latest?.approved && latest?.status !== "done") {
+    if (signal?.aborted && isAbortError(err)) {
+      // Paused mid-read: not a failure — hand it back as queued (the queue
+      // returns the claim, attempt included). A real error while paused
+      // still takes the fail path below: both conditions are required.
+      await requeue(receiptId, latest);
+    } else if (!latest?.approved && latest?.status !== "done") {
+      // Same human-outranks-machine rule on the failure path: never stamp
+      // "failed" (and its flag overwrite) over a receipt approved mid-flight.
       await fail(receiptId, friendlyError(err, latest), latest?.updatedAt);
     }
     for (const key of [cleanedKey, annotatedKey]) {
@@ -400,6 +439,21 @@ export function friendlyError(
     return "This image couldn't be decoded — it may be corrupt or an unsupported format.";
   }
   return raw;
+}
+
+/** Undo a paused run's "processing" stamp — a compare-and-swap on the
+ *  re-read `updatedAt`, like the completion write, so a save that slips in
+ *  is re-read rather than overwritten. There is no unconditional last
+ *  write: a row left "processing" is harmless (its job is unclaimed, and
+ *  the next claim re-stamps it). */
+async function requeue(receiptId: string, latest: Receipt | undefined): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const status = pausedStatus(latest);
+    if (!status || !latest) return;
+    const written = await repo.updateReceipt(receiptId, { status }, { updatedAt: latest.updatedAt });
+    if (written !== null) return;
+    latest = await repo.getReceipt(receiptId);
+  }
 }
 
 async function fail(

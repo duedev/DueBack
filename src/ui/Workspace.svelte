@@ -6,7 +6,7 @@
   import ThemeToggle from "./ThemeToggle.svelte";
   import ReviewModal from "./ReviewModal.svelte";
   import ExportBar from "./ExportBar.svelte";
-  import Settings from "./Settings.svelte";
+  import SettingsButton from "./SettingsButton.svelte";
   import Segmented from "./Segmented.svelte";
   import type { Receipt } from "../types.ts";
 
@@ -143,9 +143,50 @@
           {#if app.counts.needs_review > 0}
             <span class="chip chip-warn">{app.counts.needs_review} to review</span>
           {/if}
+          {#if app.paused}
+            <!-- "Pausing…" while runs unwind — briefly at a checkpoint, or
+                 for the length of a metered AI call already under way (it
+                 is billed, so it lands rather than be paid for twice). -->
+            <span
+              class="chip"
+              title={app.runningJobs > 0
+                ? "Stopping the receipts mid-read — an AI read already under way finishes first"
+                : "Nothing is being read — resume with the play button"}
+            >{app.runningJobs > 0 ? "Pausing…" : "Paused"}</span>
+          {/if}
         </div>
       {/if}
       <div class="head-actions">
+        {#if total > 0 || app.paused}
+          <!-- The ThemeToggle idiom: a FIXED name, state on aria-pressed,
+               the action in the icon and title ("Resume reading" plus
+               aria-pressed would read "Resume reading, pressed"). Shown
+               whenever the board has receipts, not only while jobs remain,
+               so it never unmounts under focus or reflows the header as
+               the last receipt finishes. -->
+          <button
+            class="btn btn-ghost pause-btn"
+            onclick={() => app.togglePause()}
+            aria-label="Pause reading"
+            aria-pressed={app.paused}
+            title={app.paused
+              ? "Resume reading receipts"
+              : "Pause reading — receipts mid-read go back to the queue"}
+          >
+            {#if app.paused}
+              <!-- play -->
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M8 5.14v13.72a1 1 0 0 0 1.52.85l11-6.86a1 1 0 0 0 0-1.7l-11-6.86A1 1 0 0 0 8 5.14Z" />
+              </svg>
+            {:else}
+              <!-- pause -->
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="6" y="4.5" width="4.2" height="15" rx="1.2" />
+                <rect x="13.8" y="4.5" width="4.2" height="15" rx="1.2" />
+              </svg>
+            {/if}
+          </button>
+        {/if}
         {#if app.userEmail}
           {#if app.syncStatus === "error"}
             <!-- The chip used to say "synced" whatever the engine's state;
@@ -174,17 +215,7 @@
             <span class="ca-label">Delete all</span>
           </button>
         {/if}
-        <button
-          class="btn btn-ghost"
-          onclick={() => (app.settingsOpen = true)}
-          aria-label="Settings"
-          title="Settings"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="3.2" />
-            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h.01a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z" />
-          </svg>
-        </button>
+        <SettingsButton />
         <ThemeToggle />
       </div>
     </div>
@@ -321,7 +352,7 @@
 </button>
 
 <ReviewModal />
-<Settings />
+<!-- Settings is mounted ONCE, in App.svelte (both headers open it). -->
 
 <style>
   .ws {
@@ -374,6 +405,16 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
+  }
+  /* ThemeToggle's pill; pressed (paused) carries the accent, and the global
+     forced-colors [aria-pressed="true"] rule underlines it. */
+  .pause-btn {
+    padding: 0.55rem;
+    border-radius: var(--radius-pill);
+  }
+  .pause-btn[aria-pressed="true"] {
+    color: var(--accent);
+    background: var(--accent-soft);
   }
   /* Phone widths: the header must fit the viewport — with the root
      overflow-x clip an overflowing row wouldn't pan, it would put Settings

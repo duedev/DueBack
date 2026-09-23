@@ -26,13 +26,18 @@
   let dialogEl = $state<HTMLElement | null>(null);
 
   // On open, remember what had focus and move it into the dialog; on close
-  // ({#if} unmount → bind:this null) the effect cleanup gives it back.
+  // ({#if} unmount → bind:this null) the effect cleanup gives it back. The
+  // dialog lives in App.svelte and outlives a surface swap, so the opener
+  // may be gone by then — fall back to the gear the visible header shows.
   $effect(() => {
     const el = dialogEl;
     if (!el) return;
     const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     el.focus();
-    return () => prev?.focus();
+    return () => {
+      if (prev?.isConnected) prev.focus();
+      else document.querySelector<HTMLElement>("[data-settings-btn]")?.focus();
+    };
   });
 
   /** Keep Tab cycling inside the dialog instead of walking the obscured page. */

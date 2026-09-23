@@ -311,8 +311,11 @@ function readStored(): unknown {
 }
 
 export function getVisionConfig(): VisionConfig {
-  if (typeof localStorage === "undefined") return defaultVisionConfig();
+  // The typeof test sits INSIDE the try: in a storage-blocked iframe the
+  // global exists but its getter throws, and `typeof` still runs the getter
+  // — Settings (now one tap from the landing) failed to mount there.
   try {
+    if (typeof localStorage === "undefined") return defaultVisionConfig();
     return normalizeVisionConfig(readStored());
   } catch {
     return defaultVisionConfig();

@@ -26,13 +26,23 @@
   const remoteBusy = $derived(
     busy && app.userEmail !== null && !app.localJobIds.has(receipt.id),
   );
+  /** Waiting on THIS device's pause. A "processing" card counts once no run
+   *  is left unwinding: its row was stranded (the tab closed mid-pause, or
+   *  the requeue lost its compare-and-swap) and nothing is reading it. One
+   *  still inside a metered AI call keeps "Reading…" until it lands. */
+  const pausedHere = $derived(
+    busy &&
+      app.paused &&
+      app.localJobIds.has(receipt.id) &&
+      (receipt.status === "queued" || app.runningJobs === 0),
+  );
 
   /** What a screen reader hears on focus: status first, then the card's
    *  facts — including the review reason, the date and the logo state the
    *  visible card shows (aria-label replaces the button's content). */
   const ariaLabel = $derived.by(() => {
     const status =
-      receipt.status === "needs_review" ? "Review needed" : meta.label;
+      receipt.status === "needs_review" ? "Review needed" : pausedHere ? "Paused" : meta.label;
     if (receipt.status === "done" || receipt.status === "needs_review") {
       const amount =
         receipt.amount.value > 0
@@ -61,7 +71,8 @@
   onclick={() => (app.reviewId = receipt.id)}
   aria-label={ariaLabel}
 >
-  <div class="thumb" class:skeleton={busy}>
+  <!-- No shimmer while paused: nothing is being read. -->
+  <div class="thumb" class:skeleton={busy && !pausedHere}>
     {#await app.blobUrl(receipt.annotatedKey ?? receipt.cleanedKey ?? receipt.fileKey) then url}
       {#if url}
         <img src={url} alt="" loading="lazy" />
@@ -70,7 +81,7 @@
   </div>
   <div class="body">
     <div class="top">
-      <span class="chip {meta.cls}">{remoteBusy ? "Reading elsewhere…" : meta.label}</span>
+      <span class="chip {meta.cls}">{remoteBusy ? "Reading elsewhere…" : pausedHere ? "Paused" : meta.label}</span>
       {#if receipt.logoMatch?.source === "logo"}
         <span class="chip chip-ok" title="Brand identified visually">logo ✓</span>
       {/if}
@@ -112,7 +123,11 @@
       <div class="flags err">{receipt.error ?? "Processing failed."} Open it to read again or enter it by hand.</div>
     {:else}
       <div class="facts muted">
-        {remoteBusy ? "Being read on another device…" : "Reading on your device…"}
+        {remoteBusy
+          ? "Being read on another device…"
+          : pausedHere
+            ? "Paused — resume reading from the top bar."
+            : "Reading on your device…"}
       </div>
     {/if}
   </div>

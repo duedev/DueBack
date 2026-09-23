@@ -169,13 +169,18 @@ export function parseOpenAiReply(data: OpenAiResponse, ep: Endpoint): ChatReply 
   };
 }
 
-export function createOpenAiClient(ep: Endpoint): ChatClient {
+export function createOpenAiClient(ep: Endpoint, pause?: AbortSignal): ChatClient {
   const post = (body: Record<string, unknown>) =>
-    visionFetch(ep, `${ep.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: openAiHeaders(ep),
-      body: JSON.stringify(body),
-    });
+    visionFetch(
+      ep,
+      `${ep.baseUrl}/chat/completions`,
+      {
+        method: "POST",
+        headers: openAiHeaders(ep),
+        body: JSON.stringify(body),
+      },
+      pause,
+    );
   return {
     label: ep.label,
     model: ep.model,

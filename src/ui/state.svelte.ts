@@ -23,6 +23,10 @@ export interface Toast {
 
 const ACTIVE_BATCH_KEY = "activeBatchId";
 const THEME_KEY = "theme";
+/** kv flag: reading is paused on this device (survives a reload). */
+const PAUSED_KEY = "queue.paused";
+/** Carries the pause to this origin's other tabs — they share the jobs table. */
+const PAUSE_CHANNEL = "dueback-queue";
 
 export type ThemePref = "auto" | "light" | "dark";
 
@@ -33,7 +37,14 @@ class AppState {
 
   batch = $state<Batch | null>(null);
   receipts = $state<Receipt[]>([]);
+  /** Jobs in this browser's work-list (waiting, running or paused). */
   pendingJobs = $state(0);
+  /** Receipts mid-read right now. While paused, the reload bar waits only
+   *  on these — a paused job is unclaimed and strands nothing. */
+  runningJobs = $state(0);
+  /** Reading is paused on this device (the header toggle): nothing is
+   *  claimed, and new drops queue and wait. Per device — never synced. */
+  paused = $state(false);
   toasts = $state<Toast[]>([]);
   theme = $state<ThemePref>("auto");
   /** The OS scheme, tracked live — "auto" follows it, and the toggle's icon
@@ -144,9 +155,14 @@ class AppState {
     this.batch = batch;
 
     repo.subscribe(() => this.scheduleRefresh());
-    queue.onProgress((remaining) => {
-      this.pendingJobs = remaining;
+    queue.onProgress((p) => {
+      this.pendingJobs = p.remaining;
+      this.runningJobs = p.running;
     });
+    // Restore the pause BEFORE the leftover-work wake below — a reload
+    // (the update bar's, say) must not quietly resume reading.
+    if ((await repo.getSetting<boolean>(PAUSED_KEY)) === true) this.applyPause(true);
+    this.listenForPause();
 
     await this.refresh();
     if (this.receipts.length > 0) this.entered = true;
@@ -251,7 +267,12 @@ class AppState {
     // Receipts first, then jobs: a receipt and its job land in one
     // transaction, so this order can only ever see a job for a receipt
     // already listed — never a listed receipt whose job is still coming.
-    this.localJobIds = new Set(await repo.listJobReceiptIds());
+    const jobIds = await repo.listJobReceiptIds();
+    this.localJobIds = new Set(jobIds);
+    // The queue only reports after a run, so this read 0 from boot until
+    // the first receipt finished (the reload bar was enabled mid-job); a
+    // drop or a delete moves the count too.
+    this.pendingJobs = jobIds.length;
     const fresh = await repo.getBatch(this.batch.id);
     if (fresh) this.batch = fresh;
   }
@@ -315,9 +336,58 @@ class AppState {
       if (r.status === "failed" && (await this.retryReceipt(r.id))) n++;
     }
     this.toast(
-      n === 0 ? "Nothing to retry." : n === 1 ? "Reading 1 receipt again." : `Reading ${n} receipts again.`,
+      n === 0
+        ? "Nothing to retry."
+        : this.paused
+          ? `Queued ${n} to read again — resume reading to start.`
+          : n === 1
+            ? "Reading 1 receipt again."
+            : `Reading ${n} receipts again.`,
       "info",
     );
+  }
+
+  // ---- Pause ---------------------------------------------------------------
+
+  private pauseChannel: BroadcastChannel | null = null;
+
+  /** Other tabs' pause toggles. Without BroadcastChannel (old browsers,
+   *  some sandboxed iframes) they pick the pause up on their next load. */
+  private listenForPause(): void {
+    try {
+      this.pauseChannel = new BroadcastChannel(PAUSE_CHANNEL);
+      this.pauseChannel.onmessage = (e: MessageEvent<{ paused?: unknown }>) => {
+        if (typeof e.data?.paused === "boolean") this.applyPause(e.data.paused);
+      };
+    } catch {
+      /* no channel — each tab keeps its own until reload */
+    }
+  }
+
+  private applyPause(paused: boolean): void {
+    this.paused = paused;
+    if (paused) queue.pause();
+    else queue.resume();
+  }
+
+  /** Pause or resume reading on this device: in every tab (the channel)
+   *  and across reloads (kv). Only a boolean is stored — never synced. */
+  async setPaused(paused: boolean): Promise<void> {
+    this.applyPause(paused);
+    try {
+      this.pauseChannel?.postMessage({ paused });
+    } catch {
+      /* channel closed */
+    }
+    try {
+      await repo.setSetting(PAUSED_KEY, paused);
+    } catch {
+      /* storage refused — the pause holds for this visit */
+    }
+  }
+
+  togglePause(): void {
+    void this.setPaused(!this.paused);
   }
 
   /** Wipe every receipt, batch, job, blob, taught brand and queued delete on
@@ -645,11 +715,12 @@ class AppState {
     }
 
     if (accepted > 0) {
+      const queued = accepted === 1 ? "1 receipt queued." : `${accepted} receipts queued.`;
       this.toast(
-        accepted === 1 ? "1 receipt queued." : `${accepted} receipts queued.`,
-        "ok",
+        this.paused ? `${queued} Reading is paused — resume it from the top bar.` : queued,
+        this.paused ? "info" : "ok",
       );
-      void queue.wake();
+      void queue.wake(); // a no-op while paused
     } else if (failed > 0) {
       this.toast("No files could be added — storage may be full.", "err");
     }

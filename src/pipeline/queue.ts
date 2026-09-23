@@ -2,19 +2,50 @@ import { repo } from "../store/repo.ts";
 import { processReceipt } from "./pipeline.ts";
 import { getOcrEngine } from "./ocr.ts";
 import { PROCESSING } from "../config/constants.ts";
+import { isAbortError } from "../util/abort.ts";
 
 // The decoupled work-list (§4, §8). Extraction takes seconds per receipt; the
 // user shouldn't wait on it. A small concurrency pool drains the `jobs` table,
 // retries transient failures, and stays out of the UI thread (OCR runs in its
 // own worker). At this scale a row in a table *is* the queue.
 
-type ProgressListener = (remaining: number) => void;
+/** What the header and the reload bar need to know. */
+export interface QueueProgress {
+  /** Jobs in this browser's work-list — waiting, running or paused. */
+  remaining: number;
+  /** Runs in flight. While paused, these are the only work a reload strands. */
+  running: number;
+}
+
+type ProgressListener = (p: QueueProgress) => void;
+
+/** Everything the queue touches outside itself — the seam the Node tests
+ *  (tests/queue.test.ts) fill with an in-memory work-list. */
+export interface QueueDeps {
+  jobs: Pick<
+    typeof repo,
+    "claimNextJob" | "touchJob" | "completeJob" | "releaseJob" | "unclaimJob" | "pendingJobCount"
+  >;
+  process(receiptId: string, signal: AbortSignal): Promise<void>;
+  /** Stop in-flight OCR at once (terminate the worker) — the pause. */
+  stopOcr(): Promise<void>;
+}
+
+const appDeps: QueueDeps = {
+  jobs: repo,
+  process: (receiptId, signal) => processReceipt(receiptId, getOcrEngine(), signal),
+  stopOcr: async () => {
+    await getOcrEngine().interrupt?.();
+  },
+};
 
 /** How long to wait before re-checking for jobs whose locks may have gone
  *  stale (a reload mid-run, a tab that died). */
 const REWAKE_MS = 30_000;
+/** Lock refresh while a job runs (repo.STALE_LOCK_MS is 90 s: four beats). */
+const HEARTBEAT_MS = 20_000;
 
-class ProcessingQueue {
+export class ProcessingQueue {
   private running = 0;
   /** fill() is a single runner: a wake that lands while one is already
    *  claiming sets `rewake` and the runner loops once more, instead of a
@@ -26,6 +57,18 @@ class ProcessingQueue {
   private rewake = false;
   private listeners = new Set<ProgressListener>();
   private rewakeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Paused: nothing is claimed, and the runs in flight unwind at their next
+   *  checkpoint. ONE controller is shared by every run — the pause is "stop
+   *  everything", and terminating the shared OCR worker must never strand a
+   *  sibling read whose own signal hadn't fired. Replaced on resume. */
+  private paused = false;
+  private controller = new AbortController();
+
+  constructor(private readonly deps: QueueDeps = appDeps) {}
+
+  get isPaused(): boolean {
+    return this.paused;
+  }
 
   onProgress(fn: ProgressListener): () => void {
     this.listeners.add(fn);
@@ -33,13 +76,42 @@ class ProcessingQueue {
   }
 
   private async announce(): Promise<void> {
-    const remaining = await repo.pendingJobCount();
-    for (const fn of this.listeners) fn(remaining);
+    const remaining = await this.deps.jobs.pendingJobCount();
+    const p: QueueProgress = { remaining, running: this.running };
+    for (const fn of this.listeners) fn(p);
   }
 
-  /** Kick the pool. Safe to call repeatedly (e.g. after each enqueue). */
+  /** Kick the pool. Safe to call repeatedly (e.g. after each enqueue) — and
+   *  a no-op while paused (a drop still queues; it just waits). */
   async wake(): Promise<void> {
     return this.fill();
+  }
+
+  /** Halt reading: stop claiming, abort every run in flight (each unwinds
+   *  to "queued" and gives its claim back — see run()) and free the CPU.
+   *  A run already inside a metered AI call finishes and lands instead:
+   *  that answer is billed, and re-reading on resume would bill it twice
+   *  (the pipeline has no checkpoint once runVisionAssist starts, and only
+   *  a free local/self-hosted call listens to the signal). */
+  pause(): void {
+    if (this.paused) return;
+    this.paused = true;
+    // Abort FIRST: every OCR wait is raced against this signal, so they all
+    // settle before the worker they wait on is terminated below — a killed
+    // tesseract job never settles on its own.
+    this.controller.abort();
+    if (this.rewakeTimer) {
+      clearTimeout(this.rewakeTimer);
+      this.rewakeTimer = null;
+    }
+    void this.deps.stopOcr().catch(() => {});
+  }
+
+  resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    this.controller = new AbortController();
+    void this.wake();
   }
 
   private async fill(): Promise<void> {
@@ -51,18 +123,31 @@ class ProcessingQueue {
     try {
       do {
         this.rewake = false;
-        while (this.running < PROCESSING.concurrency) {
-          const job = await repo.claimNextJob();
+        while (!this.paused && this.running < PROCESSING.concurrency) {
+          // Captured BEFORE the claim: a pause landing while the claim is
+          // in flight must still reach the job it returns.
+          const signal = this.controller.signal;
+          const job = await this.deps.jobs.claimNextJob();
           if (!job) break;
+          if (signal.aborted) {
+            // Paused mid-claim — hand it straight back, attempt and all.
+            await this.deps.jobs.unclaimJob(job.id);
+            break;
+          }
           this.running++;
-          void this.run(job.id, job.receiptId, job.attempts);
+          void this.run(job.id, job.receiptId, job.attempts, signal);
         }
       } while (this.rewake);
       // Jobs remain but none was claimable: their locks belong to a run that
       // is gone (reload) or still heartbeating elsewhere. Look again shortly —
       // nothing else ever re-woke the pool, so those receipts stayed
-      // "Reading…" until the next drop.
-      if (this.running === 0 && !this.rewakeTimer && (await repo.pendingJobCount()) > 0) {
+      // "Reading…" until the next drop. Never armed while paused.
+      if (
+        !this.paused &&
+        this.running === 0 &&
+        !this.rewakeTimer &&
+        (await this.deps.jobs.pendingJobCount()) > 0
+      ) {
         this.rewakeTimer = setTimeout(() => {
           this.rewakeTimer = null;
           void this.wake();
@@ -71,33 +156,48 @@ class ProcessingQueue {
     } finally {
       this.filling = false;
     }
+    // Every wake and every run's end reports — the header's "Pausing…" and
+    // the reload bar need `running` as it drops, not only after a finish.
+    await this.announce().catch(() => {});
   }
 
   private async run(
     jobId: string,
     receiptId: string,
     attempts: number,
+    signal: AbortSignal,
   ): Promise<void> {
     // Heartbeat the lock while the job runs — extraction routinely outlives
     // the stale window (model downloads, binarize rescue, vision), and a
     // stale-looking lock would let the pool claim the same job twice.
-    const heartbeat = setInterval(() => void repo.touchJob(jobId), 20_000);
+    const heartbeat = setInterval(() => void this.deps.jobs.touchJob(jobId), HEARTBEAT_MS);
     try {
-      await processReceipt(receiptId, getOcrEngine());
-      await repo.completeJob(jobId);
-    } catch {
-      // processReceipt already marked the receipt failed; retry a couple times.
-      if (attempts >= PROCESSING.maxAttempts) {
-        await repo.completeJob(jobId);
+      try {
+        await this.deps.process(receiptId, signal);
+      } finally {
+        // Stopped as soon as the run settles, BEFORE the job is completed,
+        // released or unclaimed: a tick landing during that write would
+        // re-lock the row just handed back, hiding it from every claim for
+        // the stale window after a resume.
+        clearInterval(heartbeat);
+      }
+      await this.deps.jobs.completeJob(jobId);
+    } catch (err) {
+      if (signal.aborted && isAbortError(err)) {
+        // Paused mid-read — not a failed attempt. processReceipt put the
+        // receipt back to "queued"; give the claim (and its attempt) back.
+        await this.deps.jobs.unclaimJob(jobId);
+      } else if (attempts >= PROCESSING.maxAttempts) {
+        // processReceipt already marked the receipt failed; retry a couple times.
+        await this.deps.jobs.completeJob(jobId);
       } else {
-        await repo.releaseJob({ id: jobId, receiptId, attempts, lockedAt: null });
+        await this.deps.jobs.releaseJob({ id: jobId, receiptId, attempts, lockedAt: null });
       }
     } finally {
       clearInterval(heartbeat);
       this.running--;
-      await this.announce();
       // Pull the next job if any remain — through the same single runner,
-      // so this can never push the pool past its cap.
+      // so this can never push the pool past its cap. It also announces.
       await this.fill().catch((err) => console.error("queue fill failed", err));
     }
   }

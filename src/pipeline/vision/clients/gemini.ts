@@ -159,18 +159,23 @@ export function parseGeminiReply(data: GeminiResponse): ChatReply {
   };
 }
 
-export function createGeminiClient(ep: Endpoint): ChatClient {
+export function createGeminiClient(ep: Endpoint, pause?: AbortSignal): ChatClient {
   return {
     label: ep.label,
     model: ep.model,
     async chat(req) {
       // The key rides the x-goog-api-key header Google's own clients use — a
       // ?key= query string was logged by proxies, history and HAR exports.
-      const res = await visionFetch(ep, `${ep.baseUrl}/models/${ep.model}:generateContent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": ep.apiKey },
-        body: JSON.stringify(geminiBody(req)),
-      });
+      const res = await visionFetch(
+        ep,
+        `${ep.baseUrl}/models/${ep.model}:generateContent`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": ep.apiKey },
+          body: JSON.stringify(geminiBody(req)),
+        },
+        pause,
+      );
       if (!res.ok) throw new Error(`${ep.label} HTTP ${res.status}: ${await errorBody(res)}`);
       return parseGeminiReply((await res.json()) as GeminiResponse);
     },

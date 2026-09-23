@@ -4,6 +4,7 @@
 // three dialects on one uniform shape avoids bundling multiple SDKs.
 
 import { APP_URL } from "../../../config/constants.ts";
+import { abortError, anySignal } from "../../../util/abort.ts";
 import type { Endpoint } from "../endpoint.ts";
 
 /** Encode a Blob as base64 (no data: prefix) plus its media type. */
@@ -79,15 +80,25 @@ export function unreachableHint(
  * in the Settings test and the training log, and a local server that refused
  * CORS as a bare "Failed to fetch". The signal also aborts a trickling body
  * read, so callers need not wrap res.json().
+ *
+ * `pause` is the reading pause (pipeline/queue.ts). It is combined with the
+ * deadline ONLY for an unmetered endpoint (local / self-hosted — free, and
+ * up to LOCAL_TIMEOUT_MS long, so a pause shouldn't wait it out); a metered
+ * request is billed once sent, so it never listens and finishes instead of
+ * being paid for again on resume. A paused call rejects with an AbortError.
  */
 export async function visionFetch(
-  ep: Pick<Endpoint, "backend" | "label" | "baseUrl" | "timeoutMs">,
+  ep: Pick<Endpoint, "backend" | "label" | "baseUrl" | "timeoutMs" | "metered">,
   url: string,
   init: RequestInit,
+  pause?: AbortSignal,
 ): Promise<Response> {
+  const listen = pause && !ep.metered ? pause : undefined;
+  const deadline = AbortSignal.timeout(ep.timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: AbortSignal.timeout(ep.timeoutMs) });
+    return await fetch(url, { ...init, signal: listen ? anySignal([listen, deadline]) : deadline });
   } catch (err) {
+    if (listen?.aborted) throw abortError();
     const name = err instanceof Error ? err.name : "";
     if (name === "TimeoutError" || name === "AbortError") {
       throw new Error(`${ep.label} timed out after ${Math.round(ep.timeoutMs / 1000)} s.`);

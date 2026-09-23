@@ -44,6 +44,44 @@ type Listener = () => void;
  *  "Reading…" for five minutes — with nothing re-waking the pool even then. */
 export const STALE_LOCK_MS = 90_000;
 
+/** The jobs table's row rules. Pure, so tests/queue.test.ts drives the SAME
+ *  rules through an in-memory work-list (there is no IndexedDB under Node). */
+export const jobRows = {
+  /** What a claim takes: the oldest job (by `createdAt` — upload order)
+   *  whose lock is free or stale. */
+  nextClaim(jobs: Job[], now: number, staleLockMs: number): Job | null {
+    let oldest: Job | null = null;
+    for (const job of jobs) {
+      const available = job.lockedAt === null || now - job.lockedAt > staleLockMs;
+      if (!available) continue;
+      if (!oldest || (job.createdAt ?? 0) < (oldest.createdAt ?? 0)) oldest = job;
+    }
+    return oldest;
+  },
+  claimed(job: Job, now: number): Job {
+    return { ...job, lockedAt: now, attempts: job.attempts + 1 };
+  },
+  /** A heartbeat refreshes a lock, never creates one (null: leave the row
+   *  alone). A tick that landed just after a pause or a failed attempt gave
+   *  the job back used to re-lock it, hiding it from every claim for the
+   *  stale window. */
+  touched(job: Job, now: number): Job | null {
+    return job.lockedAt === null ? null : { ...job, lockedAt: now };
+  },
+  /** A failed attempt: unlocked, the attempt kept. The STORED row is the
+   *  base — the queue's copy carries no `createdAt`, and a retried job used
+   *  to lose its claim-order key and jump ahead of everything queued. */
+  released(stored: Job, attempts: number): Job {
+    return { ...stored, attempts, lockedAt: null };
+  },
+  /** The pause: the claim given back whole — lock AND attempt (a pause must
+   *  never eat a retry) — with `createdAt` kept, so paused receipts resume
+   *  in upload order. */
+  unclaimed(job: Job): Job {
+    return { ...job, lockedAt: null, attempts: Math.max(0, job.attempts - 1) };
+  },
+};
+
 class Repo {
   private listeners = new Set<Listener>();
 
@@ -261,15 +299,10 @@ class Repo {
     const conn = await db();
     const tx = conn.transaction("jobs", "readwrite");
     const now = Date.now();
-    let oldest: Job | null = null;
-    for (const job of await tx.store.getAll()) {
-      const available = job.lockedAt === null || now - job.lockedAt > staleLockMs;
-      if (!available) continue;
-      if (!oldest || (job.createdAt ?? 0) < (oldest.createdAt ?? 0)) oldest = job;
-    }
+    const oldest = jobRows.nextClaim(await tx.store.getAll(), now, staleLockMs);
     let claimed: Job | null = null;
     if (oldest) {
-      claimed = { ...oldest, lockedAt: now, attempts: oldest.attempts + 1 };
+      claimed = jobRows.claimed(oldest, now);
       await tx.store.put(claimed);
     }
     await tx.done;
@@ -277,12 +310,14 @@ class Repo {
   }
 
   /** Refresh a running job's lock so it never looks stale. No-op once the
-   *  row is gone — a blind put would resurrect a completed job. */
+   *  row is gone — a blind put would resurrect a completed job — and on an
+   *  unlocked row (`jobRows.touched`). */
   async touchJob(jobId: string): Promise<void> {
     const conn = await db();
     const tx = conn.transaction("jobs", "readwrite");
     const job = await tx.store.get(jobId);
-    if (job) await tx.store.put({ ...job, lockedAt: Date.now() });
+    const touched = job ? jobRows.touched(job, Date.now()) : null;
+    if (touched) await tx.store.put(touched);
     await tx.done;
   }
 
@@ -291,12 +326,24 @@ class Repo {
   }
 
   /** Unlock a job for retry — only if it still exists (read-then-put in one
-   *  transaction), so a job a successful run already deleted stays deleted. */
+   *  transaction), so a job a successful run already deleted stays deleted.
+   *  The stored row keeps its `createdAt` (`jobRows.released`). */
   async releaseJob(job: Job): Promise<void> {
     const conn = await db();
     const tx = conn.transaction("jobs", "readwrite");
     const cur = await tx.store.get(job.id);
-    if (cur) await tx.store.put({ ...job, lockedAt: null });
+    if (cur) await tx.store.put(jobRows.released(cur, job.attempts));
+    await tx.done;
+  }
+
+  /** Give a claim back untouched — the queue's pause (`jobRows.unclaimed`:
+   *  unlike releaseJob's failed attempt, the attempt is returned too). No-op
+   *  once the row is gone. */
+  async unclaimJob(jobId: string): Promise<void> {
+    const conn = await db();
+    const tx = conn.transaction("jobs", "readwrite");
+    const job = await tx.store.get(jobId);
+    if (job) await tx.store.put(jobRows.unclaimed(job));
     await tx.done;
   }
 

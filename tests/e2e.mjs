@@ -412,6 +412,23 @@ async function main() {
           flags: (r.flags || []).map((f) => f.message).join(" | "),
         }));
       });
+    // The device-local work-list (store/repo.ts jobs): the pause's contract
+    // is that a paused job is unlocked with no attempt used.
+    const readJobs = () =>
+      page.evaluate(async () => {
+        const open = indexedDB.open("reimbursements-f5");
+        const db = await new Promise((res, rej) => {
+          open.onsuccess = () => res(open.result);
+          open.onerror = () => rej(open.error);
+        });
+        const tx = db.transaction("jobs", "readonly");
+        const all = await new Promise((res) => {
+          const req = tx.objectStore("jobs").getAll();
+          req.onsuccess = () => res(req.result);
+        });
+        db.close();
+        return all.map((j) => ({ receiptId: j.receiptId, attempts: j.attempts, lockedAt: j.lockedAt }));
+      });
     let rows = [];
     const deadline = Date.now() + 180000;
     while (Date.now() < deadline) {
@@ -588,6 +605,21 @@ async function main() {
     );
 
 
+    // Phone-width measure (7c, 8b): neither surface may overflow the
+    // viewport sideways — an overflowing row used to let touch swipes pan
+    // the whole page, and under the root overflow-x clip it would instead
+    // strand controls off-screen. Measured with the clip disabled so the
+    // check catches the underlying overflow, not the backstop masking it.
+    const contentWidth = () =>
+      page.evaluate(() => {
+        document.documentElement.style.setProperty("overflow-x", "visible", "important");
+        document.body.style.setProperty("overflow-x", "visible", "important");
+        const w = document.scrollingElement.scrollWidth;
+        document.documentElement.style.removeProperty("overflow-x");
+        document.body.style.removeProperty("overflow-x");
+        return w;
+      });
+
     // 7c. Multi-page PDF: every page becomes its own receipt — the scanner
     // workflow (processing only page 1 silently dropped the rest).
     log("uploading a 2-page PDF…");
@@ -597,6 +629,78 @@ async function main() {
       .setInputFiles([
         { name: "stack.pdf", mimeType: "application/pdf", buffer: makeTwoPagePdf() },
       ]);
+
+    // 7c-i. Pause mid-read: catch a page while it is being read, pause, and
+    // the read in flight must unwind to "queued" — never "failed" — with its
+    // job unlocked and no attempt used; nothing moves while paused; resume
+    // then reads both pages to the same amounts the checks below expect.
+    const isPdfRow = (r) => /^stack\.pdf \(page /.test(r.file);
+    const settledStatus = (s) => ["done", "needs_review", "failed"].includes(s);
+    let inFlight = null;
+    {
+      const end = Date.now() + 60000;
+      while (Date.now() < end) {
+        const seen = (await readRows()).filter(isPdfRow);
+        inFlight = seen.find((r) => r.status === "processing") ?? null;
+        if (inFlight) break;
+        if (seen.length === 2 && seen.every((r) => settledStatus(r.status))) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    const pauseBtn = page.getByRole("button", { name: "Pause reading" });
+    await pauseBtn.click({ timeout: 10000 });
+    check((await pauseBtn.getAttribute("aria-pressed")) === "true", "the pause toggle reports pressed");
+    await page
+      .locator(".ws-head [role=status]")
+      .getByText("Paused", { exact: true })
+      .waitFor({ timeout: 20000 });
+    check(true, "the header says Paused once the reads in flight unwind");
+    if (inFlight) {
+      let paused = [];
+      const end = Date.now() + 15000;
+      while (Date.now() < end) {
+        paused = (await readRows()).filter(isPdfRow);
+        if (paused.length === 2 && paused.every((r) => r.status !== "processing")) break;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      for (const r of paused) log(`paused → ${r.file} [${r.status}]`);
+      check(
+        paused.length === 2 && paused.every((r) => r.status !== "failed" && r.status !== "processing"),
+        "pausing unwinds in-flight reads to queued, never failed",
+      );
+      const unwound = paused.filter((r) => r.status === "queued");
+      check(unwound.length >= 1, `a read caught mid-flight went back to queued (${unwound.length} queued)`);
+      let jobs = [];
+      const jobsEnd = Date.now() + 5000;
+      while (Date.now() < jobsEnd) {
+        jobs = await readJobs();
+        if (jobs.every((j) => j.lockedAt === null)) break;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      check(
+        jobs.length === unwound.length && jobs.every((j) => j.lockedAt === null && j.attempts === 0),
+        `paused jobs are unclaimed with no attempt used (${JSON.stringify(jobs)})`,
+      );
+      await page.waitForTimeout(3000);
+      const still = (await readRows()).filter(isPdfRow);
+      check(
+        still.filter((r) => r.status === "queued").length === unwound.length,
+        "nothing is read while paused",
+      );
+      check(
+        (await page.locator(".rc").filter({ hasText: "Paused — resume reading" }).count()) === unwound.length,
+        "a paused receipt's card says so instead of \"Reading on your device…\"",
+      );
+    } else {
+      log("both PDF pages finished before one was seen mid-read — skipping the unwind checks");
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    const pausedW = await contentWidth();
+    check(pausedW <= 390, `workspace header fits 390px with the pause control and Paused chip (scrollWidth ${pausedW})`);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await pauseBtn.click();
+    check((await pauseBtn.getAttribute("aria-pressed")) === "false", "resume: the toggle is released");
+
     let pdfRows = [];
     const pdfDeadline = Date.now() + 180000;
     while (Date.now() < pdfDeadline) {
@@ -760,20 +864,8 @@ async function main() {
     await page.getByText("Drop receipts here").waitFor({ timeout: 10000 });
     check(true, "landing offers the way back to the workspace");
 
-    // 8b. Phone width: neither surface may overflow the viewport sideways —
-    // an overflowing row used to let touch swipes pan the whole page, and
-    // under the root overflow-x clip it would instead strand controls
-    // off-screen. Measured with the clip disabled so the check catches the
-    // underlying overflow, not the backstop masking it.
-    const contentWidth = () =>
-      page.evaluate(() => {
-        document.documentElement.style.setProperty("overflow-x", "visible", "important");
-        document.body.style.setProperty("overflow-x", "visible", "important");
-        const w = document.scrollingElement.scrollWidth;
-        document.documentElement.style.removeProperty("overflow-x");
-        document.body.style.removeProperty("overflow-x");
-        return w;
-      });
+    // 8b. Phone width: neither surface may overflow the viewport sideways
+    // (contentWidth, above 7c).
     await page.setViewportSize({ width: 390, height: 844 });
     const wsW = await contentWidth();
     check(wsW <= 390, `workspace fits a 390px phone with receipts on the board (scrollWidth ${wsW})`);
@@ -785,6 +877,35 @@ async function main() {
     await settingsDialog.waitFor({ state: "hidden", timeout: 5000 });
     await page.locator("header.ws-head .brand").click();
     await page.getByRole("heading", { name: /Receipts in/ }).waitFor({ timeout: 10000 });
+    // Settings from the landing: the nav's gear opens the same App-level
+    // dialog, without touching the hash or leaving the landing.
+    const gear = page.getByRole("button", { name: "Settings", exact: true });
+    await gear.click();
+    await settingsDialog.waitFor({ timeout: 5000 });
+    check(true, "Settings opens from the landing nav at phone width");
+    check(
+      (await page.locator("input[type=file][multiple]").count()) === 1,
+      "the landing's picker stays the page's only multi-file input with Settings open",
+    );
+    // A file dragged over the open dialog (Brands' logo picker) must not
+    // raise the page-wide drop veil over it.
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.items.add(new File(["x"], "logo.png", { type: "image/png" }));
+      window.dispatchEvent(new DragEvent("dragenter", { dataTransfer: dt, bubbles: true, cancelable: true }));
+    });
+    check((await page.locator(".drop-veil").count()) === 0, "a file drag over open Settings raises no drop veil");
+    await page.keyboard.press("Escape");
+    await settingsDialog.waitFor({ state: "hidden", timeout: 5000 });
+    check(
+      await gear.evaluate((el) => el === document.activeElement),
+      "closing Settings returns focus to the landing gear",
+    );
+    check((await page.evaluate(() => location.hash)) !== "#process", "Settings on the landing leaves the hash alone");
+    check(
+      await page.getByRole("heading", { name: /Receipts in/ }).isVisible(),
+      "the landing stays put under Settings",
+    );
     const landW = await contentWidth();
     check(landW <= 390, `landing fits a 390px phone (scrollWidth ${landW})`);
     await page.setViewportSize({ width: 1280, height: 720 });

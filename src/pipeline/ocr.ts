@@ -1,6 +1,7 @@
 import { createWorker, type Worker } from "tesseract.js";
 import { OCR } from "../config/constants.ts";
 import type { OcrResult, OcrLine, OcrWord, BBox } from "../types.ts";
+import { abortable, throwIfAborted } from "../util/abort.ts";
 
 // "Reading text" is a *capability*, not a model (§5). Everything upstream and
 // downstream is identical whether this is open-source OCR, a paid OCR API, or a
@@ -9,10 +10,17 @@ import type { OcrResult, OcrLine, OcrWord, BBox } from "../types.ts";
 // main thread free), with assets served same-origin for offline use.
 
 export interface OcrEngine {
-  /** Recognize text + word boxes from a cleaned image. */
-  recognize(image: Blob, width: number, height: number): Promise<OcrResult>;
+  /** Recognize text + word boxes from a cleaned image. An aborted `signal`
+   *  (the queue's pause) rejects at once with an AbortError — without
+   *  starting any work when it has already fired. */
+  recognize(image: Blob, width: number, height: number, signal?: AbortSignal): Promise<OcrResult>;
   /** Release resources (terminate workers). */
   dispose(): Promise<void>;
+  /** Stop in-flight recognition NOW (the pause frees the CPU at once); the
+   *  next read starts a fresh worker. Optional: an engine that can't be
+   *  interrupted (Paddle's wasm run) stays loaded and is only raced by the
+   *  signal — releasing its sessions mid-run would fail a quick resume. */
+  interrupt?(): Promise<void>;
 }
 
 function base(): string {
@@ -128,12 +136,24 @@ class TesseractEngine implements OcrEngine {
     return this.initPromise;
   }
 
-  async recognize(image: Blob, width: number, height: number): Promise<OcrResult> {
-    const worker = await this.getWorker();
-    const { data } = await worker.recognize(
-      image,
-      {},
-      { text: true, blocks: true },
+  async recognize(
+    image: Blob,
+    width: number,
+    height: number,
+    signal?: AbortSignal,
+  ): Promise<OcrResult> {
+    // Checked before the worker too: an aborted rescue read must not spin
+    // up a fresh worker right after the pause terminated the old one.
+    throwIfAborted(signal);
+    const worker = await abortable(this.getWorker(), signal);
+    // A read that waited out the start-up must not OCR once it finishes.
+    throwIfAborted(signal);
+    // Raced, not just awaited: interrupt() terminates the worker, and
+    // tesseract.js terminate() never settles the jobs it kills — a plain
+    // await here would park the run (and its queue slot) forever.
+    const { data } = await abortable(
+      worker.recognize(image, {}, { text: true, blocks: true }),
+      signal,
     );
 
     const norm = (b: RawBox): BBox => ({
@@ -176,11 +196,19 @@ class TesseractEngine implements OcrEngine {
   }
 
   async dispose(): Promise<void> {
-    if (this.worker) {
-      await this.worker.terminate();
-      this.worker = null;
-      this.initPromise = null;
-    }
+    return this.interrupt();
+  }
+
+  /** Terminate the worker. It is forgotten BEFORE terminate() so a read
+   *  starting meanwhile makes a fresh one instead of getting the dying
+   *  worker; a start-up still in flight is left to finish (nulling its
+   *  promise mid-init would leak a second ~100 MB worker beside it). */
+  async interrupt(): Promise<void> {
+    const w = this.worker;
+    if (!w) return;
+    this.worker = null;
+    this.initPromise = null;
+    await w.terminate();
   }
 }
 
@@ -198,11 +226,25 @@ class DeferredEngine implements OcrEngine {
     if (!this.real) this.real = await this.factory();
     return this.real;
   }
-  async recognize(image: Blob, width: number, height: number): Promise<OcrResult> {
-    return (await this.get()).recognize(image, width, height);
+  async recognize(
+    image: Blob,
+    width: number,
+    height: number,
+    signal?: AbortSignal,
+  ): Promise<OcrResult> {
+    throwIfAborted(signal);
+    // Raced as well: an engine that can't be interrupted still hands the
+    // caller back at once.
+    return abortable(
+      (async () => (await this.get()).recognize(image, width, height, signal))(),
+      signal,
+    );
   }
   async dispose(): Promise<void> {
     if (this.real) await this.real.dispose();
+  }
+  async interrupt(): Promise<void> {
+    await this.real?.interrupt?.();
   }
 }
 

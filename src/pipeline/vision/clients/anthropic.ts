@@ -155,21 +155,26 @@ export function parseAnthropicReply(data: AnthropicResponse, ep: Endpoint): Chat
   };
 }
 
-export function createAnthropicClient(ep: Endpoint): ChatClient {
+export function createAnthropicClient(ep: Endpoint, pause?: AbortSignal): ChatClient {
   return {
     label: ep.label,
     model: ep.model,
     async chat(req) {
-      const res = await visionFetch(ep, `${ep.baseUrl}/v1/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": ep.apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
+      const res = await visionFetch(
+        ep,
+        `${ep.baseUrl}/v1/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": ep.apiKey,
+            "anthropic-version": "2023-06-01",
+            "anthropic-dangerous-direct-browser-access": "true",
+          },
+          body: JSON.stringify(anthropicBody(req, ep)),
         },
-        body: JSON.stringify(anthropicBody(req, ep)),
-      });
+        pause,
+      );
       if (!res.ok) throw new Error(`${ep.label} HTTP ${res.status}: ${await errorBody(res)}`);
       return parseAnthropicReply((await res.json()) as AnthropicResponse, ep);
     },

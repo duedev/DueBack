@@ -11,6 +11,7 @@ import { runOneShot, type ImagePart } from "./strategies/oneshot.ts";
 import { runAgentic } from "./strategies/agentic.ts";
 import type { AgentContext } from "./strategies/tools.ts";
 import { CONFIDENCE } from "../../config/constants.ts";
+import { isAbortError, throwIfAborted } from "../../util/abort.ts";
 
 // Tier 3 orchestration: resolve the backend to an endpoint, pick the
 // strategy, decide when to spend, and fall back to the rules result on any
@@ -51,8 +52,13 @@ async function withServerProxy(ep: Endpoint, ownKey: string): Promise<Endpoint> 
   }
 }
 
-function runPlan(plan: AssistPlan, image: ImagePart, ctx: AgentContext): Promise<VisionExtraction> {
-  const client = createClient(plan.endpoint);
+function runPlan(
+  plan: AssistPlan,
+  image: ImagePart,
+  ctx: AgentContext,
+  pause?: AbortSignal,
+): Promise<VisionExtraction> {
+  const client = createClient(plan.endpoint, pause);
   const opts = {
     onCost: recordSpend,
     canSpend: plan.endpoint.metered ? () => withinBudget() : undefined,
@@ -78,11 +84,15 @@ export interface VisionAssist {
  * result untouched — when the tier is off, not triggered, over budget, or
  * the call fails. `lines` is the on-device OCR read: the agent can search it,
  * and the answer's boxes are anchored on it (a model returns values only).
+ * `opts.signal` is the reading pause: it aborts a free (local/self-hosted)
+ * call and rethrows its AbortError so the pipeline requeues the receipt; a
+ * metered call never listens (visionFetch).
  */
 export async function runVisionAssist(
   image: Blob,
   ex: Extraction,
   lines: OcrLine[] = [],
+  opts: { signal?: AbortSignal } = {},
 ): Promise<VisionAssist | null> {
   if (!shouldAssist(ex)) return null;
   const cfg = getVisionConfig();
@@ -93,8 +103,16 @@ export async function runVisionAssist(
     console.warn("[vision] spend cap reached — skipping the paid fallback.");
     return null;
   }
+  // Nothing is billed before runPlan's first request: a pause that landed
+  // while the plan resolved (the proxy's session lookup) still unwinds free.
+  throwIfAborted(opts.signal);
   try {
-    const result = await runPlan(plan, { type: "image", ...(await blobToBase64(image)) }, { draft: ex, lines });
+    const result = await runPlan(
+      plan,
+      { type: "image", ...(await blobToBase64(image)) },
+      { draft: ex, lines },
+      opts.signal,
+    );
     // `ex` is the rules draft (after the rescue swap and logo fusion), read
     // from the same OCR lines, so its boxes share their frame. The vendor is
     // vetted FIRST (visionToExtraction: a card network or the city falls
@@ -114,6 +132,9 @@ export async function runVisionAssist(
       }),
     };
   } catch (err) {
+    // A paused free call is not a failure: swallowed here, the receipt would
+    // complete with the rules-only result instead of going back to the queue.
+    if (opts.signal?.aborted && isAbortError(err)) throw err;
     console.warn("[vision] AI assist failed; keeping the on-device result.", err);
     return null;
   }

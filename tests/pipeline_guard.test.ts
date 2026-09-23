@@ -137,3 +137,26 @@ test("friendlyError names HEIC, PDF and decode failures instead of engine intern
   assert.equal(friendlyError(new Error("OCR worker died"), { mimeType: "image/heic", fileName: "a.heic" }), "OCR worker died");
   assert.equal(friendlyError("boom"), "boom");
 });
+
+// ── Reading pause ─────────────────────────────────────────────────────────────
+// A paused run hands its receipt back (processReceipt's catch → requeue):
+// only its OWN "processing" stamp is undone, an approval that landed
+// mid-flight un-strands to "done" (the completion write's rule), and any
+// other status is a human's or a sync mirror's and stays put.
+import { pausedStatus } from "../src/pipeline/pipeline.ts";
+
+test("pausedStatus: an interrupted read goes back to queued, never failed", () => {
+  assert.equal(pausedStatus({ status: "processing", approved: false }), "queued");
+});
+
+test("pausedStatus: approved mid-flight un-strands to done", () => {
+  assert.equal(pausedStatus({ status: "processing", approved: true }), "done");
+});
+
+test("pausedStatus: anything but the run's own processing stamp is left alone", () => {
+  assert.equal(pausedStatus({ status: "done", approved: true }), null);
+  assert.equal(pausedStatus({ status: "queued", approved: false }), null);
+  assert.equal(pausedStatus({ status: "needs_review", approved: false }), null);
+  assert.equal(pausedStatus({ status: "failed", approved: false }), null);
+  assert.equal(pausedStatus(undefined), null, "deleted mid-flight");
+});

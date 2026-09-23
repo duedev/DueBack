@@ -3,6 +3,7 @@
   import { app } from "./state.svelte.ts";
   import Landing from "./Landing.svelte";
   import Workspace from "./Workspace.svelte";
+  import Settings from "./Settings.svelte";
   import Toasts from "./Toasts.svelte";
 
   const hashName = (): string => location.hash.replace(/^#\/?/, "");
@@ -52,6 +53,11 @@
     if (!app.booting) document.getElementById("app")?.removeAttribute("aria-busy");
   });
 
+  // What the reload waits on. While paused, only the runs still unwinding:
+  // every other job is unclaimed (nothing stranded) and the pause itself
+  // survives the reload (kv), so there is nothing to wait for.
+  const reloadWaitsFor = $derived(app.paused ? app.runningJobs : app.pendingJobs);
+
   $effect(() => {
     if (app.booting) return;
     if (app.showWorkspace) {
@@ -75,6 +81,13 @@
   <Landing />
 {/if}
 
+<!-- ONE Settings dialog for both surfaces (the landing nav's gear and the
+     workspace header's open it), mounted outside the swap: a swap under an
+     open dialog (a landing drop, a sign-in adopting a synced batch) no
+     longer closes and reopens it, and an app.settingsOpen left true by
+     Back no longer pops it open on the next visit to the workspace. -->
+<Settings />
+
 {#if app.updateReady}
   <!-- Persistent, never auto-dismissed (a toast would vanish in 4 s). The
        reload waits while receipts are being read: the job lock heartbeats
@@ -84,10 +97,10 @@
     <button
       class="btn btn-sm btn-primary"
       onclick={() => app.updateReady?.()}
-      disabled={app.pendingJobs > 0}
-      title={app.pendingJobs > 0 ? "Reload once the receipts being read finish" : "Reload into the new version"}
+      disabled={reloadWaitsFor > 0}
+      title={reloadWaitsFor > 0 ? "Reload once the receipts being read finish" : "Reload into the new version"}
     >
-      {app.pendingJobs > 0 ? `Reload after ${app.pendingJobs} finish` : "Reload"}
+      {reloadWaitsFor > 0 ? `Reload after ${reloadWaitsFor} finish` : "Reload"}
     </button>
   </div>
 {/if}
