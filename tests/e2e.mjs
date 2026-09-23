@@ -1024,6 +1024,28 @@ async function main() {
         "review shows the twin side by side, named by its upload",
       );
       check((await peerRegion.locator("img").count()) === 1, "the twin panel shows the twin's image");
+      // Zoom at phone width, where the compare stacks: each zoomed column
+      // used to collapse to 0 px (a scroll container in an `auto` grid row
+      // with no free space) and take its own Zoom toggle out of reach.
+      await page.setViewportSize({ width: 390, height: 844 });
+      for (const [name, column] of [
+        ["Zoom this receipt", dupDialog.locator(".m-image")],
+        ["Zoom the possible duplicate", peerRegion],
+      ]) {
+        const zoom = page.getByRole("button", { name });
+        await zoom.click();
+        const zoomedH = (await column.boundingBox())?.height ?? 0;
+        check(zoomedH > 100 && zoomedH <= 844 * 0.7 + 1, `${name}: the zoomed column keeps its height (${zoomedH}px)`);
+        const unzoomed = await zoom
+          .click({ timeout: 5000 })
+          .then(() => true)
+          .catch(() => false);
+        check(
+          unzoomed && (await zoom.getAttribute("aria-pressed")) === "false",
+          `${name}: Zoom stays reachable and zooms back out`,
+        );
+      }
+      await page.setViewportSize({ width: 1280, height: 720 });
       await page.getByRole("button", { name: "Keep both" }).click();
       await peerRegion.waitFor({ state: "detached", timeout: 10000 });
       const keptRows = await readDupRows();

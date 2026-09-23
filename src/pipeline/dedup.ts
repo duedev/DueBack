@@ -261,6 +261,33 @@ function toDupRecord(r: Sibling): DupRecord {
   };
 }
 
+/** What two receipts share that makes them read as one purchase, strongest
+ *  tier first (the order `duplicateFlag` tries them in). */
+type DupTie = { tier: "hash" } | { tier: "semantic" } | { tier: "code"; shared: TransactionCode };
+
+/** The tie between two receipts as they are NOW, or null when they share
+ *  none (an edit since, or a pair linked only through a copy that was
+ *  deleted). Pure. */
+function pairTie(a: Omit<DupCandidate, "flags">, b: Omit<DupCandidate, "flags">): DupTie | null {
+  if (a.imageHash && a.imageHash === b.imageHash) return { tier: "hash" };
+  const key = semanticKey(toDupRecord(a));
+  if (key && key === semanticKey(toDupRecord(b))) return { tier: "semantic" };
+  if (sameCents(a.amount.value, b.amount.value)) {
+    const shared = sharedTransactionCode(transactionCodes(a.ocrLines), transactionCodes(b.ocrLines));
+    if (shared) return { tier: "code", shared };
+  }
+  return null;
+}
+
+/** A duplicate flag's message, quoting the twin's name. One wording per
+ *  tier, shared by the pipeline's flag and review's re-pointed one. */
+function duplicateMessage(tie: DupTie | null, name: string): string {
+  if (!tie) return `Possible duplicate of "${name}" — both matched a copy that was deleted.`;
+  if (tie.tier === "hash") return `Looks identical to "${name}".`;
+  if (tie.tier === "semantic") return `Same vendor, date and amount as "${name}" — possible duplicate.`;
+  return `Same amount and ${CODE_NOUN[tie.shared.kind]} (${tie.shared.code}) as "${name}" — possible duplicate.`;
+}
+
 /** The `duplicate` flag for a freshly read receipt, or null. An exact image-
  *  hash twin in the batch (a byte-identical re-upload) wins; failing that, a
  *  sibling with the same vendor identity, date and amount; failing that, one
@@ -283,7 +310,7 @@ export function duplicateFlag(
     return {
       code: "duplicate",
       severity: "warn",
-      message: `Looks identical to "${shownName(hashTwin)}".`,
+      message: duplicateMessage({ tier: "hash" }, shownName(hashTwin)),
       ref: hashTwin.id,
     };
   }
@@ -293,7 +320,7 @@ export function duplicateFlag(
     return {
       code: "duplicate",
       severity: "warn",
-      message: `Same vendor, date and amount as "${semantic.label}" — possible duplicate.`,
+      message: duplicateMessage({ tier: "semantic" }, semantic.label),
       ref: semantic.id,
     };
   }
@@ -306,7 +333,7 @@ export function duplicateFlag(
       return {
         code: "duplicate",
         severity: "warn",
-        message: `Same amount and ${CODE_NOUN[shared.kind]} (${shared.code}) as "${shownName(s)}" — possible duplicate.`,
+        message: duplicateMessage({ tier: "code", shared }, shownName(s)),
         ref: s.id,
       };
     }
@@ -401,14 +428,11 @@ export function findDuplicatePair<T extends DupCandidate>(
  *  — recomputed from the pair as it is NOW (an edit since may have changed
  *  the reason). Pure. */
 export function duplicateReason(a: DupCandidate, b: DupCandidate): string {
-  if (a.imageHash && a.imageHash === b.imageHash) return "The two images are identical.";
-  const key = semanticKey(toDupRecord(a));
-  if (key && key === semanticKey(toDupRecord(b))) return "Same vendor, date and amount.";
-  if (sameCents(a.amount.value, b.amount.value)) {
-    const shared = sharedTransactionCode(transactionCodes(a.ocrLines), transactionCodes(b.ocrLines));
-    if (shared) return `Same amount and ${CODE_NOUN[shared.kind]} (${shared.code}).`;
-  }
-  return "Flagged as a possible duplicate when it was read.";
+  const tie = pairTie(a, b);
+  if (!tie) return "Flagged as a possible duplicate when it was read.";
+  if (tie.tier === "hash") return "The two images are identical.";
+  if (tie.tier === "semantic") return "Same vendor, date and amount.";
+  return `Same amount and ${CODE_NOUN[tie.shared.kind]} (${tie.shared.code}).`;
 }
 
 /** `holder`'s flags minus its duplicate warnings about `otherId` (by ref, or
@@ -426,4 +450,81 @@ export function flagsWithoutDuplicate<F extends Pick<Flag, "code" | "message" | 
     const target = resolveDuplicateFlag(holder, f, all);
     return target !== null && target.id !== otherId;
   });
+}
+
+// ── Deleting one copy of three or more ──────────────────────────────────────
+// Review's delete used to settle only the first pair: with A, B and C all
+// copies of one purchase (B and C each flagged against A), deleting A cleared
+// B's warning and left C's ref pointing at nothing — C read "no longer on
+// this board" with a Dismiss, while its real twin B sat beside it in the
+// TOTAL. The copies left behind are still copies of each other, so their
+// warnings about the deleted one are RE-POINTED, never dropped.
+
+/** `holder`'s flags with every duplicate warning about `fromId` (by ref, or
+ *  whatever a flag stored before `ref` resolves to in `all` — pass the list
+ *  as it stood BEFORE `fromId` was deleted, or a legacy flag has nothing
+ *  left to resolve to) re-pointed at `keeper`: `ref` becomes the keeper's
+ *  id and the message is rebuilt from the holder–keeper pair as it is now,
+ *  quoting the keeper's upload name. Never adds a warning and never drops a
+ *  live one: a re-pointed warning that would repeat one the holder already
+ *  carries about the keeper folds into it (one pair, one warning). The
+ *  keeper itself (and the deleted copy) pass through untouched — a receipt
+ *  is never its own duplicate. Untouched flags keep their identity. Pure. */
+export function retargetDuplicateFlags<F extends Pick<Flag, "code" | "message" | "ref">>(
+  holder: Omit<DupCandidate, "flags"> & { flags: readonly F[] },
+  fromId: string,
+  keeper: Omit<DupCandidate, "flags">,
+  all: readonly DupCandidate[],
+): F[] {
+  if (holder.id === keeper.id || holder.id === fromId) return [...holder.flags];
+  const about = (f: F): string | undefined =>
+    f.code === "duplicate" ? resolveDuplicateFlag(holder, f, all)?.id : undefined;
+  let keeperWarned = holder.flags.some((f) => about(f) === keeper.id);
+  const out: F[] = [];
+  for (const f of holder.flags) {
+    if (about(f) !== fromId) {
+      out.push(f);
+      continue;
+    }
+    if (keeperWarned) continue; // already flagged against the keeper
+    keeperWarned = true;
+    out.push({ ...f, ref: keeper.id, message: duplicateMessage(pairTie(holder, keeper), shownName(keeper)) });
+  }
+  return out;
+}
+
+export interface DuplicateDeletePlan<T> {
+  /** The copy the others now point at. Its own warning about the deleted
+   *  copy is settled (review's `flagsWithoutDuplicate`) — unless `onward`. */
+  keeper: T;
+  /** When the deleted copy was itself flagged as a copy of ANOTHER
+   *  survivor, the keeper's warning moves there instead of being settled:
+   *  the keeper and that survivor are still two copies of one purchase. */
+  onward: T | null;
+  /** The other survivors: each re-points its warnings about the deleted
+   *  copy at the keeper (`retargetDuplicateFlags`). */
+  others: T[];
+}
+
+/** How the copies paired with `x` settle when `x` is deleted, computed from
+ *  the list as it stands BEFORE the delete. `keeper` is the copy the human
+ *  chose to keep (review's "Delete it" keeps the open receipt); without one,
+ *  the OLDEST survivor by createdAt anchors the rest (the copy read first).
+ *  Null when `x` is paired with nothing and no keeper was named. Pure. */
+export function planDuplicateDelete<T extends DupCandidate & { createdAt?: number }>(
+  x: DupCandidate,
+  before: readonly T[],
+  keeper?: T,
+): DuplicateDeletePlan<T> | null {
+  const pairs = duplicatePairs(x, before);
+  const survivors = pairs.map((p) => p.peer);
+  const anchor =
+    keeper ??
+    survivors.reduce<T | null>(
+      (best, s) => (!best || (s.createdAt ?? Infinity) < (best.createdAt ?? Infinity) ? s : best),
+      null,
+    );
+  if (!anchor) return null;
+  const onward = pairs.find((p) => p.heldBy === "self" && p.peer.id !== anchor.id)?.peer ?? null;
+  return { keeper: anchor, onward, others: survivors.filter((s) => s.id !== anchor.id) };
 }

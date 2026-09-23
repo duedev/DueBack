@@ -399,8 +399,12 @@
   // A workbook without a name on it is usually an oversight, and so is a
   // possible duplicate still counted in the TOTAL (a flagged $80.29 repeat
   // shipped in a real report): ask once before building, with a way to fix
-  // it and a way to proceed anyway.
+  // it and a way to proceed anyway. Save to OneDrive ships the same
+  // workbook — same header, same TOTAL — so it asks the same question
+  // through the same dialog, told which action it guards (it used to
+  // upload without asking).
   let confirmOpen = $state(false);
+  let confirmFor = $state<"generate" | "onedrive">("generate");
   const blankFields = $derived(
     [
       !employee.trim() && "Employee",
@@ -416,13 +420,26 @@
   );
 
   function generate(): void {
-    if (blankFields.length > 0 || duplicates.length > 0) confirmOpen = true;
-    else void doGenerate();
+    if (blankFields.length > 0 || duplicates.length > 0) {
+      confirmFor = "generate";
+      confirmOpen = true;
+    } else void doGenerate();
   }
 
-  function confirmGenerate(proceed: boolean): void {
+  function oneDriveClick(): void {
+    if (blankFields.length > 0 || duplicates.length > 0) {
+      confirmFor = "onedrive";
+      confirmOpen = true;
+    } else void saveToOneDrive();
+  }
+
+  /** The confirm's answer. Proceeding runs the guarded action synchronously
+   *  inside this click: OneDrive's sign-in popup opens before the first
+   *  await in ensureConnected, so it stays within the user gesture. */
+  function answerConfirm(proceed: boolean): void {
     confirmOpen = false;
-    if (proceed) void doGenerate();
+    if (!proceed) return;
+    void (confirmFor === "onedrive" ? saveToOneDrive() : doGenerate());
   }
 
   /** Close the confirm and open the first flagged duplicate for review. */
@@ -430,9 +447,9 @@
     const first = duplicates[0];
     confirmOpen = false;
     if (!first) return;
-    // Let the confirm unmount first — its cleanup hands focus back to
-    // Generate — so the review modal remembers Generate as the place to
-    // return focus to, instead of losing focus to the closing dialog.
+    // Let the confirm unmount first — its cleanup hands focus back to the
+    // button that opened it — so the review modal remembers that button as
+    // the place to return focus to, instead of the closing dialog.
     await tick();
     app.reviewId = first.id;
   }
@@ -440,7 +457,7 @@
   // Focus management for the confirm (role=dialog + aria-modal promise it):
   // focus moves into the dialog on open, Escape cancels, Tab cycles its
   // buttons instead of walking the page behind the scrim, and focus returns
-  // to the Generate button on close.
+  // to the button that opened it (Generate or Save to OneDrive) on close.
   let confirmEl = $state<HTMLElement | null>(null);
   $effect(() => {
     const el = confirmEl;
@@ -452,7 +469,7 @@
   function onConfirmKey(e: KeyboardEvent): void {
     if (e.key === "Escape") {
       e.preventDefault();
-      confirmGenerate(false);
+      answerConfirm(false);
       return;
     }
     if (e.key !== "Tab" || !confirmEl) return;
@@ -800,7 +817,7 @@
     {#if oneDriveOn}
       <button
         class="btn btn-ghost"
-        onclick={() => void saveToOneDrive()}
+        onclick={oneDriveClick}
         disabled={odSaving || building || nothingToExport}
         title="Upload the workbook and its print packet to OneDrive → Apps/DueBack"
       >
@@ -825,7 +842,7 @@
       class="confirm-scrim"
       role="presentation"
       onclick={(e) => {
-        if (e.target === e.currentTarget) confirmGenerate(false);
+        if (e.target === e.currentTarget) answerConfirm(false);
       }}
     >
       <div
@@ -848,14 +865,16 @@
         {/if}
         <div class="confirm-actions">
           {#if blankFields.length > 0}
-            <button class="btn" onclick={() => confirmGenerate(false)}>Go back and fill in</button>
+            <button class="btn" onclick={() => answerConfirm(false)}>Go back and fill in</button>
           {/if}
           {#if duplicates.length > 0}
             <button class="btn" onclick={() => void reviewDuplicate()}>
               {duplicates.length === 1 ? "Review duplicate" : "Review duplicates"}
             </button>
           {/if}
-          <button class="btn btn-primary" onclick={() => confirmGenerate(true)}>Generate anyway</button>
+          <button class="btn btn-primary" onclick={() => answerConfirm(true)}>
+            {confirmFor === "onedrive" ? "Save anyway" : "Generate anyway"}
+          </button>
         </div>
       </div>
     </div>

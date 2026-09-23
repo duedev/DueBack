@@ -142,6 +142,37 @@ test("duplicatesSentence names each duplicate with its amount", () => {
   );
 });
 
+// Save to OneDrive ships the same workbook and TOTAL as Generate, so it goes
+// through the same confirm. The button is hidden without
+// VITE_ONEDRIVE_CLIENT_ID, so the e2e can't click it — pinned statically.
+test("Save to OneDrive asks the same unresolved-duplicate / blank-details question as Generate", () => {
+  const bar = code("src/ui/ExportBar.svelte");
+  const body = (fn: string): string => {
+    const m = new RegExp(`function ${fn}\\([^)]*\\)[^{]*\\{([\\s\\S]*?)\\n  \\}`).exec(bar);
+    assert.ok(m, `${fn} is defined`);
+    return m[1]!;
+  };
+  // The button routes through the confirm, never straight to the upload.
+  const button = /<button[^>]*onclick=\{([^}]*)\}[^>]*>\s*\{odSaving \? "Saving…" : "Save to OneDrive"\}/.exec(bar);
+  assert.ok(button, "the Save to OneDrive button is found");
+  assert.equal(button[1]!.trim(), "oneDriveClick");
+  const click = body("oneDriveClick");
+  assert.match(click, /blankFields\.length > 0 \|\| duplicates\.length > 0/);
+  assert.match(click, /confirmFor = "onedrive";\s*confirmOpen = true;/);
+  // Proceeding uploads synchronously inside the proceed click — no await
+  // first, or OneDrive's sign-in popup opens outside the user gesture.
+  const answer = body("answerConfirm");
+  assert.match(answer, /confirmFor === "onedrive" \? saveToOneDrive\(\) : doGenerate\(\)/);
+  assert.doesNotMatch(answer, /\bawait\b/);
+  // saveToOneDrive() is called from those two places only.
+  const calls = bar.match(/(?<!function )saveToOneDrive\(\)/g) ?? [];
+  assert.equal(calls.length, 2, "only oneDriveClick and answerConfirm start an upload");
+  assert.match(click, /void saveToOneDrive\(\)/);
+  // The dialog names the action it guards; Generate keeps its wording.
+  assert.match(bar, /confirmFor === "onedrive" \? "Save anyway" : "Generate anyway"/);
+  assert.match(body("generate"), /confirmFor = "generate";\s*confirmOpen = true;/);
+});
+
 // ── the corrections log ships inside the tuning bundle only ─────────────────
 
 test("the corrections log is exported only as corrections.json inside the tuning bundle", () => {

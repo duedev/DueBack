@@ -55,6 +55,8 @@ import {
   duplicatePairs,
   duplicateReason,
   flagsWithoutDuplicate,
+  retargetDuplicateFlags,
+  planDuplicateDelete,
   transactionCodes,
   sharedTransactionCode,
   type DupCandidate,
@@ -383,4 +385,127 @@ test("flagsWithoutDuplicate removes only the warning about that twin (and dead o
     ["stale_date"],
   );
   assert.ok(flagsWithoutDuplicate(scanFeb11, "someone-else", [scanFeb11, appFeb11]).includes(legacy));
+});
+
+// ── Deleting one copy of three ───────────────────────────────────────────────
+
+const dupFlag = (ref: string | undefined, message: string) => ({
+  code: "duplicate" as const,
+  severity: "warn" as const,
+  message,
+  ...(ref ? { ref } : {}),
+});
+
+test("three copies: deleting the original re-points the third copy at the survivor", () => {
+  // A is the original; B and C were each flagged against A (the pipeline's
+  // semantic tier returns the FIRST match in createdAt order).
+  const a = { ...cand({ id: "a", originalFileName: "IMG_A.jpg" }), createdAt: 1 };
+  const stale = { code: "stale_date" as const, severity: "info" as const, message: "old" };
+  const b = {
+    ...cand({ id: "b", originalFileName: "IMG_B.jpg" }),
+    createdAt: 2,
+    flags: [dupFlag("a", 'Same vendor, date and amount as "IMG_A.jpg" — possible duplicate.')],
+  };
+  const c = {
+    ...cand({ id: "c", originalFileName: "IMG_C.jpg" }),
+    createdAt: 3,
+    flags: [stale, dupFlag("a", 'Same vendor, date and amount as "IMG_A.jpg" — possible duplicate.')],
+  };
+  const before = [a, b, c];
+
+  // Review deletes A: the oldest survivor (B) anchors the rest.
+  const plan = planDuplicateDelete(a, before);
+  assert.equal(plan?.keeper.id, "b");
+  assert.equal(plan?.onward, null);
+  assert.deepEqual(plan?.others.map((o) => o.id), ["c"]);
+
+  const cFlags = retargetDuplicateFlags(c, "a", b, before);
+  assert.equal(cFlags.length, 2, "nothing added, nothing dropped");
+  assert.equal(cFlags[0], stale, "an unrelated flag passes through as-is");
+  assert.deepEqual(cFlags[1], dupFlag("b", 'Same vendor, date and amount as "IMG_B.jpg" — possible duplicate.'));
+  // The keeper is never its own duplicate; the deleted copy is left alone.
+  assert.deepEqual(retargetDuplicateFlags(b, "a", b, before), b.flags);
+  assert.deepEqual(retargetDuplicateFlags(a, "a", b, before), []);
+
+  // After the delete: B settles its warning about A, C's now names B, and
+  // the pair is still a pair from both sides — not "no longer on this board".
+  const bAfter = { ...b, flags: flagsWithoutDuplicate(b, "a", before) };
+  const cAfter = { ...c, flags: cFlags };
+  const after = [bAfter, cAfter];
+  assert.deepEqual(duplicatePairs(cAfter, after).map((p) => [p.peer.id, p.heldBy]), [["b", "self"]]);
+  assert.deepEqual(duplicatePairs(bAfter, after).map((p) => [p.peer.id, p.heldBy]), [["c", "peer"]]);
+  // What the old code left behind: C's ref resolves to nothing.
+  assert.equal(resolveDuplicateFlag(c, c.flags[1]!, after), null);
+});
+
+test("retargetDuplicateFlags: a legacy flag (no ref) resolves through the PRE-delete list", () => {
+  // Stored before `ref` existed: the flag only quotes A's name. A and C are
+  // byte-identical (same imageHash); B is the same purchase photographed
+  // again, with a slightly different total read — no tier ties C to B.
+  const a = cand({ id: "a", originalFileName: "IMG_A.jpg", imageHash: "h1" });
+  const b = cand({ id: "b", originalFileName: "IMG_B.jpg", imageHash: "h2", amount: { value: 45.21 } });
+  const c = {
+    ...cand({ id: "c", originalFileName: "IMG_C.jpg", imageHash: "h1" }),
+    flags: [dupFlag(undefined, 'Looks identical to "IMG_A.jpg".')],
+  };
+  const before = [a, b, c];
+  const flags = retargetDuplicateFlags(c, "a", b, before);
+  assert.deepEqual(flags, [
+    dupFlag("b", 'Possible duplicate of "IMG_B.jpg" — both matched a copy that was deleted.'),
+  ]);
+  // Resolved against the list AFTER the delete, the legacy flag points at
+  // nothing — there is no longer anything to tell it was about A.
+  assert.equal(resolveDuplicateFlag(c, c.flags[0]!, [b, c]), null);
+  assert.deepEqual(retargetDuplicateFlags(c, "a", b, [b, c]), c.flags);
+  // A legacy flag about someone ELSE is not touched.
+  const other = cand({ id: "o", originalFileName: "IMG_O.jpg", imageHash: "h9" });
+  const d = { ...cand({ id: "d", imageHash: "h9" }), flags: [dupFlag(undefined, 'Looks identical to "IMG_O.jpg".')] };
+  assert.equal(retargetDuplicateFlags(d, "a", b, [a, b, other, d])[0], d.flags[0]);
+});
+
+test("hash-tier chain: C was flagged against B, B against A — deleting B links C to A", () => {
+  // Byte-identical copies: the hash cache hands back whichever twin it finds
+  // first, so the flags can chain (C → B → A).
+  const a = { ...cand({ id: "a", originalFileName: "IMG_A.jpg", imageHash: "h" }), createdAt: 1 };
+  const b = {
+    ...cand({ id: "b", originalFileName: "IMG_B.jpg", imageHash: "h" }),
+    createdAt: 2,
+    flags: [dupFlag("a", 'Looks identical to "IMG_A.jpg".')],
+  };
+  const c = {
+    ...cand({ id: "c", originalFileName: "IMG_C.jpg", imageHash: "h" }),
+    createdAt: 3,
+    flags: [dupFlag("b", 'Looks identical to "IMG_B.jpg".')],
+  };
+  const before = [a, b, c];
+
+  // Delete B from its own review ("Delete this one"): A, the oldest, keeps.
+  const plan = planDuplicateDelete(b, before);
+  assert.equal(plan?.keeper.id, "a");
+  assert.equal(plan?.onward, null);
+  assert.deepEqual(plan?.others.map((o) => o.id), ["c"]);
+  assert.deepEqual(retargetDuplicateFlags(c, "b", a, before), [dupFlag("a", 'Looks identical to "IMG_A.jpg".')]);
+
+  // Delete B from C's review ("Delete it" on the twin): C is the keeper the
+  // human chose, and B was itself a copy of A — C's warning moves ONWARD to
+  // A instead of being settled, so A and C are not both left unflagged.
+  const fromC = planDuplicateDelete(b, before, c);
+  assert.equal(fromC?.keeper.id, "c");
+  assert.equal(fromC?.onward?.id, "a");
+  assert.deepEqual(fromC?.others.map((o) => o.id), ["a"]);
+  assert.deepEqual(retargetDuplicateFlags(c, "b", a, before), [dupFlag("a", 'Looks identical to "IMG_A.jpg".')]);
+  // A holds no warning about B: re-pointing it is a no-op.
+  assert.deepEqual(retargetDuplicateFlags(a, "b", c, before), []);
+});
+
+test("retargetDuplicateFlags folds into an existing warning about the keeper", () => {
+  const a = cand({ id: "a" });
+  const b = cand({ id: "b", originalFileName: "IMG_B.jpg" });
+  const aboutB = dupFlag("b", 'Same vendor, date and amount as "IMG_B.jpg" — possible duplicate.');
+  const c = { ...cand({ id: "c" }), flags: [aboutB, dupFlag("a", 'Same vendor, date and amount as "a.jpg" — possible duplicate.')] };
+  // One pair, one warning — two identical messages would also collide as
+  // keys in review's flag list.
+  assert.deepEqual(retargetDuplicateFlags(c, "a", b, [a, b, c]), [aboutB]);
+  // Nothing to plan for a receipt paired with nobody.
+  assert.equal(planDuplicateDelete(cand({ id: "lone", amount: { value: 3 } }), [a, b]), null);
 });

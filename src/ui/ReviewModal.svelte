@@ -13,7 +13,10 @@
     duplicatePairs,
     duplicateReason,
     flagsWithoutDuplicate,
+    planDuplicateDelete,
     resolveDuplicateFlag,
+    retargetDuplicateFlags,
+    type DuplicateDeletePlan,
   } from "../pipeline/dedup.ts";
   import type { Receipt, BBox, Category, OcrLine, Field, Flag } from "../types.ts";
 
@@ -574,6 +577,49 @@
     });
   }
 
+  /** Re-point receipt `id`'s duplicate warnings about the deleted `fromId`
+   *  at `keeper` (dedup.retargetDuplicateFlags). `before` is the board as it
+   *  stood before the delete, so a flag stored before `ref` still resolves
+   *  to the copy it was about. Serialized and CAS-guarded like
+   *  dropDuplicateFlag; never adds a warning and never drops a live one. */
+  function retargetDuplicateFlag(
+    id: string,
+    fromId: string,
+    keeper: Receipt,
+    before: readonly Receipt[],
+  ): Promise<void> {
+    return serialized(async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const stored = await repo.getReceipt(id);
+        if (!stored) return;
+        const flags = retargetDuplicateFlags(stored, fromId, keeper, before);
+        if (flags.length === stored.flags.length && flags.every((f, i) => f === stored.flags[i])) return;
+        if ((await repo.updateReceipt(id, { flags }, { updatedAt: stored.updatedAt })) !== null) return;
+      }
+    });
+  }
+
+  /** After deleting `x`: settle the copies it was paired with (a plan from
+   *  dedup.planDuplicateDelete, computed before the delete). The keeper's
+   *  warning about x goes — its card would otherwise keep a warn banner
+   *  about a receipt that no longer exists — or moves onward when x was
+   *  itself a copy of another survivor; every other survivor's warning is
+   *  re-pointed at the keeper. Settling only the first pair left a third
+   *  copy pointing at nothing ("no longer on this board") while its real
+   *  twin sat beside it in the TOTAL. */
+  async function settleDeleted(
+    x: Receipt,
+    plan: DuplicateDeletePlan<Receipt> | null,
+    before: readonly Receipt[],
+  ): Promise<void> {
+    if (!plan) return;
+    const { keeper, onward, others } = plan;
+    await (onward
+      ? retargetDuplicateFlag(keeper.id, x.id, onward, before)
+      : dropDuplicateFlag(keeper.id, x.id));
+    for (const s of others) await retargetDuplicateFlag(s.id, x.id, keeper, before);
+  }
+
   async function keepBoth(): Promise<void> {
     const d = dup;
     const r = current;
@@ -583,14 +629,14 @@
     await Promise.all([dropDuplicateFlag(r.id, d.peer.id), dropDuplicateFlag(d.peer.id, r.id)]);
     app.toast("Kept both — the duplicate warning is cleared.", "ok");
   }
-  /** Delete the open receipt. While it is half of a suspected pair, the
-   *  survivor's warning about it goes too — its card would otherwise keep a
-   *  warn banner about a receipt that no longer exists. */
+  /** Delete the open receipt. While it is part of a suspected pair (or
+   *  cluster), the copies left behind settle around the oldest of them. */
   async function deleteOpen(): Promise<void> {
-    const d = dup;
     const r = current;
+    const before = list;
+    const plan = r ? planDuplicateDelete(r, before) : null;
     await deleteCurrent();
-    if (d && r) await dropDuplicateFlag(d.peer.id, r.id);
+    if (r) await settleDeleted(r, plan, before);
   }
   async function deleteThis(): Promise<void> {
     // The button unmounts with this receipt: hold focus on the dialog.
@@ -601,10 +647,13 @@
     const d = dup;
     const r = current;
     if (!d || !r) return;
+    // The human keeps the open receipt; plan before the board drops the twin.
+    const before = list;
+    const plan = planDuplicateDelete(d.peer, before, r);
     parkFocus();
     peerUrl = null; // its object URL is revoked with the delete
     await app.deleteReceipt(d.peer.id);
-    await dropDuplicateFlag(r.id, d.peer.id);
+    await settleDeleted(d.peer, plan, before);
   }
   function openPeer(): void {
     if (dup) app.reviewId = dup.peer.id;
@@ -1317,6 +1366,13 @@
   }
   .m-body.comparing {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(280px, 0.85fr);
+    /* A zoomed column is a scroll container (automatic min height 0), and
+       .m-body is itself a scroll area with no free space to hand out: under
+       `auto` rows, a row holding only zoomed columns (a phone's stack, or
+       both zoomed at mid widths) collapsed to 0 px and took its own Zoom
+       toggle with it. max-content sizes every row to its content, which
+       the zoomed column's max-height clamps. */
+    grid-auto-rows: max-content;
   }
   @media (max-width: 1100px) {
     .m-body.comparing {

@@ -233,6 +233,20 @@ test("html/body clip horizontal overflow, hidden fallback declared first", () =>
   assert.doesNotMatch(themeCss, /overscroll-behavior-x/);
 });
 
+test("the duplicate compare sizes its rows to content, so a zoomed column can't collapse", () => {
+  // A zoomed compare column is a scroll container (automatic min height 0)
+  // inside .m-body, itself a full scroll area: under `auto` rows a row of
+  // only zoomed columns (a phone's stack, both zoomed at mid widths) got
+  // 0 px and hid its own Zoom toggle. The e2e measures it at 390px; this
+  // pins the rule in the base (every-width) block.
+  const css = read("src/ui/ReviewModal.svelte").replace(/\/\*[\s\S]*?\*\//g, "");
+  const style = css.slice(css.indexOf("<style>"));
+  const m = style.match(/\n {2}\.m-body\.comparing\s*\{([^}]*)\}/);
+  assert.ok(m, "the base .m-body.comparing rule exists");
+  assert.match(m![1]!, /grid-auto-rows:\s*max-content/);
+  assert.match(style, /\.m-image\.zoomed,\s*\.m-peer\.zoomed\s*\{[^}]*max-height:\s*70dvh/);
+});
+
 // ── landing copy vs the real report bar ──────────────────────────────────────
 // The CSV button was removed and the images ZIP is hidden by product call;
 // the landing advertised both for weeks afterwards. Pinned only while the
