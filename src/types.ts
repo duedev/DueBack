@@ -224,7 +224,10 @@ export interface Receipt {
   confidence: number;
   flags: Flag[];
 
-  /** Full OCR text, kept for re-parsing and the review panel. */
+  /** Full OCR text — the on-device read, reused by the image-hash cache and
+   *  shipped in the tuning bundle. Never an AI answer (that lives in
+   *  `assist.rawAnswer`); AI reads stored before `assist` existed are the
+   *  exception (vision/provenance.ts isLegacyAiRead). */
   ocrText?: string;
   /** Pruned per-line OCR geometry (no words), kept so a human correction can
    *  be located and re-highlighted on the image and logged for training. */

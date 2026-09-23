@@ -238,7 +238,7 @@
             skipped++;
             continue;
           }
-          const strip = receiptStrip([r.vendor.bbox, r.date.bbox, r.amount.bbox]);
+          const strip = receiptStrip([r.vendor.bbox, r.date.bbox, r.amount.bbox], { lines: r.ocrLines });
           const t = strip
             ? await stripThumbnail(blob, strip.y0, strip.y1, 1400, 0.8)
             : await thumbnail(blob, 1400, 0.8);

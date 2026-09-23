@@ -324,12 +324,12 @@ export function getVisionConfig(): VisionConfig {
 
 export function saveVisionConfig(patch: VisionConfigPatch): VisionConfig {
   const next = mergeVisionConfig(getVisionConfig(), patch);
-  if (typeof localStorage !== "undefined") {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      /* storage may be unavailable (private mode); config just won't persist */
-    }
+  // `typeof localStorage` sits inside the try: in a storage-blocked embed the
+  // global exists but its getter throws (see getVisionConfig).
+  try {
+    if (typeof localStorage !== "undefined") localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    /* storage may be unavailable (private mode); config just won't persist */
   }
   return next;
 }

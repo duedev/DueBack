@@ -27,6 +27,16 @@
   /** Still being read (the modal opens any card): approving now would stamp
    *  the empty form as the human's answer, so Approve waits. */
   const busy = $derived(current?.status === "queued" || current?.status === "processing");
+  /** Same rule as Card's pausedHere: this device paused reading, the receipt
+   *  is in its work-list, and nothing is mid-read on it (a metered AI call
+   *  already under way still finishes and keeps "Still reading…"). */
+  const pausedRead = $derived(
+    busy &&
+      app.paused &&
+      !!current &&
+      app.localJobIds.has(current.id) &&
+      (current.status === "queued" || app.runningJobs === 0),
+  );
 
   // Editable copies (re-seeded whenever the open receipt changes). The amount
   // and tax fields are number inputs — Svelte rebinds them as numbers after a
@@ -385,7 +395,9 @@
   async function retryRead(): Promise<void> {
     const r = current;
     if (!r) return;
-    if (await app.retryReceipt(r.id)) app.toast("Reading again…", "info");
+    if (await app.retryReceipt(r.id)) {
+      app.toast(app.paused ? "Queued to read again — resume reading to start." : "Reading again…", "info");
+    }
   }
 
   function onKey(e: KeyboardEvent): void {
@@ -616,6 +628,7 @@
     no_date: "date",
     future_date: "date",
     stale_date: "date",
+    date_suspect: "date",
     no_amount: "amount",
     total_mismatch: "amount",
     total_suspect: "amount",
@@ -1045,7 +1058,7 @@
         <button class="btn btn-sm btn-danger" onclick={() => void deleteOpen()}>Delete</button>
         <span class="spacer"></span>
         {#if busy}
-          <span class="muted small">Still reading…</span>
+          <span class="muted small">{pausedRead ? "Paused — resume reading from the top bar" : "Still reading…"}</span>
         {/if}
         <span class="kbd">Enter</span>
         <button
@@ -1291,6 +1304,9 @@
   .provenance {
     font-size: 0.8rem;
     margin: 0;
+    /* "Read by OpenRouter · openrouter/free → vendor/model:free · one-shot …"
+       has long unbreakable ids; never widen the modal at 390px. */
+    overflow-wrap: anywhere;
   }
 
   /* Suspected duplicate, side by side: this receipt | its twin | the form.
