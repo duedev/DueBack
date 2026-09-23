@@ -9,19 +9,6 @@
     void getCorrections().then((r) => (correctionCount = r.length));
   });
 
-  async function downloadCorrections(): Promise<void> {
-    const records = await getCorrections();
-    const blob = new Blob([JSON.stringify(records, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `dueback_corrections_${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    // Deferred like ExportBar's download(): a synchronous revoke can abort
-    // the download in Safari.
-    setTimeout(() => URL.revokeObjectURL(url), 30_000);
-  }
-
   async function resetCorrections(): Promise<void> {
     await clearCorrections();
     correctionCount = 0;
@@ -29,7 +16,10 @@
   }
 
   // One ZIP with everything a tuning session needs (shared with the
-  // contact form's attach checkbox) — see src/train/bundle.ts.
+  // contact form's attach checkbox) — see src/train/bundle.ts. The
+  // corrections log rides inside it as corrections.json — no separate
+  // log-only download. The log outlives batches, so the bundle stays
+  // available on an empty board while the log has records.
   let bundleBusy = $state(false);
   async function downloadTuningBundle(): Promise<void> {
     bundleBusy = true;
@@ -63,19 +53,21 @@
   </p>
   <div class="row">
     <span class="chip">{correctionCount} corrections</span>
-    <button class="btn btn-primary btn-sm" onclick={() => void downloadTuningBundle()} disabled={bundleBusy || app.receipts.length === 0}>
+    <button
+      class="btn btn-primary btn-sm"
+      onclick={() => void downloadTuningBundle()}
+      disabled={bundleBusy || (app.receipts.length === 0 && correctionCount === 0)}
+    >
       {bundleBusy ? "Packaging…" : "Download tuning bundle"}
-    </button>
-    <button class="btn btn-sm" onclick={() => void downloadCorrections()} disabled={correctionCount === 0}>
-      Corrections JSON
     </button>
     <button class="btn btn-ghost btn-sm btn-danger" onclick={() => void resetCorrections()} disabled={correctionCount === 0}>
       Clear
     </button>
   </div>
   <p class="muted small">
-    The bundle zips the corrections log, every receipt's extraction
-    (fields, flags, OCR text and positions), the report CSV, and the
-    original + highlighted images: one file to hand over for tuning.
+    The bundle zips the corrections log (corrections.json), every
+    receipt's extraction (fields, flags, OCR text and positions), the
+    report CSV, and the original + highlighted images: one file to hand
+    over for tuning.
   </p>
 </section>

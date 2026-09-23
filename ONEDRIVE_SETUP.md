@@ -90,9 +90,9 @@ VITE_ONEDRIVE_REDIRECT_URI=https://dueback.duanehamilton.net/
 - **Report bar → Save to OneDrive:** first use opens a Microsoft sign-in
   popup; after that the workbook is built and uploaded to
   `OneDrive / Apps / DueBack / Reimbursements_<Employee>_<YYYYMMDD>.xlsx`,
-  and — with **Print packet** ticked, as it is by default — the
-  `Receipt_Packet_<Employee>_<YYYYMMDD>.pdf` goes up beside it as its own
-  file (same-named files are replaced — re-saving a report updates both).
+  and the `Receipt_Packet_<Employee>_<YYYYMMDD>.pdf` always goes up beside
+  it as its own file (same-named files are replaced — re-saving a report
+  updates both).
 - **Settings → OneDrive:** shows the connected account, connects, or
   disconnects (which just forgets the tokens in this browser).
 

@@ -220,7 +220,7 @@
     },
     {
       q: "What do I hand to my office?",
-      a: "A polished multi-sheet Excel workbook: a summary that foots with real formulas, per-category sheets with the receipt images embedded and an insights dashboard. A print packet PDF of the receipts downloads alongside for offices that keep paper copies.",
+      a: "A polished multi-sheet Excel workbook: a summary that foots with real formulas, per-category sheets with the receipt images embedded and an insights dashboard. For offices that keep paper copies, a print packet PDF of the receipts is one more click (or zipped in with the workbook).",
     },
     {
       q: "What kinds of files work?",

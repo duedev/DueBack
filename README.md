@@ -28,12 +28,14 @@ for the web with two new pillars: **visual logo recognition** and an
 3. **Download the workbook:** a themed `.xlsx` (Summary that foots with real
    formulas, per-category sheets with the receipt images embedded, and — with
    **Insights sheet** ticked in the report bar, as it is by default — a
-   charts + KPI dashboard tab) plus a **print packet** PDF with the receipts
-   laid out on Letter pages under the employee/job header (bundle both into
-   one ZIP if you prefer a single download). Deployments configured for it
-   also get a **Save to OneDrive** button that uploads the workbook straight
-   to `OneDrive / Apps / DueBack` (see
-   [`ONEDRIVE_SETUP.md`](./ONEDRIVE_SETUP.md)).
+   charts + KPI dashboard tab). The **print packet** PDF — the receipts laid
+   out on Letter pages under the employee/job header — is one more click
+   (**Download packet**), or tick **Include the print packet (one ZIP)** to
+   get both in a single download: each click hands the browser exactly one
+   file, so it never asks to allow multiple downloads. Deployments
+   configured for it also get a **Save to OneDrive** button that uploads the
+   workbook and its print packet straight to `OneDrive / Apps / DueBack`
+   (see [`ONEDRIVE_SETUP.md`](./ONEDRIVE_SETUP.md)).
 
 The report bar also remembers your **jobs**: save a job name + number pair
 once (☆ Save job) and typing either one autofills the other from then on

@@ -509,28 +509,46 @@ async function main() {
     );
 
     const dlDir = await mkdtemp(join(tmpdir(), "reimb-"));
+    // One click, one download: a second file from the same click trips the
+    // browser's "download multiple files" prompt, so the packet has its own
+    // button and zipping it in with the workbook is opt-in (default off).
+    const packetZipOpt = page
+      .locator(".opt", { hasText: "Include the print packet (one ZIP)" })
+      .locator("input");
+    check(!(await packetZipOpt.isChecked()), "the print-packet ZIP option defaults to off");
     // Job number was left blank on purpose: generating must first raise the
     // blank-details prompt, and "Generate anyway" proceeds.
     await page.getByRole("button", { name: /Generate workbook/ }).click();
     const blankDialog = page.getByRole("dialog", { name: "Missing report details" });
     await blankDialog.waitFor({ timeout: 5000 });
     check(true, "blank job number raises the missing-details prompt");
-    // Generating yields TWO files: the workbook and (default-on) the print
-    // packet PDF. Collect both before validating either.
     const downloads = [];
     const onDownload = (d) => downloads.push(d);
     page.on("download", onDownload);
+    const dlNames = () => downloads.map((d) => d.suggestedFilename()).join(", ") || "none";
+    // Wait for the click's first download, then linger: a second file from
+    // the same click would land within the grace period.
+    const settleDownloads = async () => {
+      for (let i = 0; i < 240 && downloads.length < 1; i++) await page.waitForTimeout(500);
+      await page.waitForTimeout(2500);
+    };
     await page.getByRole("button", { name: "Generate anyway" }).click();
-    for (let i = 0; i < 240 && downloads.length < 2; i++) {
-      await page.waitForTimeout(500);
-    }
-    page.off("download", onDownload);
+    await settleDownloads();
     const download = downloads.find((d) => d.suggestedFilename().endsWith(".xlsx"));
-    const packetDl = downloads.find((d) => d.suggestedFilename().endsWith(".pdf"));
-    check(!!download, "generate downloads the workbook");
     check(
-      !!packetDl && /^Receipt_Packet_Ada_Lovelace_\d{8}\.pdf$/.test(packetDl.suggestedFilename()),
-      `print packet PDF downloads alongside (got ${packetDl?.suggestedFilename()})`,
+      downloads.length === 1 && !!download,
+      `Generate downloads exactly one file, the workbook (got ${dlNames()})`,
+    );
+
+    // Download packet: its own click, so its own (single) download.
+    downloads.length = 0;
+    await page.getByRole("button", { name: "Download packet" }).click();
+    await settleDownloads();
+    const packetDl = downloads[0];
+    check(
+      downloads.length === 1 &&
+        /^Receipt_Packet_Ada_Lovelace_\d{8}\.pdf$/.test(packetDl?.suggestedFilename() ?? ""),
+      `Download packet downloads exactly the print packet PDF (got ${dlNames()})`,
     );
     if (packetDl) {
       const pdfPath = join(dlDir, packetDl.suggestedFilename());
@@ -545,6 +563,34 @@ async function main() {
         "print packet header carries the employee",
       );
     }
+
+    // Opted in, Generate hands over ONE ZIP holding both files.
+    downloads.length = 0;
+    await packetZipOpt.check();
+    await page.getByRole("button", { name: /Generate workbook/ }).click();
+    await blankDialog.waitFor({ timeout: 5000 });
+    await page.getByRole("button", { name: "Generate anyway" }).click();
+    await settleDownloads();
+    const zipDl = downloads[0];
+    check(
+      downloads.length === 1 &&
+        /^Report_Ada_Lovelace_\d{8}\.zip$/.test(zipDl?.suggestedFilename() ?? ""),
+      `the ZIP option downloads exactly one archive (got ${dlNames()})`,
+    );
+    if (zipDl) {
+      const zipPath = join(dlDir, zipDl.suggestedFilename());
+      await zipDl.saveAs(zipPath);
+      const zipRaw = await readFile(zipPath);
+      check(
+        zipRaw.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) &&
+          zipRaw.includes(Buffer.from(download?.suggestedFilename() ?? "\0")) &&
+          /Receipt_Packet_Ada_Lovelace_\d{8}\.pdf/.test(zipRaw.toString("latin1")),
+        "the archive holds the workbook and the print packet",
+      );
+    }
+    await packetZipOpt.uncheck();
+    page.off("download", onDownload);
+
     const xlsxPath = join(dlDir, download.suggestedFilename());
     await download.saveAs(xlsxPath);
     log("downloaded", download.suggestedFilename());
@@ -562,16 +608,51 @@ async function main() {
       !names.includes("All Receipts") && names[names.length - 1] === "Insights",
       "summary+receipts merged; Insights is the rightmost tab",
     );
-    // The Summary "#" cells hyperlink to each receipt's image-sheet anchor.
+    // The Summary "#" cells hyperlink to each receipt's image-sheet block.
     const summarySheet = wb.getWorksheet("Summary");
     let linkCount = 0;
+    let blockLinks = 0;
     summarySheet.eachRow((row) => {
       const v = row.getCell(1).value;
-      // HYPERLINK("#'Sheet'!A4", n) formulas (numeric result) — a hyperlink
-      // -typed cell would be "1" stored as text.
+      // HYPERLINK("#'Sheet'!A3:F21", n) formulas (numeric result) — a
+      // hyperlink-typed cell would be "1" stored as text.
       if (v && typeof v === "object" && (v.hyperlink || /^HYPERLINK\("#'/.test(v.formula ?? ""))) linkCount++;
+      // The target is a RANGE from the receipt's own header band that fits
+      // a laptop window (LINK_VIEW_PX = 360): Excel scrolls a range that
+      // fits fully into view, where a single cell reached going down sat on
+      // the bottom edge with the image off-screen. Real images, real row
+      // heights — the only end-to-end run of the image-branch block math.
+      const m = /^HYPERLINK\("#'([^']+)'!A(\d+):F(\d+)",(\d+)\)$/.exec(v?.formula ?? "");
+      if (!m) return;
+      const [, sheet, top, end, n] = m.map((x, i) => (i >= 2 ? Number(x) : x));
+      const ws = wb.getWorksheet(sheet);
+      const amt = /^'([^']+)'!F(\d+)$/.exec(row.getCell(6).value?.formula ?? "");
+      if (!ws || !amt || amt[1] !== sheet) return;
+      const data = Number(amt[2]);
+      const px = (a, b) => {
+        let t = 0;
+        for (let r = a; r <= b; r++) t += Math.round(((ws.findRow(r)?.height ?? 15) * 4) / 3);
+        return t;
+      };
+      const band = String(ws.getCell(top, 1).value ?? "");
+      if (
+        band.startsWith(`Receipt ${n} `) &&
+        end <= data &&
+        px(top, end) <= 360 &&
+        // The whole block through its data row when it fits; capped inside
+        // the image otherwise.
+        (end === data) === (px(top, data) <= 360)
+      ) {
+        blockLinks++;
+      } else {
+        log(`bad link ${v.formula} (band "${band}", amount row ${data}, ${px(top, end)}px)`);
+      }
     });
     check(linkCount === 4, `summary links every receipt to its image (got ${linkCount})`);
+    check(
+      blockLinks === 4,
+      `every link selects its receipt's block from the header band, fitting the window (got ${blockLinks})`,
+    );
 
     // 7a-bis. Receipt images must render at their true aspect ratio. An
     // anchor expressed as a FRACTION of a column was rescaled by ExcelJS's
@@ -605,6 +686,61 @@ async function main() {
       imagesChecked >= 8,
       `every embedded image was measured — receipts and charts (got ${imagesChecked})`,
     );
+
+    // 7b. A possible duplicate still in the TOTAL makes Generate ask first
+    // (a flagged $80.29 repeat once shipped unreviewed in a real report).
+    // Re-uploading the coffee receipt is a byte-identical duplicate: the OCR
+    // cache answers it, and dedup flags it.
+    log("re-uploading the coffee receipt as a duplicate…");
+    await page
+      .locator("input[type=file][multiple]")
+      .first()
+      .setInputFiles([{ name: "coffee-again.png", mimeType: "image/png", buffer: await makeReceiptPng() }]);
+    let dupRow = {};
+    const dupDeadline = Date.now() + 120000;
+    while (Date.now() < dupDeadline) {
+      dupRow = (await readRows()).find((r) => r.file === "coffee-again.png") ?? {};
+      if (["done", "needs_review", "failed"].includes(dupRow.status)) break;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    // Byte-identical → "Looks identical to …"; should the cleaned re-encode
+    // ever differ, the semantic match (vendor + date + amount) flags it.
+    const dupMsg = /Looks identical|possible duplicate/;
+    check(
+      dupRow.status === "needs_review" && dupMsg.test(dupRow.flags || ""),
+      `a re-uploaded receipt is flagged as a duplicate (got ${dupRow.status}: ${dupRow.flags})`,
+    );
+    // Every report detail filled, so the duplicate alone raises the prompt.
+    await page.locator("#xb-num").fill("24-117");
+    await page.locator("#xb-num").dispatchEvent("change");
+    await page.getByRole("button", { name: /Generate workbook/ }).click();
+    const dupDialog = page.getByRole("dialog", { name: "Possible duplicates in this report" });
+    await dupDialog.waitFor({ timeout: 5000 });
+    check(
+      /1 possible duplicate is still in the total: .+ — \$8\.99/.test(await dupDialog.innerText()),
+      "Generate names the unresolved duplicate and its amount",
+    );
+    await dupDialog.getByRole("button", { name: "Review duplicate" }).click();
+    const reviewDialog = page.getByRole("dialog", { name: /Review receipt/ });
+    await reviewDialog.waitFor({ timeout: 5000 });
+    check(
+      (await dupDialog.count()) === 0 && dupMsg.test(await reviewDialog.innerText()),
+      "Review duplicate closes the prompt and opens the flagged receipt",
+    );
+    // Resolve it the way a human would: delete the repeat. The modal then
+    // moves on to a neighbour — close it only once the delete has landed
+    // (an Escape mid-delete would be undone by that hand-off).
+    await reviewDialog.getByRole("button", { name: "Delete", exact: true }).click();
+    let afterDup = [];
+    for (let i = 0; i < 40; i++) {
+      afterDup = await readRows();
+      if (afterDup.length === 4) break;
+      await page.waitForTimeout(250);
+    }
+    check(afterDup.length === 4, `the duplicate is deleted (rows ${afterDup.length})`);
+    await page.waitForTimeout(300);
+    if (await reviewDialog.isVisible()) await page.keyboard.press("Escape");
+    await reviewDialog.waitFor({ state: "hidden", timeout: 5000 });
 
 
     // Phone-width measure (7c, 8b): neither surface may overflow the
