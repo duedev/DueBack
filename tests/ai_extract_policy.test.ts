@@ -11,7 +11,7 @@ import {
   MAX_TEXT_CHARS,
   messagesProblem,
 } from "../supabase/functions/ai-extract/policy.ts";
-import { openRouterHeaders } from "../src/pipeline/vision/providers/openrouter.ts";
+import { openAiHeaders } from "../src/pipeline/vision/clients/openai.ts";
 
 test("model allowlist defaults to the client's free router", () => {
   assert.deepEqual(allowedModels(undefined), [DEFAULT_ALLOWED_MODEL]);
@@ -78,11 +78,7 @@ test("the proxy's default model stays in sync with the client's OpenRouter defau
 
 test("every header the client sends through the proxy is on the preflight allow-list", () => {
   const allowed = new Set(CORS_ALLOWED_REQUEST_HEADERS.split(",").map((h) => h.trim().toLowerCase()));
-  const proxied = openRouterHeaders({
-    apiKey: "session-token",
-    model: "openrouter/free",
-    baseUrl: "https://x.supabase.co/functions/v1/ai-extract",
-  });
+  const proxied = openAiHeaders({ apiKey: "session-token", openRouter: true, viaProxy: true });
   for (const name of Object.keys(proxied)) {
     assert.ok(allowed.has(name.toLowerCase()), `${name} would fail the preflight`);
   }
@@ -90,7 +86,7 @@ test("every header the client sends through the proxy is on the preflight allow-
   assert.equal("X-Title" in proxied, false);
   assert.equal("HTTP-Referer" in proxied, false);
   // …and kept on a direct call so OpenRouter attribution isn't lost.
-  const direct = openRouterHeaders({ apiKey: "k", model: "openrouter/free" });
+  const direct = openAiHeaders({ apiKey: "k", openRouter: true, viaProxy: false });
   assert.equal(direct["X-Title"], "DueBack");
   assert.ok(direct["HTTP-Referer"]);
 });

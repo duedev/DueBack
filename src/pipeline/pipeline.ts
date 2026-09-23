@@ -199,24 +199,28 @@ export async function processReceipt(
       /* logo layer is pure upside — never fail the receipt over it */
     }
 
-    // 4c. Optional paid accuracy dial (§5/§9): for a low-confidence receipt, and
-    //     only when the user has opted in + supplied a key, get a vision-model
-    //     second opinion. It returns the same Extraction shape, so everything
-    //     below is identical. Any failure silently keeps the free result.
+    // 4c. Optional AI accuracy dial (§5/§9): for a low-confidence receipt, and
+    //     only when the user has opted in and configured a backend (local,
+    //     self-hosted or cloud), get a vision-model second opinion — one-shot,
+    //     or an agent that can also search this OCR read. It returns the same
+    //     Extraction shape, so everything below is identical. Any failure
+    //     silently keeps the free result.
     let assist: VisionAssist | null = null;
     if (shouldAssist(ex)) {
-      // Never spend a paid call on a result that could not land: a receipt
+      // Never spend an AI call on a result that could not land: a receipt
       // deleted or human-touched mid-flight completes as skip/technical
       // (below), so the assist's answer would be discarded — and billed.
       const pre = await repo.getReceipt(receiptId);
       if (completionWriteMode(pre, claimed.updatedAt, touchedBeforeClaim(receipt)) === "full") {
-        assist = await runVisionAssist(cleaned.blob, ex);
+        assist = await runVisionAssist(cleaned.blob, ex, ocr.lines);
       }
     }
     if (assist) {
       ex = assist.extraction;
       methodUsed = "paid";
-      methodDetail = `${assist.provider} · ${assist.model}`;
+      methodDetail = [assist.provider, assist.model, assist.strategy === "agentic" ? "agentic" : ""]
+        .filter(Boolean)
+        .join(" · ");
       cost = assist.costUsd;
       if (assist.rawText) ocrTextOut = assist.rawText;
     }

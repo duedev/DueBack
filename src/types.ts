@@ -11,8 +11,11 @@ export type ReceiptStatus =
   | "needs_review"
   | "failed";
 
-/** Which extraction tier produced a result. Recorded per-receipt so the
- *  "this batch cost you $0.00" line is honest and a spend-cap is trivial. */
+/** Which extraction tier produced a result, recorded per-receipt so the
+ *  "this batch cost you $0.00" line is honest. "paid" is the PERSISTED name
+ *  for any AI-assist read — local and self-hosted models included, which
+ *  cost $0 — kept so stored and synced rows need no migration;
+ *  `methodDetail` names the backend/model/strategy and `cost` what it cost. */
 export type ExtractionMethod = "rules" | "paid";
 
 /** Expense categories used for the per-category sheets and the lookup table. */

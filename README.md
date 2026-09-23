@@ -56,7 +56,7 @@ feeds the grand TOTAL.
 | **See the logo** | when the name is a logo the OCR can't spell: CLIP image embeddings (transformers.js, on-device) vs. a brand-logo index. **Teach it any brand with one image**, no retraining |
 | Extract | grand-total selection reconciled against the receipt's own arithmetic (subtotal + tax footing, pump math on fuel receipts), US-first dates, tax, category — amounts are always US dollars |
 | Trust | per-field confidence + provenance boxes, flags, semantic + image-hash duplicate detection; anything the rules can't verify is queued for manual review instead of shipping wrong |
-| Assist (optional) | low-confidence receipts can get a vision-LLM second opinion. Bring your own key, or sign in and use the server-keyed proxy |
+| Assist (optional) | low-confidence receipts can get a vision-LLM second opinion — from a local model (Ollama / LM Studio), your own self-hosted server, or a cloud provider (bring your own key, or sign in and use the server-keyed proxy); one-shot, or an agent that checks the math and the brand database before it answers |
 
 Everything above the "Assist" row runs entirely in your browser.
 
@@ -67,7 +67,9 @@ Everything above the "Assist" row runs entirely in your browser.
 - **AI assist:** low-confidence receipts go to the model you chose. Off
   unless you turn it on — except that a build made with `OPENROUTER_API_KEY`
   turns the free OpenRouter tier on by default (switch it off in Settings →
-  AI assist).
+  AI assist). Pick the **Local** backend (Ollama / LM Studio on your own
+  computer) and the assist never leaves your machine either; **Self-hosted**
+  sends receipts only to the server you name.
 - **Sync (opt-in):** signing in mirrors your data to *your own* Supabase
   workspace with row-level security. See [`SUPABASE_SETUP.md`](./SUPABASE_SETUP.md).
 - **OneDrive (opt-in):** only the workbooks you explicitly save are uploaded,

@@ -9,7 +9,8 @@ import { isValidIso, fromIso, daysBetween } from "../../util/format.ts";
 // app's `Extraction` shape. Pure (no network, no DOM) so it is unit-testable
 // and shared by every provider.
 
-/** JSON Schema for structured outputs (OpenAI / OpenRouter / Anthropic dialect). */
+/** JSON Schema for structured outputs and the agent's submit tool. Plain JSON
+ *  Schema; clients/gemini.ts converts it to Google's dialect. */
 export const RECEIPT_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -22,21 +23,6 @@ export const RECEIPT_JSON_SCHEMA = {
   },
   required: ["vendor", "date", "amount", "tax", "category"],
 } as const;
-
-/** Gemini uses an OpenAPI-style schema dialect (uppercase type names). */
-export function geminiSchema(): Record<string, unknown> {
-  return {
-    type: "OBJECT",
-    properties: {
-      vendor: { type: "STRING" },
-      date: { type: "STRING" },
-      amount: { type: "NUMBER" },
-      tax: { type: "NUMBER" },
-      category: { type: "STRING", enum: [...CATEGORIES] },
-    },
-    required: ["vendor", "date", "amount", "tax", "category"],
-  };
-}
 
 export const SYSTEM_PROMPT =
   "You are a meticulous receipt-data extractor. Read the receipt image and " +

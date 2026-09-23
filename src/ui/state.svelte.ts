@@ -3,7 +3,7 @@ import { queue } from "../pipeline/queue.ts";
 import { sync } from "../store/sync.ts";
 import { syncConfigured } from "../supabase/client.ts";
 import { onAuthChange, currentUser } from "../supabase/auth.ts";
-import { saveVisionConfig } from "../pipeline/vision/config.ts";
+import { getVisionConfig, saveVisionConfig } from "../pipeline/vision/config.ts";
 import { validateFile, safeBasename, isPdf, isZip } from "../util/files.ts";
 import { chooseAdoptionBatch, type AdoptionCandidate } from "../store/syncMerge.ts";
 import { uid } from "../util/id.ts";
@@ -176,10 +176,12 @@ class AppState {
   private async onSignedIn(userId: string, email: string): Promise<void> {
     this.userEmail = email || "signed in";
     // First sign-in on this device: turn the server-keyed AI assist on once
-    // (the user can switch it off in Settings; we never flip it again).
+    // (the user can switch it off in Settings; we never flip it again). Only
+    // for the cloud backend — the key the account unlocks is a cloud key,
+    // and someone who picked a local or self-hosted model chose that server.
     const flag = await repo.getSetting<boolean>("ai.autoEnabledOnSignIn");
     if (!flag) {
-      saveVisionConfig({ enabled: true });
+      if (getVisionConfig().backend === "cloud") saveVisionConfig({ enabled: true });
       await repo.setSetting("ai.autoEnabledOnSignIn", true);
     }
     // Adopt a synced batch only when this call actually started the engine

@@ -12,8 +12,8 @@ export const DEFAULT_DAILY_LIMIT = 200;
 
 /** Request headers the browser may send (CORS preflight). The client's
  *  OpenRouter attribution pair stays listed so a direct-style call passes;
- *  through the proxy the client omits them (providers/openrouter.ts
- *  openRouterHeaders) because the function stamps its own. apikey and
+ *  through the proxy the client omits them (vision/clients/openai.ts
+ *  openAiHeaders) because the function stamps its own. apikey and
  *  x-client-info are Supabase's template entries (functions.invoke). */
 export const CORS_ALLOWED_REQUEST_HEADERS =
   "authorization, content-type, http-referer, x-title, apikey, x-client-info";

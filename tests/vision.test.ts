@@ -4,12 +4,8 @@ import {
   visionToExtraction,
   parseVisionJson,
 } from "../src/pipeline/vision/schema.ts";
-import { usesFreeRouting } from "../src/pipeline/vision/providers/openrouter.ts";
-import {
-  effectiveApiKey,
-  hasBuiltInOpenRouterKey,
-  type VisionConfig,
-} from "../src/pipeline/vision/config.ts";
+import { usesFreeRouting, cloudApiKey } from "../src/pipeline/vision/endpoint.ts";
+import { hasBuiltInOpenRouterKey, type CloudSettings } from "../src/pipeline/vision/config.ts";
 
 // Tier 3 (vision LLM) JSON → Extraction mapping. The network call is provider
 // code; this validates the normalization that every provider feeds into.
@@ -94,27 +90,23 @@ test("OpenRouter free routing is detected for the router and :free models", () =
 });
 
 test("the built-in free key backs only the OpenRouter free router", () => {
-  const cfg = (over: Partial<VisionConfig>): VisionConfig => ({
-    enabled: true,
+  const cloud = (over: Partial<CloudSettings>): CloudSettings => ({
     provider: "openrouter",
     model: "openrouter/free",
     apiKey: "",
-    baseUrl: "",
-    spendCapUsd: 1,
-    spentUsd: 0,
     ...over,
   });
   const BUILT_IN = "sk-built-in"; // injected; production value comes from the build env
   // Free router, no user key → built-in key.
-  assert.equal(effectiveApiKey(cfg({}), BUILT_IN), BUILT_IN);
+  assert.equal(cloudApiKey(cloud({}), BUILT_IN), BUILT_IN);
   // A user's own key always wins.
-  assert.equal(effectiveApiKey(cfg({ apiKey: "sk-mine" }), BUILT_IN), "sk-mine");
+  assert.equal(cloudApiKey(cloud({ apiKey: "sk-mine" }), BUILT_IN), "sk-mine");
   // A paid OpenRouter model never uses the built-in key.
-  assert.equal(effectiveApiKey(cfg({ model: "anthropic/claude-haiku-4.5" }), BUILT_IN), "");
+  assert.equal(cloudApiKey(cloud({ model: "anthropic/claude-haiku-4.5" }), BUILT_IN), "");
   // Other providers never use the built-in key.
-  assert.equal(effectiveApiKey(cfg({ provider: "anthropic", model: "claude-haiku-4-5" }), BUILT_IN), "");
+  assert.equal(cloudApiKey(cloud({ provider: "anthropic", model: "claude-haiku-4-5" }), BUILT_IN), "");
   // A keyless build (this test env) injects nothing and uses no built-in key.
-  assert.equal(effectiveApiKey(cfg({})), "");
+  assert.equal(cloudApiKey(cloud({})), "");
   assert.equal(hasBuiltInOpenRouterKey(), false);
 });
 
@@ -131,7 +123,7 @@ test("parseVisionJson survives leaked think-blocks and prose with stray braces",
   assert.equal(parseVJ("[1,2,3]"), null);
 });
 
-import { priceFor } from "../src/pipeline/vision/providers/anthropic.ts";
+import { priceFor } from "../src/pipeline/vision/clients/anthropic.ts";
 
 test("Anthropic pricing resolves dated snapshots and never prices an unknown model at $0", () => {
   assert.deepEqual(priceFor("claude-haiku-4-5"), { in: 1, out: 5 });

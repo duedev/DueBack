@@ -7,6 +7,7 @@
   import ReviewModal from "./ReviewModal.svelte";
   import ExportBar from "./ExportBar.svelte";
   import Settings from "./Settings.svelte";
+  import Segmented from "./Segmented.svelte";
   import type { Receipt } from "../types.ts";
 
   const total = $derived(app.receipts.length);
@@ -207,10 +208,14 @@
     {:else}
       <ExportBar />
       <div class="board-bar">
-        <div class="seg" role="group" aria-label="Board view">
-          <button class="seg-btn" class:active={view === "grid"} aria-pressed={view === "grid"} title="One flat grid of every receipt" onclick={() => (view = "grid")}>Grid</button>
-          <button class="seg-btn" class:active={view === "kanban"} aria-pressed={view === "kanban"} title="Lanes by status: processing, needs review, done" onclick={() => (view = "kanban")}>Kanban</button>
-        </div>
+        <Segmented
+          label="Board view"
+          bind:value={view}
+          options={[
+            { value: "grid", label: "Grid", title: "One flat grid of every receipt" },
+            { value: "kanban", label: "Kanban", title: "Lanes by status: processing, needs review, done" },
+          ]}
+        />
         <label class="sort">
           <span class="muted small">Sort</span>
           <select bind:value={sortKey} aria-label="Sort receipts" title="Order the receipts in every view">
@@ -458,30 +463,6 @@
     gap: 0.8rem;
     margin: 1rem 0 0.75rem;
     flex-wrap: wrap;
-  }
-  .seg {
-    display: inline-flex;
-    border: 1px solid var(--line-strong);
-    border-radius: 9px;
-    overflow: hidden;
-  }
-  .seg-btn {
-    border: 0;
-    background: transparent;
-    color: var(--ink-soft);
-    font: 600 0.85rem/1 var(--font-ui);
-    padding: 0.5rem 0.9rem;
-    cursor: pointer;
-  }
-  .seg-btn.active {
-    background: var(--accent);
-    color: var(--accent-ink);
-  }
-  /* .seg's overflow:hidden clips the global focus ring — draw it inset. */
-  .seg-btn:focus-visible {
-    outline: 2px solid transparent; /* painted by forced colors; negative offset keeps it inside the clip */
-    outline-offset: -4px;
-    box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 4px var(--accent);
   }
   .sort {
     display: inline-flex;
