@@ -223,6 +223,12 @@ export interface Receipt {
   /** Overall 0..1 confidence across the receipt. */
   confidence: number;
   flags: Flag[];
+  /** Receipts a human said this one is NOT a duplicate of (review's "Keep
+   *  both"), by id, stored on BOTH rows. Clearing the flags alone left no
+   *  trace, so the next read or re-check paired them again; dedup never
+   *  pairs a kept-apart couple (`dedup.keptApart`). Rides the sync payload,
+   *  no migration. */
+  notDuplicateOf?: string[];
 
   /** Full OCR text — the on-device read, reused by the image-hash cache and
    *  shipped in the tuning bundle. Never an AI answer (that lives in

@@ -7,7 +7,7 @@ import {
   matchKnownVendor,
   type Extraction,
 } from "./extract.ts";
-import { duplicateFlag } from "./dedup.ts";
+import { duplicateFlag, keptApart } from "./dedup.ts";
 import { getOcrEngine, type OcrEngine } from "./ocr.ts";
 import { runVisionAssist, shouldAssist, type VisionAssist } from "./vision/index.ts";
 import { assistMethodDetail, reusableOcr } from "./vision/provenance.ts";
@@ -269,15 +269,18 @@ export async function processReceipt(
     // code (a card slip and its invoice, whose vendor and date reads
     // differ). The flag names its twin by id (Flag.ref) so review can show
     // both side by side — dedup.duplicateFlag.
-    const hashTwin = sameHash.find((r) => r.batchId === receipt.batchId);
+    const read = {
+      id: receiptId,
+      vendor: ex.vendor.value,
+      date: ex.date.value,
+      amount: ex.amount.value,
+      lines: ocrLines,
+      // A couple a human kept apart ("Keep both") is never paired again.
+      notDuplicateOf: receipt.notDuplicateOf,
+    };
+    const hashTwin = sameHash.find((r) => r.batchId === receipt.batchId && !keptApart(read, r));
     const duplicateOf = duplicateFlag(
-      {
-        id: receiptId,
-        vendor: ex.vendor.value,
-        date: ex.date.value,
-        amount: ex.amount.value,
-        lines: ocrLines,
-      },
+      read,
       hashTwin,
       // The batch is only needed when no byte-identical twin answered.
       hashTwin ? [] : await repo.listReceipts(receipt.batchId),

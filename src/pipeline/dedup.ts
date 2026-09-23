@@ -239,11 +239,22 @@ export interface DupCandidate {
   amount: { value: number };
   flags: readonly Pick<Flag, "code" | "message" | "ref">[];
   ocrLines?: readonly { text: string }[];
+  notDuplicateOf?: readonly string[];
 }
 type Sibling = Pick<
   DupCandidate,
-  "id" | "fileName" | "originalFileName" | "vendor" | "date" | "amount" | "ocrLines"
+  "id" | "fileName" | "originalFileName" | "vendor" | "date" | "amount" | "ocrLines" | "notDuplicateOf"
 >;
+
+/** Did a human say these two are NOT duplicates ("Keep both")? Either
+ *  side's record counts — the other row's write may have lost a race, or
+ *  not synced yet. Pure. */
+export function keptApart(
+  a: { id: string; notDuplicateOf?: readonly string[] },
+  b: { id: string; notDuplicateOf?: readonly string[] },
+): boolean {
+  return (a.notDuplicateOf?.includes(b.id) ?? false) || (b.notDuplicateOf?.includes(a.id) ?? false);
+}
 
 /** The name a flag quotes: the upload's own name. The renamed fileName
  *  COLLIDES between twins (both copies become fuel_02-11-26_chevron.jpg), so
@@ -302,11 +313,13 @@ export function duplicateFlag(
     date: string;
     amount: number;
     lines?: readonly { text: string }[];
+    notDuplicateOf?: readonly string[];
   },
-  hashTwin: Pick<DupCandidate, "id" | "fileName" | "originalFileName"> | undefined,
+  hashTwin: Pick<DupCandidate, "id" | "fileName" | "originalFileName" | "notDuplicateOf"> | undefined,
   siblings: readonly Sibling[],
 ): Flag | null {
-  if (hashTwin) {
+  // A couple a human kept apart ("Keep both") never pairs again, on any tier.
+  if (hashTwin && !keptApart(read, hashTwin)) {
     return {
       code: "duplicate",
       severity: "warn",
@@ -314,7 +327,7 @@ export function duplicateFlag(
       ref: hashTwin.id,
     };
   }
-  const others = siblings.filter((s) => s.id !== read.id);
+  const others = siblings.filter((s) => s.id !== read.id && !keptApart(read, s));
   const semantic = findSemanticDuplicate({ ...read, label: "" }, others.map(toDupRecord));
   if (semantic) {
     return {

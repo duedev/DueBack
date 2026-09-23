@@ -509,3 +509,40 @@ test("retargetDuplicateFlags folds into an existing warning about the keeper", (
   // Nothing to plan for a receipt paired with nobody.
   assert.equal(planDuplicateDelete(cand({ id: "lone", amount: { value: 3 } }), [a, b]), null);
 });
+
+// ── Kept apart ("Keep both") ────────────────────────────────────────────────
+// Clearing the warnings left no trace, so the next read or "Re-check this
+// batch" paired the couple again. The verdict is stored on both rows
+// (Receipt.notDuplicateOf) and dedup honours it on every tier.
+
+import { keptApart } from "../src/pipeline/dedup.ts";
+
+test("keptApart reads the verdict from either side", () => {
+  assert.equal(keptApart({ id: "a", notDuplicateOf: ["b"] }, { id: "b" }), true);
+  assert.equal(keptApart({ id: "a" }, { id: "b", notDuplicateOf: ["a"] }), true);
+  assert.equal(keptApart({ id: "a", notDuplicateOf: ["c"] }, { id: "b" }), false);
+  assert.equal(keptApart({ id: "a" }, { id: "b" }), false);
+});
+
+test("duplicateFlag never re-pairs a kept-apart couple — on any tier", () => {
+  // Tier 1: a byte-identical twin the human kept apart is no twin.
+  assert.equal(
+    duplicateFlag({ ...readOf(scanFeb11), notDuplicateOf: [appFeb11.id] }, { id: appFeb11.id, fileName: "x.jpg" }, []),
+    null,
+  );
+  // Tier 2: the real 03-02 pair, kept apart from either side.
+  assert.equal(duplicateFlag({ ...readOf(scanMar02), notDuplicateOf: [appMar02.id] }, undefined, [appMar02]), null);
+  assert.equal(
+    duplicateFlag(readOf(scanMar02), undefined, [{ ...appMar02, notDuplicateOf: [scanMar02.id] }]),
+    null,
+  );
+  // Tier 3: the PIP slip + invoice sharing an approval code.
+  assert.ok(duplicateFlag(readOf(printSlip), undefined, [printInvoice]), "paired before the verdict");
+  assert.equal(duplicateFlag({ ...readOf(printSlip), notDuplicateOf: [printInvoice.id] }, undefined, [printInvoice]), null);
+  // A verdict about ONE twin doesn't hide another.
+  const other = { ...appMar02, id: "another-copy" };
+  assert.equal(
+    duplicateFlag({ ...readOf(scanMar02), notDuplicateOf: [appMar02.id] }, undefined, [appMar02, other])?.ref,
+    "another-copy",
+  );
+});

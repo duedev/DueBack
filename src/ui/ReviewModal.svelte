@@ -620,13 +620,35 @@
     for (const s of others) await retargetDuplicateFlag(s.id, x.id, keeper, before);
   }
 
+  /** "Keep both" on receipt `id` about `otherId`: drop its warnings about
+   *  the twin AND record the verdict (`notDuplicateOf`), in ONE serialized,
+   *  CAS-guarded write. Clearing the flags alone left no trace, so the next
+   *  read or "Re-check this batch" paired the two again. */
+  function keepApart(id: string, otherId: string): Promise<void> {
+    return serialized(async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const stored = await repo.getReceipt(id);
+        if (!stored) return;
+        const flags = flagsWithoutDuplicate(stored, otherId, list);
+        const recorded = stored.notDuplicateOf?.includes(otherId) ?? false;
+        if (flags.length === stored.flags.length && recorded) return;
+        const patch: Partial<Receipt> = {
+          ...(flags.length !== stored.flags.length ? { flags } : {}),
+          ...(recorded ? {} : { notDuplicateOf: [...(stored.notDuplicateOf ?? []), otherId] }),
+        };
+        if ((await repo.updateReceipt(id, patch, { updatedAt: stored.updatedAt })) !== null) return;
+      }
+    });
+  }
+
   async function keepBoth(): Promise<void> {
     const d = dup;
     const r = current;
     if (!d || !r) return;
     parkFocus();
-    // Either copy may hold a warning about the other (or both do): clear both.
-    await Promise.all([dropDuplicateFlag(r.id, d.peer.id), dropDuplicateFlag(d.peer.id, r.id)]);
+    // Either copy may hold a warning about the other (or both do): clear
+    // both, and remember the verdict on both.
+    await Promise.all([keepApart(r.id, d.peer.id), keepApart(d.peer.id, r.id)]);
     app.toast("Kept both — the duplicate warning is cleared.", "ok");
   }
   /** Delete the open receipt. While it is part of a suspected pair (or

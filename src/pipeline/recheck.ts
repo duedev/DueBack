@@ -1,6 +1,6 @@
 import type { BBox, Field, Flag, Receipt } from "../types.ts";
 import { parseReceipt, type Extraction } from "./extract.ts";
-import { duplicateFlag, resolveDuplicateFlag } from "./dedup.ts";
+import { duplicateFlag, keptApart, resolveDuplicateFlag } from "./dedup.ts";
 import { anchorAssistBoxes, isLegacyAiRead, reusableOcr } from "./vision/provenance.ts";
 import { HIGHLIGHT_COLORS, type HighlightMark } from "./annotate.ts";
 
@@ -176,10 +176,19 @@ export function planBatchRecheck(receipts: readonly Receipt[]): RecheckPlan {
   for (const x of rows) {
     const holds = x.flags.some((f) => f.code === "duplicate");
     if (settled(x) && !x.approved && !holds) {
-      const candidates = earlier.filter((s) => !known.has(pairKey(x.id, s.id)));
+      // Kept-apart couples ("Keep both") are out too: clearing a warning
+      // must not be undone by the next re-check.
+      const candidates = earlier.filter((s) => !known.has(pairKey(x.id, s.id)) && !keptApart(x, s));
       const hashTwin = x.imageHash ? candidates.find((s) => s.imageHash === x.imageHash) : undefined;
       const flag = duplicateFlag(
-        { id: x.id, vendor: x.vendor.value, date: x.date.value, amount: x.amount.value, lines: x.ocrLines },
+        {
+          id: x.id,
+          vendor: x.vendor.value,
+          date: x.date.value,
+          amount: x.amount.value,
+          lines: x.ocrLines,
+          notDuplicateOf: x.notDuplicateOf,
+        },
         hashTwin,
         candidates,
       );

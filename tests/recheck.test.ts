@@ -182,6 +182,22 @@ test("the owner's two missed pairs each get ONE flag, on the copy read second, n
   assert.equal(chevron.expectUpdatedAt, rows.find((r) => r.id === scanMar02.id)!.updatedAt);
 });
 
+test("a couple the human kept apart (Keep both) is never re-flagged — from either side", () => {
+  // Review's Keep both clears the warnings and records the verdict on BOTH
+  // rows (Receipt.notDuplicateOf); either record alone is enough.
+  for (const keptOn of ["scan", "app", "both"] as const) {
+    const rows = ownerBatch().map((r) =>
+      (r.id === scanMar02.id && keptOn !== "app") ? { ...r, notDuplicateOf: [appMar02.id] }
+      : (r.id === appMar02.id && keptOn !== "scan") ? { ...r, notDuplicateOf: [scanMar02.id] }
+      : r,
+    );
+    const plan = planBatchRecheck(rows);
+    assert.ok(!plan.duplicates.some((d) => d.id === scanMar02.id), `kept apart on ${keptOn}: the $83.44 pair stays cleared`);
+    // The other missed pair is unaffected by that verdict.
+    assert.ok(plan.duplicates.some((d) => d.id === pipSlip.id), "the PIP pair is still flagged");
+  }
+});
+
 test("the already-flagged 02-11 pair is left alone (its flag predates ref and resolves by message)", () => {
   const rows = ownerBatch();
   const app = rows.find((r) => r.id === appFeb11.id)!;

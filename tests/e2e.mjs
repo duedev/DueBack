@@ -983,6 +983,7 @@ async function main() {
             dups: (r.flags || [])
               .filter((f) => f.code === "duplicate")
               .map((f) => ({ message: f.message, ref: f.ref ?? null })),
+            apart: r.notDuplicateOf ?? [],
           }));
         });
       log("re-uploading coffee.png as a duplicate…");
@@ -1052,6 +1053,14 @@ async function main() {
       check(
         keptRows.length === 8 && keptRows.every((r) => r.dups.length === 0),
         "Keep both clears the duplicate warning on both copies",
+      );
+      // …and remembers the verdict on both, so no later read or re-check
+      // pairs them again.
+      const keptA = keptRows.find((r) => r.file === "coffee.png");
+      const keptB = keptRows.find((r) => r.file === "coffee-again.png");
+      check(
+        !!keptA && !!keptB && keptA.apart.includes(keptB.id) && keptB.apart.includes(keptA.id),
+        "Keep both records the pair as not-duplicates on both rows",
       );
       check(
         await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')),
