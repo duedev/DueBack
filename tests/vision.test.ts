@@ -362,4 +362,6 @@ test("the model's vendor is cut on a code point and never keeps a lone surrogate
   const broken = visionToExtraction({ vendor: "Corner Cafe \ud83d", date: "", amount: 1 }).vendor.value;
   assert.ok(broken.isWellFormed(), JSON.stringify(broken));
   assert.match(broken, /^Corner Cafe/);
+  // NUL is the other code point Postgres text/jsonb refuse.
+  assert.equal(visionToExtraction({ vendor: "Corner Cafe\u0000", date: "", amount: 1 }).vendor.value, "Corner Cafe");
 });

@@ -288,6 +288,7 @@ export { TAX_MAX_RATIO } from "./rules/labels.ts";
 export { locateValue, readValueInBox } from "./rules/locate.ts";
 export { looksLikeMoney } from "./rules/money.ts";
 export { dateFlags, findDateEvidence } from "./rules/date.ts";
+export { WINDOW_RECOVERY_NOTE } from "./rules/footing.ts";
 export {
   brandFieldFromLines,
   findAliasOnLines,

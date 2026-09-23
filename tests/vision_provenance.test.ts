@@ -20,7 +20,7 @@ import {
 import { visionToExtraction } from "../src/pipeline/vision/schema.ts";
 import { defaultVisionConfig, mergeVisionConfig } from "../src/pipeline/vision/config.ts";
 import { resolveEndpoint } from "../src/pipeline/vision/endpoint.ts";
-import { forcesManualReview, parseReceipt, type Extraction } from "../src/pipeline/extract.ts";
+import { forcesManualReview, parseReceipt, WINDOW_RECOVERY_NOTE, type Extraction } from "../src/pipeline/extract.ts";
 import type { AssistProvenance, BBox, OcrLine } from "../src/types.ts";
 
 // The AI assist's answer is values only: vision/provenance.ts anchors them
@@ -824,4 +824,30 @@ test("the hash cache never lends an AI row's answer as if it were printed", () =
     assert.deepEqual(lent, { text: "COSTCO\nTOTAL 9.99", lines: ocrLines, confidence: 70 });
   }
   assert.equal(reusableOcr({ methodUsed: "paid", ocrText: json, confidence: 0.92 }), null, "no lines, nothing honest to lend");
+});
+
+test("an arithmetic-verified rules total still contradicts a wrong AI total; footing's window guess doesn't", () => {
+  // The printed-sum correction: TOTAL misread as 2638.08, and footing finds
+  // the printed 638.08 = SUBTOTAL + TAX — verified (info total_mismatch).
+  const L = lines(["COSTCO WHOLESALE", "SUBTOTAL 600.00", "TAX 38.08", "TOTAL 2638.08", "VISA 638.08"]);
+  const d = parseReceipt({ text: L.map((l) => l.text).join("\n"), confidence: 85, lines: L, words: [] });
+  assert.equal(d.amount.value, 638.08);
+  assert.ok(d.flags.some((f) => f.code === "total_mismatch" && f.severity === "info"), JSON.stringify(d.flags));
+  // A model digit transposition printed nowhere must not ship unreviewed.
+  assert.equal(corroborate(ai("Costco", "", 683.08), d, L)[0]?.code, "total_suspect");
+
+  // Footing's window recovery is a GUESS (the largest printed value in the
+  // subtotal window) — no evidence against the AI.
+  const guess = {
+    ...d,
+    amount: { value: 612.5, confidence: 0.9 },
+    flags: [{ code: "total_mismatch" as const, severity: "info" as const, message: `Amount corrected: 9612.50 is far outside subtotal (600.00) — ${WINDOW_RECOVERY_NOTE}.` }],
+  };
+  assert.deepEqual(corroborate(ai("Costco", "", 683.08), guess, L), []);
+});
+
+test("the stored raw answer never carries a NUL", () => {
+  const capped = tailCap('{"vendor":"A\u0000B"}');
+  assert.equal(capped.includes("\u0000"), false);
+  assert.equal(capped, '{"vendor":"AB"}');
 });

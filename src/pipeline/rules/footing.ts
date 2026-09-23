@@ -15,6 +15,12 @@ import { labelFold } from "./text.ts";
  *  provides. Only ever corrects TO a printed value, mirroring the original
  *  app's reconcile_amount. */
 
+/** The note footing's window recovery puts on its info `total_mismatch`:
+ *  the one amount correction the receipt's own arithmetic does NOT verify
+ *  (the printed sum and pump math do). The AI tier's corroboration treats a
+ *  rules total carrying it as no evidence (vision/provenance.ts). */
+export const WINDOW_RECOVERY_NOTE = "took the largest printed value in the subtotal window";
+
 export function applyFootingMath(
   lines: OcrLine[],
   amount: Field<number> | null,
@@ -84,7 +90,7 @@ export function applyFootingMath(
           : {
               code: "total_mismatch",
               severity: "info",
-              message: `Amount corrected: ${amount.value.toFixed(2)} is far outside subtotal (${subtotal.toFixed(2)}) — took the largest printed value in the subtotal window.`,
+              message: `Amount corrected: ${amount.value.toFixed(2)} is far outside subtotal (${subtotal.toFixed(2)}) — ${WINDOW_RECOVERY_NOTE}.`,
             },
       ],
     };

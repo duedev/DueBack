@@ -1,5 +1,12 @@
 import type { AssistProvenance, BBox, Field, Flag, OcrLine, Receipt } from "../../types.ts";
-import { findAliasOnLines, findDateEvidence, locateValue, VENDOR_STOPWORD_RE, type Extraction } from "../extract.ts";
+import {
+  findAliasOnLines,
+  findDateEvidence,
+  locateValue,
+  VENDOR_STOPWORD_RE,
+  WINDOW_RECOVERY_NOTE,
+  type Extraction,
+} from "../extract.ts";
 import { FUZZY_HINT_RATIO, fuzzyMatchVendorLines, matchVendor } from "../../config/vendors.ts";
 import { formatMoney } from "../../util/money.ts";
 import { BUILTIN_OPENROUTER_KEY } from "./config.ts";
@@ -30,7 +37,8 @@ const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF
  *  `String.prototype.toWellFormed` does; ES2022 lacks it). A model can emit
  *  one itself (a broken "\ud83d" escape), not only a cut. */
 export function wellFormed(s: string): string {
-  return s.replace(LONE_SURROGATE_RE, "\uFFFD");
+  // …and without NUL: the one code point Postgres text AND jsonb both refuse.
+  return s.replace(LONE_SURROGATE_RE, "\uFFFD").replace(/\u0000/g, "");
 }
 
 export function tailCap(s: string): string {
@@ -247,9 +255,17 @@ export function corroborate(ai: Extraction, draft: Extraction, lines: OcrLine[])
   const flags: Flag[] = [];
   const a = ai.amount.value;
   const d = draft.amount.value;
-  // A rules total the rules themselves question (footing's window recovery
-  // stamps a synthetic confidence but flags it) is no evidence against the AI.
-  const draftDoubtsTotal = draft.flags.some((f) => f.code === "total_suspect" || f.code === "total_mismatch");
+  // A rules total the rules themselves question is no evidence against the
+  // AI: a total_suspect, a WARN total_mismatch (reconcile's "larger amount
+  // above", "subtotal + tax ≠ total"), or footing's window recovery (an
+  // unverified pick stamped a synthetic 0.9). The info total_mismatch of an
+  // arithmetic-VERIFIED correction — the printed sum, pump math — vouches
+  // for the total instead (extract.ts reads them that way too).
+  const draftDoubtsTotal = draft.flags.some(
+    (f) =>
+      f.code === "total_suspect" ||
+      (f.code === "total_mismatch" && (f.severity === "warn" || f.message.includes(WINDOW_RECOVERY_NOTE))),
+  );
   if (
     a > 0 &&
     d > 0 &&
