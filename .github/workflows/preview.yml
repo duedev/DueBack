@@ -1,0 +1,106 @@
+name: Preview
+
+# Every pull request from a branch in THIS repo gets its own preview site on
+# Cloudflare Pages, rebuilt on each push, at a stable per-PR address
+# (https://pr-<number>.<project>.pages.dev — the PR's "View deployment"
+# button links it). The live site (deploy.yml, GitHub Pages) is never touched.
+#
+# Off until the repo owner configures it (the jobs are SKIPPED, never red):
+#   variable CF_PAGES_PROJECT       the Pages project name, e.g. dueback-preview
+#                                   (created on the first run if it's missing)
+#   secret   CLOUDFLARE_API_TOKEN   a token with Account › Cloudflare Pages › Edit
+#   secret   CLOUDFLARE_ACCOUNT_ID
+#
+# Previews are built WITHOUT the Supabase and OneDrive settings: their sign-in
+# redirects are registered for the production domain only, and a preview must
+# never sync PR code into real workspaces — so sign-in and "Save to OneDrive"
+# are hidden there. Analytics are left off too. The OpenRouter free key IS
+# baked in (it ships in the production bundle anyway), so the Cloud AI tier
+# behaves as it does live.
+#
+# Pages rejects any single file over 25 MiB; the largest today is the
+# onnxruntime wasm at ~22.5 MiB — watch it when bumping transformers.js.
+
+on:
+  pull_request:
+
+# Build and deploy are separate jobs so the Cloudflare token never shares a
+# job with PR-controlled code (npm ci, the vendoring script, the build): the
+# deploy job only downloads the built files and uploads them.
+permissions:
+  contents: read
+
+# A newer push to the same PR supersedes a preview still building.
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Same-repo branches only (fork PRs get no secrets), once configured.
+    if: vars.CF_PAGES_PROJECT != '' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      # --ignore-scripts: see ci.yml (onnxruntime-node's flaky binary download).
+      - run: npm ci --ignore-scripts
+      - run: npm run build # typecheck + vite build; prebuild vendors Tesseract
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-dist
+          path: dist
+          retention-days: 3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: preview
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PROJECT: ${{ vars.CF_PAGES_PROJECT }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: preview-dist
+          path: dist
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      # `pages deploy` asks interactively when the project doesn't exist, which
+      # fails in CI — so create it first. `shell: bash` adds pipefail, so a bad
+      # token fails here loudly instead of reading as "no such project".
+      - name: Create the Pages project on first use
+        shell: bash
+        run: |
+          if ! npx --yes wrangler@4 pages project list --json \
+              | jq -e --arg p "$PROJECT" 'any(.[]; .["Project Name"] == $p)' > /dev/null; then
+            npx --yes wrangler@4 pages project create "$PROJECT" --production-branch=main
+          fi
+      # --branch=pr-N gives each PR a stable alias URL. The URL is read from
+      # wrangler's structured output file rather than guessed: Cloudflare adds
+      # a suffix to the pages.dev subdomain when the project name is taken.
+      - id: deploy
+        name: Upload to Cloudflare Pages
+        shell: bash
+        run: |
+          export WRANGLER_OUTPUT_FILE_PATH="$RUNNER_TEMP/wrangler-output.ndjson"
+          npx --yes wrangler@4 pages deploy dist \
+            --project-name="$PROJECT" --branch="pr-$PR_NUMBER" --commit-hash="$HEAD_SHA"
+          url=$(jq -r 'select(.type == "pages-deploy-detailed") | .alias // .url' \
+            "$WRANGLER_OUTPUT_FILE_PATH" | tail -n 1)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "### Preview for #$PR_NUMBER: $url" >> "$GITHUB_STEP_SUMMARY"

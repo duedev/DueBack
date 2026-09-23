@@ -109,6 +109,15 @@ Optional build-time settings:
 visit stats via Cloudflare Web Analytics; page views only). The app is embeddable in an iframe
 (e.g. a Carrd Embed block); it's a single relative-path static bundle.
 
+**Pull-request previews** (`.github/workflows/preview.yml`): each PR from a
+branch in this repo can build to its own Cloudflare Pages site at
+`https://pr-<number>.<project>.pages.dev` without touching production. It's
+off until you add a repo variable `CF_PAGES_PROJECT` (e.g. `dueback-preview`;
+created on the first run) and secrets `CLOUDFLARE_API_TOKEN` (Account ›
+Cloudflare Pages › Edit) + `CLOUDFLARE_ACCOUNT_ID`. Previews leave out
+Supabase, OneDrive and analytics (their sign-in redirects only allow the
+production domain, and previews must never sync into real workspaces).
+
 ## Stack
 
 Vite · TypeScript · Svelte 5 · Tesseract.js / PaddleOCR (onnxruntime-web) ·

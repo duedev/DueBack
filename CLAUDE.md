@@ -710,7 +710,16 @@ svelte-check) · `npm run build` · `npm run e2e` · `node tests/screenshots.mjs
   `x-goog-api-key` header, never the URL. ZIP intake inflates only as
   many entries as the batch has room for (`maxEntries` = remaining
   capacity). CI has `permissions: contents: read`, per-PR cancellation and
-  job timeouts; Pages deploys are never cancelled mid-publish. The
+  job timeouts; Pages deploys are never cancelled mid-publish. PR previews
+  (`preview.yml`) go to Cloudflare Pages at a stable `pr-<N>` alias,
+  gated on the `CF_PAGES_PROJECT` repo var (unset = jobs SKIPPED, not red)
+  and same-repo branches; the build job (PR code, OpenRouter key) and the
+  deploy job (Cloudflare token, no checkout — it only uploads the artifact)
+  are separate so the token never shares a job with PR code; the project is
+  created on first use (`pages deploy` would prompt), and the URL comes from
+  wrangler's `WRANGLER_OUTPUT_FILE_PATH` JSON (a taken project name gets a
+  suffixed subdomain). Previews omit Supabase/OneDrive/analytics vars on
+  purpose; Pages caps files at 25 MiB (the ORT wasm is ~22.5). The
   precache skips non-Latin font subsets and the lazy transformers chunk
   (runtime-cached together with the ONNX wasm under "logo-model");
   `LEGACY_CATEGORIES`/`normalizeCategory` live in config/categories.ts
